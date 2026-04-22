@@ -1,48 +1,67 @@
 //! Execution channels: Claude Code CLI, bash, HTTP API.
 //!
-//! Each step in a skill is dispatched to one of these channels via the
-//! [`Channel`] trait. Output captures stdout/stderr + exit code so the
-//! validator can inspect it.
+//! A step in a skill is dispatched to one of these channels via the
+//! [`Channel`] trait. Every implementation produces a [`ChannelOutput`] with
+//! stdout/stderr/exit_code so the validator (docs/architecture.md §Validator)
+//! can inspect it uniformly regardless of which channel ran.
 
 pub mod api;
 pub mod bash;
 pub mod claude_code;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Default per-step timeout when the skill does not override it
+/// (docs/security.md §3 "Timeout obrigatório por step (default 300s)").
+pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelInput {
-    pub prompt: String,
-    pub context: Option<String>,
+    /// Channel-specific payload — a shell command for bash, a prompt for
+    /// claude-code, a URL/body blob for api.
+    pub command: String,
+    /// Working directory; validated by the caller to exist.
     pub cwd: Option<String>,
+    /// Per-step timeout (seconds). None → [`DEFAULT_TIMEOUT_SECS`].
+    pub timeout_secs: Option<u64>,
+    /// Extra environment variables to pass to child processes. The parent
+    /// env is inherited; this list only adds/overrides.
+    pub env: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelOutput {
     pub stdout: String,
     pub stderr: String,
+    /// `None` when the process was terminated by a signal (e.g. killed after timeout).
     pub exit_code: Option<i32>,
 }
 
 #[derive(Debug)]
 pub enum ChannelError {
-    Io(String),
-    Timeout,
+    /// Spawn failed (binary not found, permissions, malformed command, …).
     Spawn(String),
+    /// I/O error after spawn (pipe closed, wait failed).
+    Io(String),
+    /// Child ran longer than the configured timeout.
+    Timeout,
 }
 
 impl std::fmt::Display for ChannelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(s) => write!(f, "channel io error: {s}"),
-            Self::Timeout => write!(f, "channel timed out"),
-            Self::Spawn(s) => write!(f, "failed to spawn channel process: {s}"),
+            Self::Spawn(msg) => write!(f, "falha ao spawnar processo: {msg}"),
+            Self::Io(msg) => write!(f, "erro de I/O no canal: {msg}"),
+            Self::Timeout => write!(f, "canal excedeu o timeout"),
         }
     }
 }
 
 impl std::error::Error for ChannelError {}
 
+#[async_trait]
 pub trait Channel: Send + Sync {
     fn name(&self) -> &'static str;
+    async fn execute(&self, input: ChannelInput) -> Result<ChannelOutput, ChannelError>;
 }
