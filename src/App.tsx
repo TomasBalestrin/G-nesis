@@ -1,116 +1,82 @@
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
+
+import { MainLayout } from "@/components/layout/MainLayout";
 
 function App() {
   return (
-    <div className="min-h-screen p-10 space-y-8">
-      <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-4xl font-extrabold tracking-tight">Genesis</h1>
-          <Badge variant="info">v0.1.0</Badge>
-        </div>
-        <p className="text-text-2">
-          Desktop skill orchestrator — design system ready.
-        </p>
-      </header>
-
-      <Separator />
-
-      <Tabs defaultValue="components" className="w-full">
-        <TabsList>
-          <TabsTrigger value="components">Components</TabsTrigger>
-          <TabsTrigger value="tokens">Tokens</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="components" className="space-y-6 pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Buttons</CardTitle>
-              <CardDescription>Variants and sizes</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center gap-3">
-              <Button>Primary</Button>
-              <Button variant="secondary">Secondary</Button>
-              <Button variant="outline">Outline</Button>
-              <Button variant="ghost">Ghost</Button>
-              <Button variant="destructive">Destructive</Button>
-              <Button variant="link">Link</Button>
-              <Button size="sm">Small</Button>
-              <Button size="lg">Large</Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Input</CardTitle>
-              <CardDescription>With design-system focus ring</CardDescription>
-            </CardHeader>
-            <CardContent className="max-w-sm">
-              <Input placeholder="Type something..." />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Badges</CardTitle>
-              <CardDescription>Status variants</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              <Badge>Default</Badge>
-              <Badge variant="secondary">Secondary</Badge>
-              <Badge variant="success">Success</Badge>
-              <Badge variant="warning">Warning</Badge>
-              <Badge variant="destructive">Error</Badge>
-              <Badge variant="info">Info</Badge>
-              <Badge variant="outline">Outline</Badge>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="tokens" className="pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Theme tokens</CardTitle>
-              <CardDescription>
-                Active theme: <code className="font-mono">blue-dark</code>
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              {(
-                [
-                  ["--bg", "var(--bg)"],
-                  ["--surface", "var(--surface)"],
-                  ["--primary", "var(--primary)"],
-                  ["--border", "var(--border)"],
-                ] as const
-              ).map(([name, value]) => (
-                <div
-                  key={name}
-                  className="flex flex-col gap-2 rounded-lg border border-border p-3"
-                >
-                  <div
-                    className="h-10 w-full rounded-md border border-[var(--border-sub)]"
-                    style={{ background: value }}
-                  />
-                  <code className="font-mono text-xs text-text-2">{name}</code>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route element={<MainLayout />}>
+          <Route index element={<ChatPage />} />
+          <Route path="skills" element={<SkillsPage />} />
+          <Route path="skills/new" element={<NewSkillPage />} />
+          <Route path="skills/:name" element={<SkillDetailPage />} />
+          <Route path="projects" element={<ProjectsPage />} />
+          <Route path="projects/new" element={<NewProjectPage />} />
+          <Route path="projects/:id" element={<ProjectDetailPage />} />
+          <Route path="progress" element={<ProgressPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   );
 }
 
 export default App;
+
+interface PagePlaceholderProps {
+  title: string;
+  hint?: string;
+}
+
+function PagePlaceholder({ title, hint }: PagePlaceholderProps) {
+  return (
+    <div className="h-full p-8 space-y-2">
+      <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
+      {hint ? <p className="text-sm text-[var(--text-2)]">{hint}</p> : null}
+    </div>
+  );
+}
+
+function ChatPage() {
+  return <PagePlaceholder title="Chat" hint="/" />;
+}
+
+function SkillsPage() {
+  return <PagePlaceholder title="Skills" hint="/skills" />;
+}
+
+function NewSkillPage() {
+  return <PagePlaceholder title="Nova Skill" hint="/skills/new" />;
+}
+
+function SkillDetailPage() {
+  const { name } = useParams();
+  return <PagePlaceholder title={`Skill: ${name ?? ""}`} hint={`/skills/${name ?? ""}`} />;
+}
+
+function ProjectsPage() {
+  return <PagePlaceholder title="Projetos" hint="/projects" />;
+}
+
+function NewProjectPage() {
+  return <PagePlaceholder title="Novo Projeto" hint="/projects/new" />;
+}
+
+function ProjectDetailPage() {
+  const { id } = useParams();
+  return <PagePlaceholder title={`Projeto: ${id ?? ""}`} hint={`/projects/${id ?? ""}`} />;
+}
+
+function ProgressPage() {
+  return <PagePlaceholder title="Progress" hint="/progress" />;
+}
+
+function SettingsPage() {
+  return <PagePlaceholder title="Settings" hint="/settings" />;
+}
+
+function NotFoundPage() {
+  return <PagePlaceholder title="404" hint="Rota não encontrada" />;
+}
