@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
 
+import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 
 function App() {
@@ -7,7 +8,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<MainLayout />}>
-          <Route index element={<ChatPage />} />
+          <Route index element={<ChatPanel />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="skills/new" element={<NewSkillPage />} />
           <Route path="skills/:name" element={<SkillDetailPage />} />
@@ -37,10 +38,6 @@ function PagePlaceholder({ title, hint }: PagePlaceholderProps) {
       {hint ? <p className="text-sm text-[var(--text-2)]">{hint}</p> : null}
     </div>
   );
-}
-
-function ChatPage() {
-  return <PagePlaceholder title="Chat" hint="/" />;
 }
 
 function SkillsPage() {
