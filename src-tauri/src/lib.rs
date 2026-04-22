@@ -8,7 +8,7 @@ pub mod config;
 pub mod db;
 pub mod orchestrator;
 
-use commands::{chat, execution, projects, skills};
+use commands::{chat, config as config_cmd, execution, projects, skills};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,12 +20,25 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let cfg = config::load_config()
+                .map_err(|e| format!("failed to load config: {e}"))?;
+            if cfg.needs_setup {
+                eprintln!(
+                    "[genesis] OPENAI_API_KEY not set — frontend should show setup screen"
+                );
+            }
+            app.manage(cfg);
+
             let pool = tauri::async_runtime::block_on(db::init_db())
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
             app.manage(pool);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // config
+            config_cmd::get_config,
+            config_cmd::save_config,
             // skills
             skills::list_skills,
             skills::read_skill,

@@ -34,3 +34,4 @@ regex = "1"
 pulldown-cmark = "0.12"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 dirs = "5"
+toml = "0.8"
