@@ -28,6 +28,10 @@ pub struct ChannelInput {
     /// Extra environment variables to pass to child processes. The parent
     /// env is inherited; this list only adds/overrides.
     pub env: Vec<(String, String)>,
+    /// Paths of files the channel should surface as context. Used by
+    /// claude-code to prepend a "# Arquivos de contexto" block to the prompt
+    /// so the model knows which files to Read. Bash/api ignore this.
+    pub context_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
