@@ -1,0 +1,722 @@
+/* =============================================================================
+   CLAUDE DESIGN SYSTEM — design.css
+   4 Temas: Azul Light · Azul Dark · Laranja Light · Laranja Dark
+   Versão 2.0.0
+   
+   Índice:
+   01. Paleta Base (cores brutas)
+   02. Tema 1 — Azul Light    [data-theme="blue-light"]
+   03. Tema 2 — Azul Dark     [data-theme="blue-dark"]
+   04. Tema 3 — Laranja Light [data-theme="orange-light"]
+   05. Tema 4 — Laranja Dark  [data-theme="orange-dark"]
+   06. Tipografia
+   07. Espaçamento
+   08. Border Radius
+   09. Sombras
+   10. Transições
+   11. Breakpoints
+   12. Tokens de Componentes
+   13. Classes Utilitárias
+============================================================================= */
+
+
+/* =============================================================================
+   01. PALETA BASE
+   Escalas brutas — nunca use diretamente no produto.
+   Sempre referencie via tokens semânticos dos temas abaixo.
+============================================================================= */
+
+:root {
+
+  /* ── Azul #1A5CE6 ── */
+  --blue-50:  #EEF3FD;
+  --blue-100: #D4E2FB;
+  --blue-200: #AABFF6;
+  --blue-300: #7898EF;
+  --blue-400: #4A76EA;
+  --blue-500: #1A5CE6;   /* ← cor base */
+  --blue-600: #1449B8;
+  --blue-700: #0F368A;
+  --blue-800: #0A245C;
+  --blue-900: #06142E;
+  --blue-950: #030A17;
+
+  /* ── Laranja #F2762E ── */
+  --orange-50:  #FEF3EB;
+  --orange-100: #FDE3CC;
+  --orange-200: #FAC79A;
+  --orange-300: #F7A468;
+  --orange-400: #F48B48;
+  --orange-500: #F2762E;   /* ← cor base */
+  --orange-600: #D15E1A;
+  --orange-700: #A44913;
+  --orange-800: #77340D;
+  --orange-900: #4A2008;
+  --orange-950: #261003;
+
+  /* ── Cream / Pampas (base light mode) ── */
+  --cream-100: #fdfcfb;
+  --cream-200: #faf9f5;   /* ← bg light */
+  --cream-300: #f4f3ee;   /* ← Pampas / sidebar light */
+  --cream-400: #ece9e0;
+  --cream-500: #e0dcd0;
+  --cream-600: #d0cab8;
+
+  /* ── Warm Gray / Cloudy (base dark mode & neutros) ── */
+  --warm-50:  #f9f8f7;
+  --warm-100: #f0eeec;
+  --warm-200: #e4e0db;
+  --warm-300: #d1ccc4;
+  --warm-400: #b1ada1;   /* ← Cloudy */
+  --warm-500: #918d84;
+  --warm-600: #726e67;
+  --warm-700: #57534d;
+  --warm-800: #3d3a35;
+  --warm-900: #2a2723;
+  --warm-950: #1a1815;   /* ← bg dark */
+
+  /* ── Status ── */
+  --status-success:     #22c55e;
+  --status-success-bg:  #d1fae5;
+  --status-success-tx:  #15803d;
+  --status-warning:     #f59e0b;
+  --status-warning-bg:  #fef3c7;
+  --status-warning-tx:  #b45309;
+  --status-error:       #ef4444;
+  --status-error-bg:    #fee2e2;
+  --status-error-tx:    #b91c1c;
+  --status-info:        #3b82f6;
+  --status-info-bg:     #dbeafe;
+  --status-info-tx:     #1d4ed8;
+}
+
+
+/* =============================================================================
+   02. TEMA 1 — AZUL LIGHT
+   Fundo: Cream/Pampas · Primário: #1A5CE6
+============================================================================= */
+
+[data-theme="blue-light"],
+.theme-blue-light {
+
+  /* Backgrounds */
+  --bg:           #faf9f5;
+  --bg-subtle:    #f4f3ee;
+  --bg-muted:     #ece9e0;
+
+  /* Superfícies */
+  --surface:      #ffffff;
+  --surface-low:  #f4f3ee;
+
+  /* Bordas */
+  --border:       #d1ccc4;
+  --border-sub:   #e4e0db;
+  --border-str:   #b1ada1;
+
+  /* Texto */
+  --text:         #1a1815;
+  --text-2:       #57534d;
+  --text-3:       #918d84;
+  --text-dis:     #b1ada1;
+
+  /* Primário */
+  --primary:      #1A5CE6;
+  --primary-h:    #1449B8;
+  --primary-a:    #0F368A;
+  --primary-bg:   #EEF3FD;
+  --primary-mu:   #D4E2FB;
+  --primary-tx:   #0F368A;
+  --primary-bd:   #AABFF6;
+
+  /* Input */
+  --input-bg:     #ffffff;
+  --input-bd:     #d1ccc4;
+  --input-focus:  #1A5CE6;
+
+  /* Sidebar */
+  --sb-bg:        #f4f3ee;
+  --sb-bd:        #e4e0db;
+  --sb-hover:     #ece9e0;
+  --sb-active:    #EEF3FD;
+  --sb-text:      #57534d;
+  --sb-text-a:    #0F368A;
+
+  /* Código */
+  --code-bg:      #f0eeec;
+  --code-tx:      #3d3a35;
+
+  /* Sombras */
+  --shadow-sm:    0 1px 3px rgba(26,24,21,0.08), 0 1px 2px rgba(26,24,21,0.05);
+  --shadow-md:    0 4px 8px rgba(26,24,21,0.08), 0 2px 4px rgba(26,24,21,0.05);
+  --shadow-lg:    0 12px 24px rgba(26,24,21,0.10), 0 4px 8px rgba(26,24,21,0.05);
+  --shadow-xl:    0 24px 48px rgba(26,24,21,0.12), 0 8px 16px rgba(26,24,21,0.06);
+  --shadow-acc:   0 4px 16px rgba(26,92,230,0.25), 0 1px 4px rgba(26,92,230,0.12);
+
+  /* Focus */
+  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #7898EF;
+
+  /* Seleção */
+  --sel-bg:       #D4E2FB;
+  --sel-tx:       #0A245C;
+}
+
+
+/* =============================================================================
+   03. TEMA 2 — AZUL DARK
+   Fundo: Cinza quente Claude · Primário: #4A76EA (mais brilhante no escuro)
+============================================================================= */
+
+[data-theme="blue-dark"],
+.theme-blue-dark {
+
+  /* Backgrounds */
+  --bg:           #1a1815;
+  --bg-subtle:    #2a2723;
+  --bg-muted:     #3d3a35;
+
+  /* Superfícies */
+  --surface:      #252320;
+  --surface-low:  #2a2723;
+
+  /* Bordas */
+  --border:       #3d3a35;
+  --border-sub:   #2e2b27;
+  --border-str:   #524e48;
+
+  /* Texto */
+  --text:         #f0ede8;
+  --text-2:       #d1ccc4;
+  --text-3:       #918d84;
+  --text-dis:     #726e67;
+
+  /* Primário */
+  --primary:      #4A76EA;
+  --primary-h:    #7898EF;
+  --primary-a:    #AABFF6;
+  --primary-bg:   rgba(26, 92, 230, 0.14);
+  --primary-mu:   rgba(26, 92, 230, 0.22);
+  --primary-tx:   #7898EF;
+  --primary-bd:   rgba(26, 92, 230, 0.35);
+
+  /* Input */
+  --input-bg:     #1f1d1a;
+  --input-bd:     #3d3a35;
+  --input-focus:  #4A76EA;
+
+  /* Sidebar */
+  --sb-bg:        #1a1815;
+  --sb-bd:        #2a2723;
+  --sb-hover:     #2a2723;
+  --sb-active:    rgba(26, 92, 230, 0.14);
+  --sb-text:      #b1ada1;
+  --sb-text-a:    #7898EF;
+
+  /* Código */
+  --code-bg:      #1a1815;
+  --code-tx:      #e4e0db;
+
+  /* Sombras */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
+  --shadow-md:    0 4px 8px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
+  --shadow-lg:    0 12px 24px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.30);
+  --shadow-xl:    0 24px 48px rgba(0,0,0,0.55), 0 8px 16px rgba(0,0,0,0.35);
+  --shadow-acc:   0 4px 16px rgba(74,118,234,0.30), 0 1px 4px rgba(74,118,234,0.15);
+
+  /* Focus */
+  --focus-ring:   0 0 0 2px #1a1815, 0 0 0 4px #4A76EA;
+
+  /* Seleção */
+  --sel-bg:       rgba(26, 92, 230, 0.28);
+  --sel-tx:       #AABFF6;
+}
+
+
+/* =============================================================================
+   04. TEMA 3 — LARANJA LIGHT
+   Fundo: Cream/Pampas · Primário: #F2762E
+============================================================================= */
+
+[data-theme="orange-light"],
+.theme-orange-light {
+
+  /* Backgrounds */
+  --bg:           #faf9f5;
+  --bg-subtle:    #f4f3ee;
+  --bg-muted:     #ece9e0;
+
+  /* Superfícies */
+  --surface:      #ffffff;
+  --surface-low:  #f4f3ee;
+
+  /* Bordas */
+  --border:       #d1ccc4;
+  --border-sub:   #e4e0db;
+  --border-str:   #b1ada1;
+
+  /* Texto */
+  --text:         #1a1815;
+  --text-2:       #57534d;
+  --text-3:       #918d84;
+  --text-dis:     #b1ada1;
+
+  /* Primário */
+  --primary:      #F2762E;
+  --primary-h:    #D15E1A;
+  --primary-a:    #A44913;
+  --primary-bg:   #FEF3EB;
+  --primary-mu:   #FDE3CC;
+  --primary-tx:   #A44913;
+  --primary-bd:   #FAC79A;
+
+  /* Input */
+  --input-bg:     #ffffff;
+  --input-bd:     #d1ccc4;
+  --input-focus:  #F2762E;
+
+  /* Sidebar */
+  --sb-bg:        #f4f3ee;
+  --sb-bd:        #e4e0db;
+  --sb-hover:     #ece9e0;
+  --sb-active:    #FEF3EB;
+  --sb-text:      #57534d;
+  --sb-text-a:    #A44913;
+
+  /* Código */
+  --code-bg:      #f0eeec;
+  --code-tx:      #3d3a35;
+
+  /* Sombras */
+  --shadow-sm:    0 1px 3px rgba(26,24,21,0.08), 0 1px 2px rgba(26,24,21,0.05);
+  --shadow-md:    0 4px 8px rgba(26,24,21,0.08), 0 2px 4px rgba(26,24,21,0.05);
+  --shadow-lg:    0 12px 24px rgba(26,24,21,0.10), 0 4px 8px rgba(26,24,21,0.05);
+  --shadow-xl:    0 24px 48px rgba(26,24,21,0.12), 0 8px 16px rgba(26,24,21,0.06);
+  --shadow-acc:   0 4px 16px rgba(242,118,46,0.28), 0 1px 4px rgba(242,118,46,0.14);
+
+  /* Focus */
+  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #F7A468;
+
+  /* Seleção */
+  --sel-bg:       #FDE3CC;
+  --sel-tx:       #77340D;
+}
+
+
+/* =============================================================================
+   05. TEMA 4 — LARANJA DARK
+   Fundo: Cinza quente Claude · Primário: #F48B48 (mais brilhante no escuro)
+============================================================================= */
+
+[data-theme="orange-dark"],
+.theme-orange-dark {
+
+  /* Backgrounds */
+  --bg:           #1a1815;
+  --bg-subtle:    #2a2723;
+  --bg-muted:     #3d3a35;
+
+  /* Superfícies */
+  --surface:      #252320;
+  --surface-low:  #2a2723;
+
+  /* Bordas */
+  --border:       #3d3a35;
+  --border-sub:   #2e2b27;
+  --border-str:   #524e48;
+
+  /* Texto */
+  --text:         #f0ede8;
+  --text-2:       #d1ccc4;
+  --text-3:       #918d84;
+  --text-dis:     #726e67;
+
+  /* Primário */
+  --primary:      #F48B48;
+  --primary-h:    #F7A468;
+  --primary-a:    #FAC79A;
+  --primary-bg:   rgba(242, 118, 46, 0.13);
+  --primary-mu:   rgba(242, 118, 46, 0.22);
+  --primary-tx:   #F7A468;
+  --primary-bd:   rgba(242, 118, 46, 0.35);
+
+  /* Input */
+  --input-bg:     #1f1d1a;
+  --input-bd:     #3d3a35;
+  --input-focus:  #F48B48;
+
+  /* Sidebar */
+  --sb-bg:        #1a1815;
+  --sb-bd:        #2a2723;
+  --sb-hover:     #2a2723;
+  --sb-active:    rgba(242, 118, 46, 0.13);
+  --sb-text:      #b1ada1;
+  --sb-text-a:    #F7A468;
+
+  /* Código */
+  --code-bg:      #1a1815;
+  --code-tx:      #e4e0db;
+
+  /* Sombras */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
+  --shadow-md:    0 4px 8px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
+  --shadow-lg:    0 12px 24px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.30);
+  --shadow-xl:    0 24px 48px rgba(0,0,0,0.55), 0 8px 16px rgba(0,0,0,0.35);
+  --shadow-acc:   0 4px 16px rgba(244,139,72,0.30), 0 1px 4px rgba(244,139,72,0.15);
+
+  /* Focus */
+  --focus-ring:   0 0 0 2px #1a1815, 0 0 0 4px #F48B48;
+
+  /* Seleção */
+  --sel-bg:       rgba(242, 118, 46, 0.25);
+  --sel-tx:       #FAC79A;
+}
+
+
+/* =============================================================================
+   06. TIPOGRAFIA
+============================================================================= */
+
+:root {
+  /* Famílias */
+  --font-sans:  "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono:  "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --font-serif: Georgia, "Times New Roman", serif;
+
+  /* Escala de tamanho */
+  --text-xs:    0.75rem;    /*  12px */
+  --text-sm:    0.875rem;   /*  14px */
+  --text-base:  1rem;       /*  16px */
+  --text-lg:    1.125rem;   /*  18px */
+  --text-xl:    1.25rem;    /*  20px */
+  --text-2xl:   1.5rem;     /*  24px */
+  --text-3xl:   1.875rem;   /*  30px */
+  --text-4xl:   2.25rem;    /*  36px */
+  --text-5xl:   3rem;       /*  48px */
+  --text-6xl:   3.75rem;    /*  60px */
+  --text-7xl:   4.5rem;     /*  72px */
+
+  /* Pesos */
+  --weight-light:     300;
+  --weight-regular:   400;
+  --weight-medium:    500;
+  --weight-semibold:  600;
+  --weight-bold:      700;
+  --weight-extrabold: 800;
+
+  /* Line heights */
+  --leading-none:    1;
+  --leading-tight:   1.25;
+  --leading-snug:    1.375;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.625;
+  --leading-loose:   2;
+
+  /* Letter spacing */
+  --tracking-tight:   -0.025em;
+  --tracking-normal:   0em;
+  --tracking-wide:     0.025em;
+  --tracking-wider:    0.05em;
+  --tracking-widest:   0.1em;
+}
+
+
+/* =============================================================================
+   07. ESPAÇAMENTO
+   Base: 4px (0.25rem)
+============================================================================= */
+
+:root {
+  --space-0:    0;
+  --space-px:   1px;
+  --space-0-5:  0.125rem;  /*   2px */
+  --space-1:    0.25rem;   /*   4px */
+  --space-1-5:  0.375rem;  /*   6px */
+  --space-2:    0.5rem;    /*   8px */
+  --space-2-5:  0.625rem;  /*  10px */
+  --space-3:    0.75rem;   /*  12px */
+  --space-3-5:  0.875rem;  /*  14px */
+  --space-4:    1rem;      /*  16px */
+  --space-5:    1.25rem;   /*  20px */
+  --space-6:    1.5rem;    /*  24px */
+  --space-7:    1.75rem;   /*  28px */
+  --space-8:    2rem;      /*  32px */
+  --space-9:    2.25rem;   /*  36px */
+  --space-10:   2.5rem;    /*  40px */
+  --space-11:   2.75rem;   /*  44px */
+  --space-12:   3rem;      /*  48px */
+  --space-14:   3.5rem;    /*  56px */
+  --space-16:   4rem;      /*  64px */
+  --space-20:   5rem;      /*  80px */
+  --space-24:   6rem;      /*  96px */
+  --space-28:   7rem;      /* 112px */
+  --space-32:   8rem;      /* 128px */
+  --space-36:   9rem;      /* 144px */
+  --space-40:   10rem;     /* 160px */
+  --space-48:   12rem;     /* 192px */
+  --space-56:   14rem;     /* 224px */
+  --space-64:   16rem;     /* 256px */
+}
+
+
+/* =============================================================================
+   08. BORDER RADIUS
+============================================================================= */
+
+:root {
+  --radius-none: 0;
+  --radius-sm:   0.25rem;   /*  4px */
+  --radius-md:   0.375rem;  /*  6px */
+  --radius-base: 0.5rem;    /*  8px */
+  --radius-lg:   0.75rem;   /* 12px */
+  --radius-xl:   1rem;      /* 16px */
+  --radius-2xl:  1.25rem;   /* 20px */
+  --radius-3xl:  1.5rem;    /* 24px */
+  --radius-full: 9999px;
+
+  /* Por componente */
+  --radius-btn:     var(--radius-lg);
+  --radius-input:   var(--radius-base);
+  --radius-card:    var(--radius-xl);
+  --radius-modal:   var(--radius-2xl);
+  --radius-badge:   var(--radius-full);
+  --radius-tooltip: var(--radius-md);
+  --radius-avatar:  var(--radius-full);
+}
+
+
+/* =============================================================================
+   09. SOMBRAS GLOBAIS
+   (Sombras coloridas de accent estão nos temas via --shadow-acc)
+============================================================================= */
+
+:root {
+  --shadow-none:  none;
+  --shadow-inner: inset 0 2px 4px 0 rgba(26,24,21,0.06);
+
+  /* Focus ring padrão — sobrescrito por cada tema */
+  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #7898EF;
+}
+
+
+/* =============================================================================
+   10. TRANSIÇÕES
+============================================================================= */
+
+:root {
+  /* Durações */
+  --dur-instant:  50ms;
+  --dur-fast:     100ms;
+  --dur-normal:   200ms;
+  --dur-slow:     300ms;
+  --dur-slower:   400ms;
+
+  /* Easings */
+  --ease-linear:  linear;
+  --ease-in:      cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:     cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out:  cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce:  cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Shorthands */
+  --transition-colors:    color var(--dur-normal) var(--ease-out),
+                          background-color var(--dur-normal) var(--ease-out),
+                          border-color var(--dur-normal) var(--ease-out);
+  --transition-shadow:    box-shadow var(--dur-normal) var(--ease-out);
+  --transition-transform: transform var(--dur-normal) var(--ease-out);
+  --transition-all:       all var(--dur-normal) var(--ease-out);
+}
+
+
+/* =============================================================================
+   11. BREAKPOINTS
+============================================================================= */
+
+:root {
+  --screen-sm:  640px;
+  --screen-md:  768px;
+  --screen-lg:  1024px;
+  --screen-xl:  1280px;
+  --screen-2xl: 1536px;
+
+  --container-sm:   38rem;
+  --container-md:   48rem;
+  --container-lg:   64rem;
+  --container-xl:   80rem;
+  --container-chat: 48rem;   /* largura padrão de chat */
+  --container-prose:65ch;    /* largura ideal de leitura */
+}
+
+
+/* =============================================================================
+   12. TOKENS DE COMPONENTES
+============================================================================= */
+
+:root {
+  /* Botões */
+  --btn-h-sm: var(--space-8);    /* 32px */
+  --btn-h-md: var(--space-10);   /* 40px */
+  --btn-h-lg: var(--space-12);   /* 48px */
+  --btn-px-sm: var(--space-3);
+  --btn-px-md: var(--space-4);
+  --btn-px-lg: var(--space-6);
+  --btn-fs-sm: var(--text-sm);
+  --btn-fs-md: var(--text-sm);
+  --btn-fs-lg: var(--text-base);
+  --btn-fw:    var(--weight-semibold);
+  --btn-r:     var(--radius-btn);
+
+  /* Inputs */
+  --input-h-sm: var(--space-8);
+  --input-h-md: var(--space-10);
+  --input-h-lg: var(--space-12);
+  --input-px:   var(--space-3);
+  --input-fs:   var(--text-sm);
+  --input-r:    var(--radius-input);
+
+  /* Cards */
+  --card-p-sm: var(--space-4);
+  --card-p-md: var(--space-6);
+  --card-p-lg: var(--space-8);
+  --card-r:    var(--radius-card);
+
+  /* Badge */
+  --badge-h:  var(--space-5);     /* 20px */
+  --badge-px: var(--space-2);
+  --badge-fs: var(--text-xs);
+  --badge-fw: var(--weight-semibold);
+  --badge-r:  var(--radius-badge);
+
+  /* Avatar */
+  --av-sm:  var(--space-7);    /* 28px */
+  --av-md:  var(--space-9);    /* 36px */
+  --av-lg:  var(--space-12);   /* 48px */
+  --av-xl:  var(--space-16);   /* 64px */
+
+  /* Navbar */
+  --nav-h:  var(--space-14);   /* 56px */
+
+  /* Sidebar */
+  --sb-w:   260px;
+  --sb-w-sm:220px;
+}
+
+
+/* =============================================================================
+   13. CLASSES UTILITÁRIAS
+============================================================================= */
+
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Base do documento */
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Seleção de texto */
+::selection {
+  background: var(--sel-bg);
+  color:      var(--sel-tx);
+}
+
+/* Focus ring global */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar              { width: 6px; height: 6px; }
+::-webkit-scrollbar-track        { background: transparent; }
+::-webkit-scrollbar-thumb        { background: var(--border); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover  { background: var(--border-str); }
+
+/* ── Backgrounds ── */
+.bg-base     { background: var(--bg); }
+.bg-subtle   { background: var(--bg-subtle); }
+.bg-muted    { background: var(--bg-muted); }
+.bg-surface  { background: var(--surface); }
+.bg-primary  { background: var(--primary); }
+.bg-primary-subtle { background: var(--primary-bg); }
+
+/* ── Texto ── */
+.text-base    { color: var(--text); }
+.text-2       { color: var(--text-2); }
+.text-3       { color: var(--text-3); }
+.text-dis     { color: var(--text-dis); }
+.text-primary { color: var(--primary); }
+.text-primary-tx { color: var(--primary-tx); }
+
+/* ── Bordas ── */
+.border        { border: 1px solid var(--border); }
+.border-sub    { border: 1px solid var(--border-sub); }
+.border-str    { border: 1px solid var(--border-str); }
+.border-primary{ border: 1px solid var(--primary); }
+
+/* ── Status ── */
+.text-success { color: var(--status-success-tx); }
+.text-warning { color: var(--status-warning-tx); }
+.text-error   { color: var(--status-error-tx); }
+.text-info    { color: var(--status-info-tx); }
+
+.bg-success   { background: var(--status-success-bg); }
+.bg-warning   { background: var(--status-warning-bg); }
+.bg-error     { background: var(--status-error-bg); }
+.bg-info      { background: var(--status-info-bg); }
+
+/* ── Sombras ── */
+.shadow-sm  { box-shadow: var(--shadow-sm); }
+.shadow-md  { box-shadow: var(--shadow-md); }
+.shadow-lg  { box-shadow: var(--shadow-lg); }
+.shadow-xl  { box-shadow: var(--shadow-xl); }
+.shadow-acc { box-shadow: var(--shadow-acc); }
+
+/* ── Radius ── */
+.r-sm   { border-radius: var(--radius-sm); }
+.r-md   { border-radius: var(--radius-md); }
+.r-base { border-radius: var(--radius-base); }
+.r-lg   { border-radius: var(--radius-lg); }
+.r-xl   { border-radius: var(--radius-xl); }
+.r-2xl  { border-radius: var(--radius-2xl); }
+.r-full { border-radius: var(--radius-full); }
+
+/* ── Transições ── */
+.transition-colors    { transition: var(--transition-colors); }
+.transition-shadow    { transition: var(--transition-shadow); }
+.transition-transform { transition: var(--transition-transform); }
+.transition-all       { transition: var(--transition-all); }
+
+
+/* =============================================================================
+   COMO USAR
+   
+   1. Importe este arquivo antes de qualquer outro CSS:
+      @import './design.css';
+   
+   2. Aplique o tema no elemento <html> (ou qualquer ancestral):
+      <html data-theme="blue-light">   <!-- Azul claro  -->
+      <html data-theme="blue-dark">    <!-- Azul escuro -->
+      <html data-theme="orange-light"> <!-- Laranja claro -->
+      <html data-theme="orange-dark">  <!-- Laranja escuro -->
+   
+   3. Ou via JavaScript:
+      document.documentElement.setAttribute('data-theme', 'orange-dark');
+   
+   4. Referencie os tokens no seu CSS:
+      .btn { background: var(--primary); box-shadow: var(--shadow-acc); }
+      .card { background: var(--surface); border: 1px solid var(--border); }
+   
+   5. Cores brutas disponíveis:
+      Azul:    --blue-500  → #1A5CE6
+      Laranja: --orange-500 → #F2762E
+      Pampas:  --cream-300  → #f4f3ee (bg sidebar light)
+      Cloudy:  --warm-400   → #b1ada1
+      Dark bg: --warm-950   → #1a1815
+============================================================================= */
