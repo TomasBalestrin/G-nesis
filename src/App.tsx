@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillViewer } from "@/components/skills/SkillViewer";
 import { Toaster } from "@/components/ui/toaster";
@@ -13,7 +14,7 @@ function App() {
         <Route element={<MainLayout />}>
           <Route index element={<ChatPanel />} />
           <Route path="skills" element={<SkillList />} />
-          <Route path="skills/new" element={<NewSkillPage />} />
+          <Route path="skills/new" element={<SkillEditor />} />
           <Route path="skills/:name" element={<SkillViewer />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/new" element={<NewProjectPage />} />
@@ -42,10 +43,6 @@ function PagePlaceholder({ title, hint }: PagePlaceholderProps) {
       {hint ? <p className="text-sm text-[var(--text-2)]">{hint}</p> : null}
     </div>
   );
-}
-
-function NewSkillPage() {
-  return <PagePlaceholder title="Nova Skill" hint="/skills/new" />;
 }
 
 function ProjectsPage() {
