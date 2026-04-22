@@ -9,6 +9,7 @@ pub mod db;
 pub mod orchestrator;
 
 use commands::{chat, execution, projects, skills};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +19,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let pool = tauri::async_runtime::block_on(db::init_db())
+                .map_err(|e| format!("failed to initialize database: {e}"))?;
+            app.manage(pool);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // skills
             skills::list_skills,

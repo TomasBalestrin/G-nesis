@@ -32,3 +32,5 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 regex = "1"
 pulldown-cmark = "0.12"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+dirs = "5"
