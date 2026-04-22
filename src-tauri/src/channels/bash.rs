@@ -76,6 +76,7 @@ impl Channel for BashChannel {
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 exit_code: output.status.code(),
+                ..Default::default()
             }),
             Ok(Err(e)) => Err(ChannelError::Io(e.to_string())),
             Err(_elapsed) => Err(ChannelError::Timeout),

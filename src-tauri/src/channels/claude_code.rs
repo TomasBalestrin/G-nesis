@@ -137,6 +137,7 @@ impl Channel for ClaudeCodeChannel {
             stdout,
             stderr,
             exit_code: output.status.code(),
+            ..Default::default()
         })
     }
 }

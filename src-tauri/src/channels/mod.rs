@@ -19,7 +19,7 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelInput {
     /// Channel-specific payload — a shell command for bash, a prompt for
-    /// claude-code, a URL/body blob for api.
+    /// claude-code, a URL for api.
     pub command: String,
     /// Working directory; validated by the caller to exist.
     pub cwd: Option<String>,
@@ -32,14 +32,29 @@ pub struct ChannelInput {
     /// claude-code to prepend a "# Arquivos de contexto" block to the prompt
     /// so the model knows which files to Read. Bash/api ignore this.
     pub context_files: Vec<String>,
+    /// HTTP method for the api channel (GET/POST/…). Defaults to GET when
+    /// None. Ignored by bash/claude-code.
+    pub http_method: Option<String>,
+    /// HTTP headers as (key, value) pairs. Ignored by bash/claude-code.
+    pub headers: Vec<(String, String)>,
+    /// HTTP request body. Ignored by bash/claude-code.
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelOutput {
+    /// Primary output — stdout for bash/claude-code, response body for api.
     pub stdout: String,
     pub stderr: String,
     /// `None` when the process was terminated by a signal (e.g. killed after timeout).
+    /// For api: `Some(0)` on 2xx, `Some(1)` otherwise, so validators that check
+    /// `exit_code == 0` still work uniformly.
     pub exit_code: Option<i32>,
+    /// HTTP status code for the api channel. None for bash/claude-code.
+    pub status_code: Option<u16>,
+    /// Wall-clock duration of the call in milliseconds. Currently populated
+    /// by api; bash/claude-code leave it None (future polish).
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug)]
