@@ -6,5 +6,7 @@ pub mod state;
 pub mod validator;
 pub mod variable_resolver;
 
+pub use executor::{ExecutionHandle, ExecutionRegistry, Executor};
 pub use skill_parser::{ParsedSkill, SkillConfig, SkillMeta, SkillStep, StepLoop};
 pub use state::{ExecutionState, StepState};
+pub use validator::StepResult;

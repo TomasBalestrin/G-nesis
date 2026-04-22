@@ -9,6 +9,7 @@ pub mod db;
 pub mod orchestrator;
 
 use commands::{chat, config as config_cmd, execution, projects, skills};
+use orchestrator::ExecutionRegistry;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -32,6 +33,8 @@ pub fn run() {
             let pool = tauri::async_runtime::block_on(db::init_db())
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
             app.manage(pool);
+
+            app.manage(ExecutionRegistry::new());
 
             Ok(())
         })
