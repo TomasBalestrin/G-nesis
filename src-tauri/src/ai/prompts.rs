@@ -28,3 +28,30 @@ Se nenhuma skill da lista se aplica, use skill=null."#;
 pub const VALIDATION_PROMPT: &str = r#"Analise o output deste step e determine se o critério de validação foi atendido.
 Retorne APENAS JSON:
 {"success": true|false, "reason": "explicação curta"}"#;
+
+use crate::orchestrator::skill_parser::SkillMeta;
+
+/// Append a "## Skills disponíveis" section listing each skill's slash
+/// command + description. When `skills` is empty, returns the base prompt
+/// unchanged so GPT knows to suggest `/skills/new`.
+pub fn with_skill_catalog(base: &str, skills: &[SkillMeta]) -> String {
+    if skills.is_empty() {
+        return base.to_string();
+    }
+    let mut prompt = String::with_capacity(base.len() + 64 * skills.len());
+    prompt.push_str(base);
+    prompt.push_str("\n\n## Skills disponíveis\n");
+    for skill in skills {
+        let desc = if skill.description.is_empty() {
+            "(sem descrição)"
+        } else {
+            skill.description.as_str()
+        };
+        prompt.push_str("- `/");
+        prompt.push_str(&skill.name);
+        prompt.push_str("` — ");
+        prompt.push_str(desc);
+        prompt.push('\n');
+    }
+    prompt
+}
