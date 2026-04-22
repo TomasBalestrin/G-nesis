@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ChatMessage } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { Project } from "@/types/project";
-import type { ParsedSkill } from "@/types/skill";
+import type { ParsedSkill, SkillMeta } from "@/types/skill";
 
 // ── config ──────────────────────────────────────────────────────────────────
 
@@ -29,8 +29,8 @@ export function saveConfig(args: {
 
 // ── skills ──────────────────────────────────────────────────────────────────
 
-/** Returns skill names discovered in the configured skills directory. */
-export function listSkills(): Promise<string[]> {
+/** Returns parsed meta (name, description, ...) for every skill that parses. */
+export function listSkills(): Promise<SkillMeta[]> {
   return invoke("list_skills");
 }
 
@@ -123,4 +123,4 @@ export function callOpenAI(args: { prompt: string }): Promise<string> {
 export type { ChatMessage } from "@/types/chat";
 export type { Config } from "@/types/config";
 export type { Execution, ExecutionStep, Project } from "@/types/project";
-export type { ParsedSkill } from "@/types/skill";
+export type { ParsedSkill, SkillMeta } from "@/types/skill";

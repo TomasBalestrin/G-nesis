@@ -2,6 +2,8 @@ import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { SkillList } from "@/components/skills/SkillList";
+import { SkillViewer } from "@/components/skills/SkillViewer";
 import { Toaster } from "@/components/ui/toaster";
 
 function App() {
@@ -10,9 +12,9 @@ function App() {
       <Routes>
         <Route element={<MainLayout />}>
           <Route index element={<ChatPanel />} />
-          <Route path="skills" element={<SkillsPage />} />
+          <Route path="skills" element={<SkillList />} />
           <Route path="skills/new" element={<NewSkillPage />} />
-          <Route path="skills/:name" element={<SkillDetailPage />} />
+          <Route path="skills/:name" element={<SkillViewer />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/new" element={<NewProjectPage />} />
           <Route path="projects/:id" element={<ProjectDetailPage />} />
@@ -42,17 +44,8 @@ function PagePlaceholder({ title, hint }: PagePlaceholderProps) {
   );
 }
 
-function SkillsPage() {
-  return <PagePlaceholder title="Skills" hint="/skills" />;
-}
-
 function NewSkillPage() {
   return <PagePlaceholder title="Nova Skill" hint="/skills/new" />;
-}
-
-function SkillDetailPage() {
-  const { name } = useParams();
-  return <PagePlaceholder title={`Skill: ${name ?? ""}`} hint={`/skills/${name ?? ""}`} />;
 }
 
 function ProjectsPage() {
