@@ -5,12 +5,15 @@ import type { ChatMessage } from "@/types/chat";
 interface ChatState {
   messages: ChatMessage[];
   addMessage: (message: ChatMessage) => void;
-  clear: () => void;
+  clearMessages: () => void;
+  /** Replace the whole list — used when loading history from SQLite. */
+  setMessages: (messages: ChatMessage[]) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
   addMessage: (message) =>
-    set((s) => ({ messages: [...s.messages, message] })),
-  clear: () => set({ messages: [] }),
+    set((state) => ({ messages: [...state.messages, message] })),
+  clearMessages: () => set({ messages: [] }),
+  setMessages: (messages) => set({ messages }),
 }));

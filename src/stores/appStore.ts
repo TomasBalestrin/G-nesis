@@ -1,17 +1,21 @@
 import { create } from "zustand";
 
-type Theme = "blue-dark" | "blue-light" | "orange-dark" | "orange-light";
-
 interface AppState {
   sidebarOpen: boolean;
-  theme: Theme;
+  activeRoute: string;
+  needsSetup: boolean;
+  setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
-  setTheme: (theme: Theme) => void;
+  setActiveRoute: (route: string) => void;
+  setNeedsSetup: (needs: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   sidebarOpen: true,
-  theme: "blue-dark",
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  setTheme: (theme) => set({ theme }),
+  activeRoute: "/",
+  needsSetup: true,
+  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  setActiveRoute: (activeRoute) => set({ activeRoute }),
+  setNeedsSetup: (needsSetup) => set({ needsSetup }),
 }));
