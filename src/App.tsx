@@ -6,6 +6,7 @@ import { ProgressDashboard } from "@/components/progress/ProgressDashboard";
 import { NewProjectForm } from "@/components/projects/NewProjectForm";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { ProjectList } from "@/components/projects/ProjectList";
+import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillViewer } from "@/components/skills/SkillViewer";
@@ -47,10 +48,6 @@ function PagePlaceholder({ title, hint }: PagePlaceholderProps) {
       {hint ? <p className="text-sm text-[var(--text-2)]">{hint}</p> : null}
     </div>
   );
-}
-
-function SettingsPage() {
-  return <PagePlaceholder title="Settings" hint="/settings" />;
 }
 
 function NotFoundPage() {
