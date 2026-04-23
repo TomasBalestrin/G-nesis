@@ -75,6 +75,21 @@ pub async fn list_executions_for_project(
     .map_err(map_err)
 }
 
+pub async fn get_execution(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<Execution>, String> {
+    sqlx::query_as::<_, Execution>(
+        "SELECT id, project_id, skill_name, status, started_at, finished_at,
+                total_steps, completed_steps, created_at
+         FROM executions WHERE id = ?1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
 pub async fn insert_execution(pool: &SqlitePool, execution: &Execution) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO executions

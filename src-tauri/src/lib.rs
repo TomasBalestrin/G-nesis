@@ -51,6 +51,8 @@ pub fn run() {
             projects::list_projects,
             projects::create_project,
             projects::delete_project,
+            projects::get_execution_history,
+            projects::get_execution_detail,
             // execution
             execution::execute_skill,
             execution::abort,
