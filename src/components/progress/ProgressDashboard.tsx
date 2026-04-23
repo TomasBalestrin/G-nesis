@@ -67,10 +67,10 @@ export function ProgressDashboard() {
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <header className="border-b border-border px-6 py-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <h2 className="truncate font-mono text-lg font-semibold">
               {activeExecution.skill_name}
             </h2>
@@ -78,7 +78,7 @@ export function ProgressDashboard() {
               execução {activeExecution.id.slice(0, 8)}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={activeExecution.status} />
             {isRunning ? (
               <Button
