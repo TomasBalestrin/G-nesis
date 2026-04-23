@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { ProgressDashboard } from "@/components/progress/ProgressDashboard";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillViewer } from "@/components/skills/SkillViewer";
@@ -19,7 +20,7 @@ function App() {
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/new" element={<NewProjectPage />} />
           <Route path="projects/:id" element={<ProjectDetailPage />} />
-          <Route path="progress" element={<ProgressPage />} />
+          <Route path="progress" element={<ProgressDashboard />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
@@ -56,10 +57,6 @@ function NewProjectPage() {
 function ProjectDetailPage() {
   const { id } = useParams();
   return <PagePlaceholder title={`Projeto: ${id ?? ""}`} hint={`/projects/${id ?? ""}`} />;
-}
-
-function ProgressPage() {
-  return <PagePlaceholder title="Progress" hint="/progress" />;
 }
 
 function SettingsPage() {
