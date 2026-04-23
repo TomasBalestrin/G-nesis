@@ -1,10 +1,8 @@
 import { useCallback, useState } from "react";
 
-import { sendChatMessage } from "@/lib/tauri-bridge";
+import { safeInvoke, sendChatMessage } from "@/lib/tauri-bridge";
 import { useChatStore } from "@/stores/chatStore";
 import type { ChatMessage } from "@/types/chat";
-
-import { useToast } from "./useToast";
 
 interface UseChatResult {
   sending: boolean;
@@ -14,17 +12,12 @@ interface UseChatResult {
 /**
  * Sends a message through the Rust bridge, optimistically appending the user
  * message to the chat store and the assistant reply on resolution. Errors
- * surface as destructive toasts; the user message stays in the list so the
- * user can retry without retyping.
- *
- * The Rust `send_chat_message` persists both messages to SQLite — the
- * optimistic entry is only for UI immediacy and will be replaced the next
- * time history loads from the backend.
+ * surface as destructive toasts (auto-persisting via the destructive variant
+ * default) so the user never misses a failed send.
  */
 export function useChat(): UseChatResult {
   const addMessage = useChatStore((s) => s.addMessage);
   const [sending, setSending] = useState(false);
-  const { toast } = useToast();
 
   const send = useCallback(
     async (content: string) => {
@@ -38,21 +31,13 @@ export function useChat(): UseChatResult {
       addMessage(optimistic);
 
       setSending(true);
-      try {
-        const reply = await sendChatMessage({ content });
-        addMessage(reply);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        toast({
-          title: "Falha ao enviar mensagem",
-          description: message,
-          variant: "destructive",
-        });
-      } finally {
-        setSending(false);
-      }
+      const reply = await safeInvoke(() => sendChatMessage({ content }), {
+        errorTitle: "Falha ao enviar mensagem",
+      });
+      if (reply) addMessage(reply);
+      setSending(false);
     },
-    [addMessage, toast],
+    [addMessage],
   );
 
   return { sending, send };

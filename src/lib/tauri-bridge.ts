@@ -9,10 +9,64 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { reportFatalError } from "@/hooks/useFatalError";
+import { toast } from "@/hooks/useToast";
 import type { ChatMessage } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { Execution, ExecutionDetail, Project } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
+
+export interface SafeInvokeOptions {
+  /** Toast title shown after a successful call. Omit to stay silent on success. */
+  successTitle?: string;
+  /** Toast title prefix shown on failure. Defaults to "Erro inesperado". */
+  errorTitle?: string;
+  /** Promote failures to a blocking fatal-error dialog instead of a toast. */
+  fatal?: boolean;
+  /** Override the success toast duration (ms). */
+  successDuration?: number;
+  /** Override the error toast duration (ms). Default for destructive: persist. */
+  errorDuration?: number;
+}
+
+/**
+ * Wrap a bridge call (or any Promise) with consistent UX:
+ *   - success → optional 3s toast
+ *   - failure → destructive toast (persists) OR fatal dialog if `fatal: true`
+ *   - returns `null` on failure so callers can branch without try/catch
+ *
+ * Use this for one-off invocations from event handlers. For react-state
+ * lifecycle (loading/error fields), `useTauriCommand` is still the right call.
+ */
+export async function safeInvoke<T>(
+  call: () => Promise<T>,
+  options: SafeInvokeOptions = {},
+): Promise<T | null> {
+  try {
+    const result = await call();
+    if (options.successTitle) {
+      toast({
+        title: options.successTitle,
+        duration: options.successDuration,
+      });
+    }
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const title = options.errorTitle ?? "Erro inesperado";
+    if (options.fatal) {
+      reportFatalError(title, message);
+    } else {
+      toast({
+        title,
+        description: message,
+        variant: "destructive",
+        duration: options.errorDuration,
+      });
+    }
+    return null;
+  }
+}
 
 // ── config ──────────────────────────────────────────────────────────────────
 

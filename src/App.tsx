@@ -10,6 +10,7 @@ import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillViewer } from "@/components/skills/SkillViewer";
+import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
         </Route>
       </Routes>
       <Toaster />
+      <FatalErrorDialog />
     </BrowserRouter>
   );
 }

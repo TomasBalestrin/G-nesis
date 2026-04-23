@@ -7,7 +7,13 @@ import * as React from "react";
 import type { ToastActionElement, ToastProps } from "@/components/ui/toast";
 
 const TOAST_LIMIT = 3;
+/** Time between dismiss (fade-out) and full removal from state. */
 const TOAST_REMOVE_DELAY = 5000;
+/** Auto-dismiss for default toasts. */
+const DEFAULT_DURATION = 3000;
+/** Effectively persists — Radix Toast's setTimeout-based dismissal needs a
+ *  finite number (Infinity overflows to 1ms in browsers per HTML spec). */
+const PERSIST_DURATION = 1000 * 60 * 60 * 24;
 
 type ToasterToast = ToastProps & {
   id: string;
@@ -90,14 +96,26 @@ function genId() {
 
 type ToastInput = Omit<ToasterToast, "id" | "open" | "onOpenChange">;
 
+/**
+ * Smart default duration: destructive toasts persist (until the user
+ * dismisses) so users don't miss errors that flash by; everything else
+ * auto-dismisses in 3s. Caller can override with an explicit `duration`.
+ */
+function resolveDuration(props: ToastInput): number {
+  if (typeof props.duration === "number") return props.duration;
+  return props.variant === "destructive" ? PERSIST_DURATION : DEFAULT_DURATION;
+}
+
 export function toast(props: ToastInput) {
   const id = genId();
+  const duration = resolveDuration(props);
   const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id });
   dispatch({
     type: "ADD_TOAST",
     toast: {
       ...props,
       id,
+      duration,
       open: true,
       onOpenChange: (open) => {
         if (!open) dismiss();
