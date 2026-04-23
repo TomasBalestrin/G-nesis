@@ -54,3 +54,9 @@ export interface ExecutionStep {
   duration_ms: number | null;
   created_at: string;
 }
+
+/** Compound returned by `get_execution_detail` — mirrors Rust ExecutionDetail. */
+export interface ExecutionDetail {
+  execution: Execution;
+  steps: ExecutionStep[];
+}

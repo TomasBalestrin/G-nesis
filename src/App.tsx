@@ -1,8 +1,11 @@
-import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { ProgressDashboard } from "@/components/progress/ProgressDashboard";
+import { NewProjectForm } from "@/components/projects/NewProjectForm";
+import { ProjectDetail } from "@/components/projects/ProjectDetail";
+import { ProjectList } from "@/components/projects/ProjectList";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillViewer } from "@/components/skills/SkillViewer";
@@ -17,9 +20,9 @@ function App() {
           <Route path="skills" element={<SkillList />} />
           <Route path="skills/new" element={<SkillEditor />} />
           <Route path="skills/:name" element={<SkillViewer />} />
-          <Route path="projects" element={<ProjectsPage />} />
-          <Route path="projects/new" element={<NewProjectPage />} />
-          <Route path="projects/:id" element={<ProjectDetailPage />} />
+          <Route path="projects" element={<ProjectList />} />
+          <Route path="projects/new" element={<NewProjectForm />} />
+          <Route path="projects/:id" element={<ProjectDetail />} />
           <Route path="progress" element={<ProgressDashboard />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
@@ -44,19 +47,6 @@ function PagePlaceholder({ title, hint }: PagePlaceholderProps) {
       {hint ? <p className="text-sm text-[var(--text-2)]">{hint}</p> : null}
     </div>
   );
-}
-
-function ProjectsPage() {
-  return <PagePlaceholder title="Projetos" hint="/projects" />;
-}
-
-function NewProjectPage() {
-  return <PagePlaceholder title="Novo Projeto" hint="/projects/new" />;
-}
-
-function ProjectDetailPage() {
-  const { id } = useParams();
-  return <PagePlaceholder title={`Projeto: ${id ?? ""}`} hint={`/projects/${id ?? ""}`} />;
 }
 
 function SettingsPage() {

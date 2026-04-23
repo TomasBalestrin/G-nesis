@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { ChatMessage } from "@/types/chat";
 import type { Config } from "@/types/config";
-import type { Project } from "@/types/project";
+import type { Execution, ExecutionDetail, Project } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
 
 // ── config ──────────────────────────────────────────────────────────────────
@@ -64,6 +64,18 @@ export function createProject(args: {
 
 export function deleteProject(args: { id: string }): Promise<void> {
   return invoke("delete_project", args);
+}
+
+export function getExecutionHistory(args: {
+  projectId: string;
+}): Promise<Execution[]> {
+  return invoke("get_execution_history", args);
+}
+
+export function getExecutionDetail(args: {
+  executionId: string;
+}): Promise<ExecutionDetail> {
+  return invoke("get_execution_detail", args);
 }
 
 // ── execution ───────────────────────────────────────────────────────────────
@@ -122,5 +134,10 @@ export function callOpenAI(args: { prompt: string }): Promise<string> {
 
 export type { ChatMessage } from "@/types/chat";
 export type { Config } from "@/types/config";
-export type { Execution, ExecutionStep, Project } from "@/types/project";
+export type {
+  Execution,
+  ExecutionDetail,
+  ExecutionStep,
+  Project,
+} from "@/types/project";
 export type { ParsedSkill, SkillMeta } from "@/types/skill";
