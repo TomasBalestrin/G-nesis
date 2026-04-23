@@ -2,15 +2,22 @@ import { useEffect, useRef } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useChat } from "@/hooks/useChat";
+import { useExecution } from "@/hooks/useExecution";
 import { useChatStore } from "@/stores/chatStore";
 
 import { CommandInput } from "./CommandInput";
+import { ExecutionControls } from "./ExecutionControls";
 import { MessageBubble } from "./MessageBubble";
 
 export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
   const { send, sending } = useChat();
   const endRef = useRef<HTMLDivElement>(null);
+
+  // Subscribe to executor events so ExecutionControls appears the moment
+  // the first step_started fires — the hook is idempotent if /progress
+  // also mounts (each subscription is independent).
+  useExecution();
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -31,7 +38,8 @@ export function ChatPanel() {
       </ScrollArea>
 
       <div className="border-t border-border bg-background p-4">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-3xl space-y-3">
+          <ExecutionControls />
           <CommandInput onSubmit={send} disabled={sending} />
         </div>
       </div>
