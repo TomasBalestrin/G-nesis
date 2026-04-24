@@ -63,6 +63,7 @@ pub fn run() {
             // chat
             chat::send_chat_message,
             chat::call_openai,
+            chat::list_messages_by_conversation,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,

@@ -358,6 +358,16 @@ pub async fn call_openai(prompt: String) -> Result<String, String> {
         .map_err(|e| e.user_message())
 }
 
+/// Read chat history for a specific conversation thread. Used by the chat UI
+/// on mount to hydrate the message list before the user types.
+#[tauri::command]
+pub async fn list_messages_by_conversation(
+    conversation_id: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<ChatMessage>, String> {
+    queries::list_messages_by_conversation(&pool, &conversation_id).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

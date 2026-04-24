@@ -187,6 +187,13 @@ export function callOpenAI(args: { prompt: string }): Promise<string> {
   return invoke("call_openai", args);
 }
 
+/** Load the full message history for a conversation. */
+export function listMessagesByConversation(args: {
+  conversationId: string;
+}): Promise<ChatMessage[]> {
+  return invoke("list_messages_by_conversation", args);
+}
+
 // ── conversations ───────────────────────────────────────────────────────────
 
 export function listConversations(): Promise<Conversation[]> {
