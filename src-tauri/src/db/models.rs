@@ -50,7 +50,16 @@ pub struct ExecutionStep {
 pub struct ChatMessage {
     pub id: String,
     pub execution_id: Option<String>,
+    pub conversation_id: Option<String>,
     pub role: String,
     pub content: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Conversation {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
 }

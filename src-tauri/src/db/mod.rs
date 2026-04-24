@@ -1,8 +1,10 @@
 //! SQLite persistence layer.
 //!
-//! Holds the connection pool and runs the schema migration (idempotent
-//! CREATE TABLE / CREATE TRIGGER) on startup. The pool is stored in Tauri's
-//! managed state so commands can access it via `State<DbPool>`.
+//! Holds the connection pool and runs the schema migrations on startup.
+//! Migrations are idempotent (CREATE TABLE / TRIGGER / INDEX with
+//! `IF NOT EXISTS`), but since SQLite does NOT support
+//! `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, column additions are guarded
+//! manually with a `pragma_table_info` check.
 //!
 //! Pragmas (WAL, foreign_keys, busy_timeout) are set declaratively on the
 //! connection options — sqlx applies them to every connection in the pool.
@@ -15,11 +17,12 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{Executor, SqlitePool};
+use sqlx::{Executor, Row, SqlitePool};
 
 pub type DbPool = SqlitePool;
 
-const MIGRATION_SQL: &str = include_str!("../../migrations/001_init.sql");
+const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
+const MIGRATION_002: &str = include_str!("../../migrations/002_conversations.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -53,8 +56,47 @@ pub async fn init_db() -> Result<DbPool, String> {
 }
 
 async fn run_migrations(pool: &DbPool) -> Result<(), String> {
-    pool.execute(MIGRATION_SQL)
+    // 001 — core schema (projects, executions, steps, chat_messages).
+    pool.execute(MIGRATION_001)
         .await
-        .map_err(|e| format!("migration failed: {e}"))?;
+        .map_err(|e| format!("migration 001 failed: {e}"))?;
+
+    // Add chat_messages.conversation_id column if missing. Must run before
+    // 002 (which creates an index on that column).
+    ensure_chat_messages_conversation_id(pool).await?;
+
+    // 002 — conversations table + indices.
+    pool.execute(MIGRATION_002)
+        .await
+        .map_err(|e| format!("migration 002 failed: {e}"))?;
+
+    Ok(())
+}
+
+/// SQLite does not support `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so we
+/// inspect `pragma_table_info` and only run the ALTER when the column is
+/// missing. Safe to re-run on an already-migrated DB.
+async fn ensure_chat_messages_conversation_id(pool: &DbPool) -> Result<(), String> {
+    let rows = sqlx::query("SELECT name FROM pragma_table_info('chat_messages')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("pragma table_info failed: {e}"))?;
+
+    let has_column = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .any(|name| name == "conversation_id");
+
+    if has_column {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "ALTER TABLE chat_messages \
+         ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("failed to add conversation_id column: {e}"))?;
     Ok(())
 }

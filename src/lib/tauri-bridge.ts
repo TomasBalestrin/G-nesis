@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { reportFatalError } from "@/hooks/useFatalError";
 import { toast } from "@/hooks/useToast";
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { Execution, ExecutionDetail, Project } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
@@ -165,14 +165,20 @@ export function resumeExecution(args: {
 /**
  * Send a message to the GPT-4o orchestrator. Persists both the user message
  * and the assistant reply into chat_messages, returning the assistant reply.
+ *
+ * When `conversationId` is provided the history window is scoped to that
+ * thread, keeping multi-conversation flows isolated. `executionId` is the
+ * legacy scope; pass at most one of the two.
  */
 export function sendChatMessage(args: {
   content: string;
   executionId?: string | null;
+  conversationId?: string | null;
 }): Promise<ChatMessage> {
   return invoke("send_chat_message", {
     content: args.content,
     executionId: args.executionId ?? null,
+    conversationId: args.conversationId ?? null,
   });
 }
 
@@ -181,12 +187,47 @@ export function callOpenAI(args: { prompt: string }): Promise<string> {
   return invoke("call_openai", args);
 }
 
+// ── conversations ───────────────────────────────────────────────────────────
+
+export function listConversations(): Promise<Conversation[]> {
+  return invoke("list_conversations");
+}
+
+export function createConversation(args: {
+  title?: string | null;
+} = {}): Promise<Conversation> {
+  return invoke("create_conversation", { title: args.title ?? null });
+}
+
+export function deleteConversation(args: { id: string }): Promise<void> {
+  return invoke("delete_conversation", args);
+}
+
+export function renameConversation(args: {
+  id: string;
+  title: string;
+}): Promise<Conversation> {
+  return invoke("rename_conversation", args);
+}
+
+// ── dependencies ────────────────────────────────────────────────────────────
+
+/** `which <name>` — true when the binary is on the PATH. */
+export function checkDependency(args: { name: string }): Promise<boolean> {
+  return invoke("check_dependency", args);
+}
+
+/** `brew install <name>` — returns brew stdout, errors with brew stderr. */
+export function installDependency(args: { name: string }): Promise<string> {
+  return invoke("install_dependency", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
 // working with results coming over the bridge (keeps the import graph flat).
 
-export type { ChatMessage } from "@/types/chat";
+export type { ChatMessage, Conversation } from "@/types/chat";
 export type { Config } from "@/types/config";
 export type {
   Execution,

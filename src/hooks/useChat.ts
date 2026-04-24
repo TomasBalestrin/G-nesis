@@ -24,6 +24,7 @@ export function useChat(): UseChatResult {
       const optimistic: ChatMessage = {
         id: crypto.randomUUID(),
         execution_id: null,
+        conversation_id: null,
         role: "user",
         content,
         created_at: new Date().toISOString(),

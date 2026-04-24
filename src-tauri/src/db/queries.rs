@@ -3,7 +3,7 @@
 
 use sqlx::SqlitePool;
 
-use crate::db::models::{ChatMessage, Execution, ExecutionStep, Project};
+use crate::db::models::{ChatMessage, Conversation, Execution, ExecutionStep, Project};
 
 fn map_err(e: sqlx::Error) -> String {
     format!("db error: {e}")
@@ -196,42 +196,138 @@ pub async fn update_step_status(
 
 // ── chat_messages ───────────────────────────────────────────────────────────
 
+const MESSAGE_COLUMNS: &str =
+    "id, execution_id, conversation_id, role, content, created_at";
+
 pub async fn list_messages(
     pool: &SqlitePool,
     execution_id: Option<&str>,
 ) -> Result<Vec<ChatMessage>, String> {
-    match execution_id {
-        Some(exec_id) => sqlx::query_as::<_, ChatMessage>(
-            "SELECT id, execution_id, role, content, created_at
-             FROM chat_messages
-             WHERE execution_id = ?1
-             ORDER BY created_at ASC",
-        )
-        .bind(exec_id)
-        .fetch_all(pool)
-        .await
-        .map_err(map_err),
-        None => sqlx::query_as::<_, ChatMessage>(
-            "SELECT id, execution_id, role, content, created_at
-             FROM chat_messages
-             WHERE execution_id IS NULL
-             ORDER BY created_at ASC",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(map_err),
+    let query = match execution_id {
+        Some(_) => format!(
+            "SELECT {MESSAGE_COLUMNS} FROM chat_messages \
+             WHERE execution_id = ?1 ORDER BY created_at ASC"
+        ),
+        None => format!(
+            "SELECT {MESSAGE_COLUMNS} FROM chat_messages \
+             WHERE execution_id IS NULL ORDER BY created_at ASC"
+        ),
+    };
+    let mut q = sqlx::query_as::<_, ChatMessage>(&query);
+    if let Some(exec_id) = execution_id {
+        q = q.bind(exec_id);
     }
+    q.fetch_all(pool).await.map_err(map_err)
+}
+
+pub async fn list_messages_by_conversation(
+    pool: &SqlitePool,
+    conversation_id: &str,
+) -> Result<Vec<ChatMessage>, String> {
+    sqlx::query_as::<_, ChatMessage>(&format!(
+        "SELECT {MESSAGE_COLUMNS} FROM chat_messages \
+         WHERE conversation_id = ?1 ORDER BY created_at ASC"
+    ))
+    .bind(conversation_id)
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
 }
 
 pub async fn insert_message(pool: &SqlitePool, message: &ChatMessage) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO chat_messages (id, execution_id, role, content)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO chat_messages (id, execution_id, conversation_id, role, content)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )
     .bind(&message.id)
     .bind(&message.execution_id)
+    .bind(&message.conversation_id)
     .bind(&message.role)
     .bind(&message.content)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+// ── conversations ───────────────────────────────────────────────────────────
+
+pub async fn list_conversations(pool: &SqlitePool) -> Result<Vec<Conversation>, String> {
+    sqlx::query_as::<_, Conversation>(
+        "SELECT id, title, created_at, updated_at
+         FROM conversations
+         ORDER BY updated_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+pub async fn get_conversation(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<Conversation>, String> {
+    sqlx::query_as::<_, Conversation>(
+        "SELECT id, title, created_at, updated_at
+         FROM conversations WHERE id = ?1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+pub async fn insert_conversation(
+    pool: &SqlitePool,
+    conversation: &Conversation,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO conversations (id, title, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(&conversation.id)
+    .bind(&conversation.title)
+    .bind(&conversation.created_at)
+    .bind(&conversation.updated_at)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+pub async fn delete_conversation(pool: &SqlitePool, id: &str) -> Result<(), String> {
+    // chat_messages.conversation_id has ON DELETE CASCADE → rows go with it.
+    sqlx::query("DELETE FROM conversations WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
+pub async fn rename_conversation(
+    pool: &SqlitePool,
+    id: &str,
+    title: &str,
+) -> Result<(), String> {
+    sqlx::query("UPDATE conversations SET title = ?1 WHERE id = ?2")
+        .bind(title)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
+/// Bump `updated_at` to now so the conversation floats to the top of
+/// `list_conversations`. Called every time a message is added to the thread.
+pub async fn touch_conversation(pool: &SqlitePool, id: &str) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE conversations \
+         SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+         WHERE id = ?1",
+    )
+    .bind(id)
     .execute(pool)
     .await
     .map_err(map_err)?;

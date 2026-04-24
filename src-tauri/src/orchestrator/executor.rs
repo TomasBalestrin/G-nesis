@@ -157,6 +157,20 @@ fn channel_for(tool: &str) -> Option<Box<dyn Channel>> {
     }
 }
 
+/// Environment variables forwarded to every step's child process. Today this
+/// is just `OPENAI_API_KEY` so bash scripts can call the API without the user
+/// having to `export` it in their shell. Best-effort: if config load fails or
+/// the key is unset, we proceed with an empty env and let the script decide.
+fn extra_env_for_step() -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Ok(cfg) = crate::config::load_config() {
+        if let Some(key) = cfg.openai_api_key.filter(|k| !k.is_empty()) {
+            env.push(("OPENAI_API_KEY".to_string(), key));
+        }
+    }
+    env
+}
+
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -287,6 +301,11 @@ impl Executor {
         let input = ChannelInput {
             command: resolved,
             cwd: self.cwd.clone(),
+            // Injeta a OpenAI key no env da subshell bash pra que scripts
+            // como legendar.sh encontrem $OPENAI_API_KEY sem o usuário
+            // precisar exportar no terminal. A leitura do config
+            // respeita a precedência config > env definida em config.rs.
+            env: extra_env_for_step(),
             ..Default::default()
         };
 
