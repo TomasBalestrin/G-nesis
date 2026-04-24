@@ -63,7 +63,7 @@ export function SlashCommandModal({
       ref={containerRef}
       role="listbox"
       aria-label="Skills disponíveis"
-      className="absolute bottom-full left-0 right-0 mb-2 max-h-64 overflow-y-auto rounded-xl border border-border bg-[var(--surface)] shadow-lg"
+      className="absolute bottom-full left-0 right-0 mb-2 max-h-64 animate-fade-in overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-lg"
     >
       {filtered.length === 0 ? (
         <div className="px-3 py-4 text-center text-xs text-[var(--text-2)]">
@@ -83,18 +83,18 @@ export function SlashCommandModal({
                 }}
                 onMouseEnter={() => onHighlightChange(idx)}
                 className={cn(
-                  "flex w-full items-start gap-2 px-3 py-2 text-left text-sm",
+                  "flex w-full items-start gap-2 px-3 py-2 text-left text-sm text-[var(--text-primary)]",
                   idx === highlight
-                    ? "bg-[var(--bg-subtle)]"
-                    : "hover:bg-[var(--bg-subtle)]",
+                    ? "bg-[var(--bg-hover)]"
+                    : "hover:bg-[var(--bg-hover)]",
                 )}
               >
-                <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
+                <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-mono text-xs font-semibold">
                     /{skill.name}
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-[var(--text-3)]">
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
                     {skill.description || "(sem descrição)"}
                   </span>
                 </span>

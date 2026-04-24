@@ -224,13 +224,18 @@ function ConversationItem({ conversation, onNavigate }: ConversationItemProps) {
       to={`/chat/${conversation.id}`}
       onClick={onNavigate}
       className={cn(
-        "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+        "group flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
         isActive
-          ? "bg-[var(--sb-active)] text-[var(--sb-text-a)]"
-          : "text-[var(--sb-text)] hover:bg-[var(--sb-hover)]",
+          ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+          : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
       )}
     >
-      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-[var(--text-3)]" />
+      <MessageSquare
+        className={cn(
+          "h-3.5 w-3.5 shrink-0",
+          isActive ? "text-[var(--accent)]" : "text-[var(--text-tertiary)]",
+        )}
+      />
       <span className="flex-1 truncate" title={conversation.title}>
         {conversation.title}
       </span>
@@ -333,18 +338,18 @@ function SkillItem({
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "flex items-start gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+          "flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
           isActive
-            ? "bg-[var(--sb-active)] text-[var(--sb-text-a)]"
-            : "text-[var(--sb-text)] hover:bg-[var(--sb-hover)]",
+            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+            : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
         )
       }
     >
-      <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-3)]" />
+      <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-mono text-xs">{skill.name}</span>
         {description ? (
-          <span className="mt-0.5 block truncate text-[11px] text-[var(--text-3)]">
+          <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
             {description}
           </span>
         ) : null}

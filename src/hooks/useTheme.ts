@@ -1,37 +1,48 @@
 import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "genesis-theme";
-const DARK = "blue-dark";
-const LIGHT = "blue-light";
 
-export type Theme = typeof DARK | typeof LIGHT;
+export type Theme = "light" | "dark";
 
 function readInitialTheme(): Theme {
-  if (typeof window === "undefined") return DARK;
+  if (typeof window === "undefined") return "dark";
   const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (saved === DARK || saved === LIGHT) return saved;
-  const attr = document.documentElement.getAttribute("data-theme");
-  return attr === LIGHT ? LIGHT : DARK;
+  if (saved === "light" || saved === "dark") return saved;
+  // Fall back to the class already on <html> (index.html seeds `dark`).
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement;
+  if (theme === "dark") {
+    root.classList.add("dark");
+  } else {
+    root.classList.remove("dark");
+  }
+  // Keep the legacy `data-theme` attribute in sync so any remaining
+  // selector from the old 4-theme file behaves gracefully until it's
+  // fully migrated.
+  root.setAttribute("data-theme", theme === "dark" ? "blue-dark" : "blue-light");
 }
 
 /**
- * App theme toggle. Flips `<html data-theme>` between `blue-dark` and
- * `blue-light` (design.css ships 4 themes but the toggle surfaces only the
- * dark/light axis — user picks color family via Settings if/when that lands).
- * State is persisted to localStorage so the reload keeps the choice.
+ * App theme toggle (`light` / `dark`). Flips the `dark` class on the `<html>`
+ * element — Tailwind `darkMode: ["class"]` and our `.dark` token overrides
+ * key off that. Persists the choice in localStorage so reloads keep it.
+ * Default is dark, set up by the `class="dark"` attribute in index.html.
  */
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    applyTheme(theme);
     window.localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
   return {
     theme,
-    isDark: theme === DARK,
-    toggle: () => setTheme((t) => (t === DARK ? LIGHT : DARK)),
+    isDark: theme === "dark",
+    toggle: () => setTheme((t) => (t === "dark" ? "light" : "dark")),
     setTheme,
   };
 }

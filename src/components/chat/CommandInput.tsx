@@ -146,16 +146,16 @@ export function CommandInput({
       <form
         onSubmit={handleFormSubmit}
         className={cn(
-          "flex items-end gap-2 rounded-xl border p-2 transition-colors",
-          isCommand
-            ? "border-primary bg-[var(--primary-bg)] shadow-acc"
-            : "border-border bg-surface",
+          "flex items-end gap-2 rounded-xl p-2 transition-colors",
+          "bg-[var(--bg-tertiary)]",
+          "focus-within:ring-2 focus-within:ring-[var(--accent-ring)]",
+          isCommand && "ring-2 ring-[var(--accent)]",
         )}
       >
         {isCommand && (
           <Slash
             aria-hidden
-            className="mb-2 h-4 w-4 shrink-0 text-[var(--primary-tx)]"
+            className="mb-2 h-4 w-4 shrink-0 text-[var(--accent)]"
           />
         )}
         <textarea
@@ -171,8 +171,8 @@ export function CommandInput({
           aria-expanded={slashOpen}
           className={cn(
             "flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed",
-            "placeholder:text-[var(--text-dis)] focus:outline-none",
-            isCommand && "font-mono text-[var(--primary-tx)]",
+            "text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none",
+            isCommand && "font-mono text-[var(--accent)]",
           )}
         />
         <Button

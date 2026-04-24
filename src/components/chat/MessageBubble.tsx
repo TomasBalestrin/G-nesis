@@ -36,10 +36,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
       <article
         className={cn(
-          "max-w-[80%] rounded-xl px-4 py-3 text-sm leading-relaxed",
+          "max-w-[80%] text-sm leading-relaxed",
           isUser
-            ? "bg-[var(--primary-bg)] border border-[var(--primary-bd)] text-foreground"
-            : "bg-card border border-border text-foreground",
+            ? "rounded-2xl bg-[var(--chat-user-bg)] px-4 py-3 text-[var(--chat-user-text)]"
+            // Assistant: no background, no border — pure content on the page.
+            : "px-1 py-1 text-[var(--text-primary)]",
         )}
       >
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
