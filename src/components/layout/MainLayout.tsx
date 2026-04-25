@@ -34,7 +34,7 @@ export function MainLayout() {
           type="button"
           aria-label="Fechar menu"
           onClick={closeDrawer}
-          className="fixed inset-0 z-30 bg-black/60 min-[800px]:hidden"
+          className="fixed inset-0 z-30 bg-black/50 min-[800px]:hidden"
         />
       ) : null}
     </div>

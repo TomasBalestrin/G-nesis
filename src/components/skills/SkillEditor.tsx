@@ -180,7 +180,7 @@ export function SkillEditor() {
             disabled={loading}
             aria-label="Conteúdo da skill"
             placeholder={loading ? "Carregando..." : ""}
-            className="flex-1 resize-none bg-background p-4 font-mono text-xs leading-relaxed text-foreground placeholder:text-[var(--text-tertiary)] focus:outline-none disabled:opacity-60"
+            className="flex-1 resize-none bg-[var(--code-bg)] p-4 font-mono text-xs leading-relaxed text-[var(--code-text)] placeholder:text-[var(--text-tertiary)] focus:outline-none disabled:opacity-60"
           />
         </section>
 
