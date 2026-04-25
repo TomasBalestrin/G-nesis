@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-mac:
-    runs-on: macos-13
+    runs-on: macos-latest
     permissions:
       contents: write
 
@@ -24,7 +24,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
@@ -43,4 +43,4 @@ jobs:
           releaseName: Genesis v0.1.0
           releaseDraft: false
           prerelease: false
-          args: --target x86_64-apple-darwin
+          args: --target universal-apple-darwin
