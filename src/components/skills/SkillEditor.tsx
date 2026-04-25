@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Save } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Save } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -9,11 +9,12 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
-import { saveSkill } from "@/lib/tauri-bridge";
+import { readSkill, saveSkill } from "@/lib/tauri-bridge";
+import { useSkillsStore } from "@/stores/skillsStore";
 
-// Template com frontmatter + estrutura mínima válida, parseável pelo
-// orchestrator::skill_parser (D1): frontmatter com name/description/version/
-// author, uma seção Tools, um step com tool obrigatório.
+// Default scaffold for `/skills/new`. Parses cleanly under
+// orchestrator::skill_parser so the user can hit Save immediately and
+// iterate from a known-good baseline.
 const TEMPLATE = `---
 name: minha-skill
 description: Descrição curta da skill
@@ -41,16 +42,59 @@ validate: exit_code == 0
 timeout: 300
 `;
 
+/**
+ * Unified create/edit surface for skills. Routes:
+ *  - /skills/new      → empty name field (editable) + TEMPLATE in the editor
+ *  - /skills/:name    → name pre-filled (locked) + content loaded via readSkill
+ *
+ * Save validates server-side (skill_parser) and refreshes the global skills
+ * store so the sidebar and slash autocomplete pick up the new file.
+ */
 export function SkillEditor() {
-  const [name, setName] = useState("");
-  const [content, setContent] = useState(TEMPLATE);
-  const [preview, setPreview] = useState(TEMPLATE);
+  const params = useParams<{ name?: string }>();
+  const routeName = params.name?.trim() ?? "";
+  const isEdit = routeName.length > 0;
+
+  const [name, setName] = useState(routeName);
+  const [content, setContent] = useState(isEdit ? "" : TEMPLATE);
+  const [preview, setPreview] = useState(isEdit ? "" : TEMPLATE);
+  const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
+
   const navigate = useNavigate();
   const { toast } = useToast();
+  const refreshSkills = useSkillsStore((s) => s.refresh);
 
-  // Preview renderiza com 300ms de debounce pra não recompilar markdown a
-  // cada tecla.
+  // Hydrate the editor when entering /skills/:name. Resets if the user
+  // navigates between two different skills without unmounting.
+  useEffect(() => {
+    if (!isEdit) return;
+    let cancelled = false;
+    setLoading(true);
+    setName(routeName);
+    readSkill({ name: routeName })
+      .then((text) => {
+        if (cancelled) return;
+        setContent(text);
+        setPreview(text);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        toast({
+          title: "Falha ao carregar skill",
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit, routeName, toast]);
+
+  // 300ms debounce keeps the markdown renderer off the hot keystroke path.
   useEffect(() => {
     const timer = setTimeout(() => setPreview(content), 300);
     return () => clearTimeout(timer);
@@ -69,16 +113,16 @@ export function SkillEditor() {
 
     setSaving(true);
     try {
-      // O backend (D3) chama skill_parser::parse_skill antes de gravar, então
-      // um parse inválido vira erro aqui sem criar arquivo quebrado.
       await saveSkill({ name: trimmed, content });
       toast({ title: "Skill salva", description: `${trimmed}.md gravada.` });
-      navigate(`/skills/${encodeURIComponent(trimmed)}`);
+      refreshSkills();
+      if (!isEdit) {
+        navigate(`/skills/${encodeURIComponent(trimmed)}`);
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       toast({
         title: "Falha ao salvar skill",
-        description: message,
+        description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
     } finally {
@@ -89,20 +133,30 @@ export function SkillEditor() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-4">
-        <Button asChild variant="ghost" size="icon" aria-label="Voltar">
-          <Link to="/skills">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="nome-da-skill"
-          aria-label="Nome da skill"
-          className="max-w-xs font-mono"
-        />
-        <div className="flex-1" />
-        <Button onClick={handleSave} disabled={saving || !name.trim()}>
+        <div className="min-w-0 flex-1">
+          {isEdit ? (
+            <>
+              <h2 className="truncate font-mono text-lg font-semibold">
+                {routeName}
+              </h2>
+              <p className="text-xs text-[var(--text-secondary)]">
+                {loading ? "Carregando..." : `Editando skills/${routeName}.md`}
+              </p>
+            </>
+          ) : (
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="nome-da-skill"
+              aria-label="Nome da skill"
+              className="max-w-xs font-mono"
+            />
+          )}
+        </div>
+        <Button
+          onClick={handleSave}
+          disabled={saving || loading || !name.trim()}
+        >
           <Save className="h-4 w-4" />
           {saving ? "Salvando..." : "Salvar"}
         </Button>
@@ -115,37 +169,40 @@ export function SkillEditor() {
         )}
       >
         <section
-          className="flex flex-col border-r border-border max-[800px]:border-r-0 max-[800px]:border-b"
+          className="flex flex-col border-r border-border max-[800px]:border-b max-[800px]:border-r-0"
           aria-label="Editor"
         >
-          <div className="border-b border-[var(--border-sub)] bg-[var(--bg-subtle)] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Editor
-          </div>
+          <SectionLabel>Editor</SectionLabel>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             spellCheck={false}
+            disabled={loading}
             aria-label="Conteúdo da skill"
-            className="flex-1 resize-none bg-background p-4 font-mono text-xs leading-relaxed text-foreground placeholder:text-[var(--text-dis)] focus:outline-none"
+            placeholder={loading ? "Carregando..." : ""}
+            className="flex-1 resize-none bg-background p-4 font-mono text-xs leading-relaxed text-foreground placeholder:text-[var(--text-tertiary)] focus:outline-none disabled:opacity-60"
           />
         </section>
 
         <section className="flex flex-col" aria-label="Preview">
-          <div className="border-b border-[var(--border-sub)] bg-[var(--bg-subtle)] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-3)]">
-            Preview
-          </div>
+          <SectionLabel>Preview</SectionLabel>
           <ScrollArea className="flex-1">
             <article className="p-6 text-sm leading-relaxed">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={mdComponents}
-              >
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                 {preview}
               </ReactMarkdown>
             </article>
           </ScrollArea>
         </section>
       </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border-b border-[var(--border-sub)] bg-[var(--bg-tertiary)] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+      {children}
     </div>
   );
 }
@@ -167,7 +224,7 @@ const mdComponents: Components = {
   ol: ({ children }) => <ol className="my-2 list-decimal pl-5">{children}</ol>,
   li: ({ children }) => <li className="mb-1">{children}</li>,
   pre: ({ children }) => (
-    <pre className="my-3 overflow-x-auto rounded-lg bg-[var(--code-bg)] p-3 text-xs text-[var(--code-tx)] font-mono">
+    <pre className="my-3 overflow-x-auto rounded-lg bg-[var(--code-bg)] p-3 font-mono text-xs text-[var(--code-tx)]">
       {children}
     </pre>
   ),
@@ -182,7 +239,7 @@ const mdComponents: Components = {
     </code>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-[var(--border-str)] pl-3 text-[var(--text-2)]">
+    <blockquote className="my-2 border-l-2 border-[var(--border-str)] pl-3 text-[var(--text-secondary)]">
       {children}
     </blockquote>
   ),

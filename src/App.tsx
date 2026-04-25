@@ -9,7 +9,6 @@ import { NewProjectForm } from "@/components/projects/NewProjectForm";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
-import { SkillViewer } from "@/components/skills/SkillViewer";
 import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/useToast";
@@ -81,9 +80,10 @@ function App() {
           {/* Multi-thread chat. */}
           <Route path="chat/:conversationId" element={<ChatPanel />} />
 
-          {/* Skills: list in sidebar; no standalone /skills listing page. */}
+          {/* Skills: list in sidebar; no standalone /skills listing page.
+              Same editor handles create (/skills/new) and edit (/skills/:name). */}
           <Route path="skills/new" element={<SkillEditor />} />
-          <Route path="skills/:name" element={<SkillViewer />} />
+          <Route path="skills/:name" element={<SkillEditor />} />
 
           {/* Projects: list is inside Settings; these routes support
               creating and inspecting a single project. */}
