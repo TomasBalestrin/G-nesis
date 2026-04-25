@@ -100,7 +100,9 @@ export function ChatPanel() {
           {messages.length === 0 && !sending && !hasActiveExecution ? (
             <EmptyState />
           ) : (
-            messages.map((m) => <MessageBubble key={m.id} message={m} />)
+            messages.map((m) => (
+              <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
+            ))
           )}
           {sending ? <TypingIndicator /> : null}
           {hasActiveExecution ? <ExecutionBlock /> : null}

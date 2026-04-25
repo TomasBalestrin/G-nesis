@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Play, Save } from "lucide-react";
+import {
+  CheckCircle2,
+  Download,
+  Loader2,
+  Play,
+  Save,
+  XCircle,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,6 +17,7 @@ import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
 import {
   executeSkill,
+  installDependency,
   listProjects,
   safeInvoke,
   saveSkill,
@@ -21,6 +29,11 @@ import type { Project } from "@/types/project";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  /**
+   * Send a follow-up user message back into the chat. Used by inline panels
+   * (skill execution, dependency install) to report outcomes to GPT.
+   */
+  onAutoSend?: (content: string) => void;
 }
 
 // Assistant confirmation messages end with this sentence (see
@@ -79,9 +92,20 @@ function splitSegments(content: string): Segment[] {
   return segments.length > 0 ? segments : [{ type: "text", value: content }];
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+// Assistant phrasing that triggers the inline install/decline panel. Locked
+// to this exact wording in the system prompt so detection stays simple.
+const DEPENDENCY_REQUEST_REGEX =
+  /Para fazer isso preciso do \*\*([A-Za-z0-9._+-]+)\*\*\.?\s*Posso instalar pra você/i;
+
+function extractDependencyRequest(message: ChatMessage): string | null {
+  if (message.role !== "assistant") return null;
+  return message.content.match(DEPENDENCY_REQUEST_REGEX)?.[1] ?? null;
+}
+
+export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const skillToExecute = extractConfirmationSkill(message);
+  const dependencyToInstall = extractDependencyRequest(message);
   const segments = useMemo(
     () => (isUser ? null : splitSegments(message.content)),
     [isUser, message.content],
@@ -117,10 +141,113 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             ),
           )
         )}
+        {dependencyToInstall ? (
+          <DependencyConfirmPanel
+            toolName={dependencyToInstall}
+            onAutoSend={onAutoSend}
+          />
+        ) : null}
         {skillToExecute ? (
           <SkillExecutePanel skillName={skillToExecute} />
         ) : null}
       </article>
+    </div>
+  );
+}
+
+// ── dependency confirm panel ────────────────────────────────────────────────
+
+type DependencyState =
+  | { kind: "idle" }
+  | { kind: "installing" }
+  | { kind: "installed"; output: string }
+  | { kind: "failed"; error: string }
+  | { kind: "declined" };
+
+interface DependencyConfirmPanelProps {
+  toolName: string;
+  onAutoSend?: (content: string) => void;
+}
+
+/**
+ * Inline accept/decline UI for the assistant's "Posso instalar pra você?".
+ * Yes runs `installDependency` directly (parallel install), then auto-sends
+ * the outcome to chat so GPT can resume the task. No just declines via
+ * auto-send and locks the panel.
+ */
+function DependencyConfirmPanel({
+  toolName,
+  onAutoSend,
+}: DependencyConfirmPanelProps) {
+  const [state, setState] = useState<DependencyState>({ kind: "idle" });
+
+  async function handleYes() {
+    setState({ kind: "installing" });
+    try {
+      const output = await installDependency({ name: toolName });
+      setState({ kind: "installed", output });
+      onAutoSend?.(`${toolName} instalado com sucesso. Pode continuar.`);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      setState({ kind: "failed", error });
+      onAutoSend?.(`Falha ao instalar ${toolName}: ${error}`);
+    }
+  }
+
+  function handleNo() {
+    setState({ kind: "declined" });
+    onAutoSend?.(
+      `Não, prefiro não instalar ${toolName} agora. Sugira outra abordagem.`,
+    );
+  }
+
+  return (
+    <div className="my-2 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-xs">
+      {state.kind === "idle" ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[var(--text-secondary)]">
+            Genesis pode rodar <span className="font-mono">brew install {toolName}</span> agora.
+          </span>
+          <div className="ml-auto flex gap-2">
+            <Button size="sm" onClick={handleYes}>
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Sim, instalar
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleNo}>
+              <XCircle className="h-3.5 w-3.5" />
+              Não
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {state.kind === "installing" ? (
+        <div className="flex items-center gap-2 text-[var(--text-secondary)]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--accent)]" />
+          Instalando <span className="font-mono">{toolName}</span>... pode levar alguns minutos.
+        </div>
+      ) : null}
+      {state.kind === "installed" ? (
+        <div className="flex items-center gap-2 text-[var(--success)]">
+          <Download className="h-3.5 w-3.5" />
+          <span className="font-mono">{toolName}</span> instalado.
+        </div>
+      ) : null}
+      {state.kind === "failed" ? (
+        <div className="flex items-start gap-2 text-[var(--error)]">
+          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div className="min-w-0">
+            <div>Falha ao instalar <span className="font-mono">{toolName}</span>.</div>
+            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-[var(--text-secondary)]">
+              {state.error}
+            </pre>
+          </div>
+        </div>
+      ) : null}
+      {state.kind === "declined" ? (
+        <div className="text-[var(--text-secondary)]">
+          Instalação recusada.
+        </div>
+      ) : null}
     </div>
   );
 }
