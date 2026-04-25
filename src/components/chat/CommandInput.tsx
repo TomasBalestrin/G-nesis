@@ -3,9 +3,8 @@ import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
 import { SendHorizontal, Slash } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { listSkills } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
-import type { SkillMeta } from "@/types/skill";
+import { useSkillsStore } from "@/stores/skillsStore";
 
 import { SlashCommandModal, filterSkills } from "./SlashCommandModal";
 
@@ -30,7 +29,9 @@ export function CommandInput({
   placeholder = "Digite um comando (/skill-name) ou converse com o assistente...",
 }: CommandInputProps) {
   const [value, setValue] = useState("");
-  const [skills, setSkills] = useState<SkillMeta[] | null>(null);
+  const skills = useSkillsStore((s) => s.items);
+  const skillsLoaded = useSkillsStore((s) => s.loaded);
+  const ensureSkills = useSkillsStore((s) => s.ensureLoaded);
   const [highlight, setHighlight] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -40,27 +41,16 @@ export function CommandInput({
   const slashOpen = isCommand && !disabled;
 
   const filtered = useMemo(
-    () => (skills ? filterSkills(skills, slashQuery) : []),
-    [skills, slashQuery],
+    () => (skillsLoaded ? filterSkills(skills, slashQuery) : []),
+    [skills, skillsLoaded, slashQuery],
   );
 
-  // Lazy-load the skill list the first time the user types `/`. Cache for
-  // the component's lifetime — new skills saved via /skills/new will only
-  // show up after navigating away and back, which matches the current UX.
+  // Hydrate the catalog the first time the user types `/`. Subsequent
+  // refreshes (e.g. after saving a new skill from chat) flow through the
+  // shared store and re-render this list automatically.
   useEffect(() => {
-    if (!isCommand || skills !== null) return;
-    let cancelled = false;
-    listSkills()
-      .then((data) => {
-        if (!cancelled) setSkills(data);
-      })
-      .catch(() => {
-        if (!cancelled) setSkills([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isCommand, skills]);
+    if (isCommand) ensureSkills();
+  }, [isCommand, ensureSkills]);
 
   // Reset highlight every time the filter changes.
   useEffect(() => {

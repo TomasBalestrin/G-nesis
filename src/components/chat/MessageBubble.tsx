@@ -1,15 +1,23 @@
-import { useEffect, useState } from "react";
-import { Play } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Play, Save } from "lucide-react";
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
-import { executeSkill, listProjects, safeInvoke } from "@/lib/tauri-bridge";
+import {
+  executeSkill,
+  listProjects,
+  safeInvoke,
+  saveSkill,
+} from "@/lib/tauri-bridge";
+import { useSkillsStore } from "@/stores/skillsStore";
 import type { ChatMessage } from "@/types/chat";
 import type { Project } from "@/types/project";
+
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -29,9 +37,56 @@ function extractConfirmationSkill(message: ChatMessage): string | null {
   return message.content.match(SKILL_NAME_REGEX)?.[1] ?? null;
 }
 
+// ── skill-block detection ───────────────────────────────────────────────────
+
+interface TextSegment {
+  type: "text";
+  value: string;
+}
+interface SkillSegment {
+  type: "skill";
+  code: string;
+  name: string;
+}
+type Segment = TextSegment | SkillSegment;
+
+const FENCE_REGEX = /```([\w-]*)\n([\s\S]*?)\n```/g;
+// Frontmatter must lead the block; capture the `name:` value (kebab-case
+// allowed plus `_`/`.`).
+const FRONTMATTER_NAME_REGEX = /^---\s*\n[\s\S]*?\bname\s*:\s*["']?([A-Za-z0-9._-]+)["']?\s*\n[\s\S]*?\n---/;
+
+function splitSegments(content: string): Segment[] {
+  const segments: Segment[] = [];
+  let cursor = 0;
+  // RegExp.exec with /g maintains lastIndex; fresh instance each call so
+  // re-renders don't see stale state.
+  const re = new RegExp(FENCE_REGEX);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    const [full, , body] = match;
+    const nameMatch = body.match(FRONTMATTER_NAME_REGEX);
+    if (!nameMatch) continue;
+
+    if (match.index > cursor) {
+      segments.push({ type: "text", value: content.slice(cursor, match.index) });
+    }
+    segments.push({ type: "skill", code: body, name: nameMatch[1] });
+    cursor = match.index + full.length;
+  }
+  if (cursor < content.length) {
+    segments.push({ type: "text", value: content.slice(cursor) });
+  }
+  return segments.length > 0 ? segments : [{ type: "text", value: content }];
+}
+
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const skillToExecute = extractConfirmationSkill(message);
+  const segments = useMemo(
+    () => (isUser ? null : splitSegments(message.content)),
+    [isUser, message.content],
+  );
+
   return (
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
       <article
@@ -43,13 +98,89 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             : "px-1 py-1 text-[var(--text-primary)]",
         )}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-          {message.content}
-        </ReactMarkdown>
+        {isUser || !segments ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {message.content}
+          </ReactMarkdown>
+        ) : (
+          segments.map((seg, i) =>
+            seg.type === "text" ? (
+              <ReactMarkdown
+                key={i}
+                remarkPlugins={[remarkGfm]}
+                components={mdComponents}
+              >
+                {seg.value}
+              </ReactMarkdown>
+            ) : (
+              <SkillSavePanel key={i} code={seg.code} name={seg.name} />
+            ),
+          )
+        )}
         {skillToExecute ? (
           <SkillExecutePanel skillName={skillToExecute} />
         ) : null}
       </article>
+    </div>
+  );
+}
+
+interface SkillSavePanelProps {
+  code: string;
+  name: string;
+}
+
+/**
+ * Renders an assistant-generated skill `.md` block with a Save button. Saving
+ * goes through the same backend path as the editor (validates frontmatter +
+ * steps), then triggers a global skills-store refresh so the sidebar and
+ * slash autocomplete pick up the new entry without a page reload.
+ */
+function SkillSavePanel({ code, name }: SkillSavePanelProps) {
+  const refreshSkills = useSkillsStore((s) => s.refresh);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const { toast } = useToast();
+
+  async function handleSave() {
+    if (saved) return;
+    setSaving(true);
+    try {
+      await saveSkill({ name, content: code });
+      setSaved(true);
+      toast({ title: `Skill ${name} salva` });
+      refreshSkills();
+    } catch (err) {
+      toast({
+        title: "Falha ao salvar skill",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="my-2 overflow-hidden rounded-lg border border-[var(--border-sub)] bg-[var(--bg-secondary)]">
+      <div className="flex items-center justify-between border-b border-[var(--border-sub)] bg-[var(--bg-tertiary)] px-3 py-1.5 text-xs">
+        <span className="font-mono text-[var(--text-secondary)]">
+          skills/{name}.md
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={saving || saved}
+          onClick={handleSave}
+          aria-label={`Salvar skill ${name}`}
+        >
+          <Save className="h-3.5 w-3.5" />
+          {saved ? "Salva" : saving ? "Salvando..." : "Salvar Skill"}
+        </Button>
+      </div>
+      <pre className="max-h-96 overflow-auto bg-[var(--code-bg)] p-3 font-mono text-xs text-[var(--code-tx)]">
+        {code}
+      </pre>
     </div>
   );
 }

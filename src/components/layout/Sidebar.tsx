@@ -13,12 +13,11 @@ import {
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { useTauriCommand } from "@/hooks/useTauriCommand";
 import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
-import { listSkills } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
+import { useSkillsStore } from "@/stores/skillsStore";
 import type { Conversation } from "@/types/chat";
 import type { SkillMeta } from "@/types/skill";
 
@@ -282,11 +281,14 @@ function IconButton({ ariaLabel, onClick, children }: IconButtonProps) {
 
 function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(true);
-  const { data, loading, execute } = useTauriCommand(listSkills);
+  const items = useSkillsStore((s) => s.items);
+  const loading = useSkillsStore((s) => s.loading);
+  const loaded = useSkillsStore((s) => s.loaded);
+  const ensureLoaded = useSkillsStore((s) => s.ensureLoaded);
 
   useEffect(() => {
-    execute();
-  }, [execute]);
+    ensureLoaded();
+  }, [ensureLoaded]);
 
   return (
     <section>
@@ -307,14 +309,14 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
       />
       {open ? (
         <div className="mt-1 space-y-0.5">
-          {loading && !data ? (
+          {loading && !loaded ? (
             <p className="px-2 py-1 text-xs text-[var(--text-3)]">Carregando...</p>
-          ) : data && data.length === 0 ? (
+          ) : items.length === 0 ? (
             <p className="px-2 py-1 text-xs text-[var(--text-3)]">
               Nenhuma skill.
             </p>
           ) : (
-            (data ?? []).map((skill) => (
+            items.map((skill) => (
               <SkillItem key={skill.name} skill={skill} onNavigate={onNavigate} />
             ))
           )}
