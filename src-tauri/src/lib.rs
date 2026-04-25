@@ -8,7 +8,9 @@ pub mod config;
 pub mod db;
 pub mod orchestrator;
 
-use commands::{chat, config as config_cmd, execution, projects, skills};
+use commands::{
+    chat, config as config_cmd, conversations, dependencies, execution, projects, skills,
+};
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
 
@@ -61,6 +63,15 @@ pub fn run() {
             // chat
             chat::send_chat_message,
             chat::call_openai,
+            chat::list_messages_by_conversation,
+            // conversations
+            conversations::list_conversations,
+            conversations::create_conversation,
+            conversations::delete_conversation,
+            conversations::rename_conversation,
+            // dependencies
+            dependencies::check_dependency,
+            dependencies::install_dependency,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

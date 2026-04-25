@@ -1,67 +1,121 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 
-import { ProgressDashboard } from "@/components/progress/ProgressDashboard";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useChat } from "@/hooks/useChat";
 import { useExecution } from "@/hooks/useExecution";
-import { useChatStore } from "@/stores/chatStore";
+import { useToast } from "@/hooks/useToast";
+import {
+  listMessagesByConversation,
+  safeInvoke,
+  sendChatMessage,
+} from "@/lib/tauri-bridge";
+import { useConversationsStore } from "@/stores/conversationsStore";
 import { useExecutionStore } from "@/stores/executionStore";
+import type { ChatMessage } from "@/types/chat";
 
 import { CommandInput } from "./CommandInput";
-import { ExecutionControls } from "./ExecutionControls";
+import { ExecutionBlock } from "./ExecutionBlock";
 import { MessageBubble } from "./MessageBubble";
 
+/**
+ * Chat surface for a single conversation. Reads `conversationId` from the
+ * route (`/chat/:conversationId`) and keeps its own message buffer since
+ * messages are per-thread and loading history is cheap.
+ *
+ * When a skill is running, the inline ExecutionBlock renders right below
+ * the message stream (no side panel) — steps, logs, and controls all live
+ * inside the chat.
+ */
 export function ChatPanel() {
-  const messages = useChatStore((s) => s.messages);
+  const { conversationId = "" } = useParams<{ conversationId: string }>();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sending, setSending] = useState(false);
   const hasActiveExecution = useExecutionStore(
     (s) => s.activeExecution !== null,
   );
-  const { send, sending } = useChat();
+  const refreshConversations = useConversationsStore((s) => s.refresh);
   const endRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
-  // Subscribe to executor events so ExecutionControls + the embedded
-  // ProgressDashboard wake up the moment the first step_started fires.
   useExecution();
+
+  // Hydrate from SQLite whenever the route conversation changes.
+  useEffect(() => {
+    if (!conversationId) {
+      setMessages([]);
+      return;
+    }
+    let cancelled = false;
+    listMessagesByConversation({ conversationId })
+      .then((rows) => {
+        if (!cancelled) setMessages(rows);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          toast({
+            title: "Falha ao carregar mensagens",
+            description: err instanceof Error ? err.message : String(err),
+            variant: "destructive",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, toast]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, sending]);
+  }, [messages.length, sending, hasActiveExecution]);
+
+  async function handleSend(content: string) {
+    if (!conversationId) return;
+    const now = new Date().toISOString();
+    const optimistic: ChatMessage = {
+      id: crypto.randomUUID(),
+      execution_id: null,
+      conversation_id: conversationId,
+      role: "user",
+      content,
+      created_at: now,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+
+    setSending(true);
+    const reply = await safeInvoke(
+      () => sendChatMessage({ content, conversationId }),
+      { errorTitle: "Falha ao enviar mensagem" },
+    );
+    setSending(false);
+    if (reply) {
+      setMessages((prev) => [...prev, reply]);
+      refreshConversations();
+    }
+  }
 
   return (
-    <div className="flex h-full">
-      <div className="flex h-full min-w-0 flex-1 flex-col">
-        <ScrollArea className="flex-1">
-          <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-            {messages.length === 0 && !sending ? (
-              <EmptyState />
-            ) : (
-              messages.map((m) => <MessageBubble key={m.id} message={m} />)
-            )}
-            {sending ? <TypingIndicator /> : null}
-            <div ref={endRef} />
-          </div>
-        </ScrollArea>
+    <div className="flex h-full min-w-0 flex-1 flex-col">
+      <ScrollArea className="flex-1">
+        <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
+          {messages.length === 0 && !sending && !hasActiveExecution ? (
+            <EmptyState />
+          ) : (
+            messages.map((m) => <MessageBubble key={m.id} message={m} />)
+          )}
+          {sending ? <TypingIndicator /> : null}
+          {hasActiveExecution ? <ExecutionBlock /> : null}
+          <div ref={endRef} />
+        </div>
+      </ScrollArea>
 
-        <div className="border-t border-border bg-background p-4">
-          <div className="mx-auto max-w-3xl space-y-3">
-            <ExecutionControls />
-            <CommandInput onSubmit={send} disabled={sending} />
-          </div>
+      <div className="border-t border-border bg-background p-4">
+        <div className="mx-auto max-w-3xl">
+          <CommandInput
+            onSubmit={handleSend}
+            disabled={sending || !conversationId}
+          />
         </div>
       </div>
-
-      {/*
-        Side-by-side: only on ≥ 1200px AND when there's a live execution.
-        Below 1200px the user navigates to /progress instead.
-      */}
-      {hasActiveExecution ? (
-        <aside
-          aria-label="Painel de progresso"
-          className="hidden min-w-0 flex-1 border-l border-border min-[1200px]:flex"
-        >
-          <ProgressDashboard />
-        </aside>
-      ) : null}
     </div>
   );
 }

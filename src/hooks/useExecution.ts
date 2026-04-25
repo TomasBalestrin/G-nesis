@@ -17,8 +17,8 @@ import type {
  * The backend emits events keyed by the skill's logical `step_id`
  * ("step_1"), not the DB row UUID — so we upsert by that. On the first
  * `step_started` of a new execution_id we also seed `activeExecution` with
- * minimal fields, so a user opening /progress mid-run still sees something
- * useful even though the executor doesn't emit a dedicated "started" event.
+ * minimal fields, so the inline ExecutionBlock has something to render
+ * even though the executor doesn't emit a dedicated "started" event.
  *
  * No return value — this is a subscription side-effect hook.
  */

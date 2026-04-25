@@ -2,6 +2,8 @@
 
 pub mod chat;
 pub mod config;
+pub mod conversations;
+pub mod dependencies;
 pub mod execution;
 pub mod projects;
 pub mod skills;

@@ -4,17 +4,26 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  FolderGit2,
   FolderOpen,
   KeyRound,
+  Plus,
   Save,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useTauriCommand } from "@/hooks/useTauriCommand";
 import { useToast } from "@/hooks/useToast";
-import { callOpenAI, getConfig, saveConfig } from "@/lib/tauri-bridge";
+import {
+  callOpenAI,
+  getConfig,
+  listProjects,
+  saveConfig,
+} from "@/lib/tauri-bridge";
 import type { Config } from "@/types/config";
+import type { Project } from "@/types/project";
 
 /**
  * Onboarding + runtime configuration.
@@ -239,9 +248,74 @@ export function SettingsPage() {
               {saving ? "Salvando..." : "Salvar"}
             </Button>
           </div>
+
+          <ProjectsSection />
         </div>
       </div>
     </div>
+  );
+}
+
+function ProjectsSection() {
+  const { data, loading, execute } = useTauriCommand(listProjects);
+
+  useEffect(() => {
+    execute();
+  }, [execute]);
+
+  return (
+    <Section
+      icon={<FolderGit2 className="h-4 w-4" />}
+      title="Projetos"
+      description="Repositórios locais onde as skills executam. Use Novo Projeto para cadastrar um repo."
+    >
+      <div className="space-y-2">
+        <div className="flex justify-end">
+          <Button asChild size="sm">
+            <Link to="/projects/new">
+              <Plus className="h-4 w-4" />
+              Novo Projeto
+            </Link>
+          </Button>
+        </div>
+        {loading && !data ? (
+          <p className="text-xs text-[var(--text-2)]">Carregando...</p>
+        ) : data && data.length === 0 ? (
+          <p className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-3 py-4 text-center text-xs text-[var(--text-2)]">
+            Nenhum projeto cadastrado.
+          </p>
+        ) : (
+          <ul className="divide-y divide-[var(--border-sub)] overflow-hidden rounded-lg border border-border bg-card">
+            {(data ?? []).map((project) => (
+              <ProjectRow key={project.id} project={project} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+interface ProjectRowProps {
+  project: Project;
+}
+
+function ProjectRow({ project }: ProjectRowProps) {
+  return (
+    <li>
+      <Link
+        to={`/projects/${project.id}`}
+        className="flex items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-subtle)]"
+      >
+        <FolderGit2 className="h-4 w-4 shrink-0 text-[var(--text-3)]" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{project.name}</div>
+          <div className="truncate font-mono text-xs text-[var(--text-2)]">
+            {project.repo_path}
+          </div>
+        </div>
+      </Link>
+    </li>
   );
 }
 

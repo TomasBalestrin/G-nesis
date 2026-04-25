@@ -20,7 +20,7 @@ use tauri::State;
 use crate::ai::client::{Message, OpenAIClient};
 use crate::ai::prompts::{self, ORCHESTRATOR_SYSTEM_PROMPT};
 use crate::config;
-use crate::db::models::ChatMessage;
+use crate::db::models::{ChatMessage, Conversation};
 use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
 
@@ -206,27 +206,47 @@ fn try_slash_reply(skill_name: &str) -> String {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
+const TITLE_GEN_MAX_CHARS: usize = 30;
+const DEFAULT_CONVERSATION_TITLE: &str = "Nova conversa";
+
 /// Persist the user's message, decide between slash handling or GPT
 /// completion, persist the assistant reply, and return it.
+///
+/// `conversation_id` scopes the history window passed to GPT and the row
+/// storage — messages from other threads never leak in. On the very first
+/// user message of a conversation (title still "Nova conversa") we ask GPT
+/// for a short title in a side call and rename the row.
 #[tauri::command]
 pub async fn send_chat_message(
     content: String,
     execution_id: Option<String>,
+    conversation_id: Option<String>,
     pool: State<'_, SqlitePool>,
 ) -> Result<ChatMessage, String> {
     let user_msg = ChatMessage {
         id: new_id(),
         execution_id: execution_id.clone(),
+        conversation_id: conversation_id.clone(),
         role: "user".to_string(),
         content: content.clone(),
         created_at: now_iso(),
     };
+
+    // Snapshot of the conversation row BEFORE we insert the user message —
+    // if the title is still the default and there are no prior user messages,
+    // this is the thread's first turn and we should auto-name it.
+    let pre_insert_convo: Option<Conversation> = match conversation_id.as_deref() {
+        Some(id) => queries::get_conversation(&pool, id).await?,
+        None => None,
+    };
+
     queries::insert_message(&pool, &user_msg).await?;
 
     let reply_content = if let Some(skill_name) = extract_slash_command(&content) {
         try_slash_reply(skill_name)
     } else {
-        let history = queries::list_messages(&pool, execution_id.as_deref()).await?;
+        let history = history_for(&pool, execution_id.as_deref(), conversation_id.as_deref())
+            .await?;
         let messages: Vec<Message> = history
             .iter()
             .map(|m| Message {
@@ -248,13 +268,80 @@ pub async fn send_chat_message(
     let assistant_msg = ChatMessage {
         id: new_id(),
         execution_id,
+        conversation_id: conversation_id.clone(),
         role: "assistant".to_string(),
         content: reply_content,
         created_at: now_iso(),
     };
     queries::insert_message(&pool, &assistant_msg).await?;
 
+    if let Some(id) = conversation_id.as_deref() {
+        // Touch floats the thread to the top of the sidebar list even when
+        // the auto-title step below is skipped.
+        let _ = queries::touch_conversation(&pool, id).await;
+
+        if should_auto_title(pre_insert_convo.as_ref()) {
+            maybe_autotitle(&pool, id, &content).await;
+        }
+    }
+
     Ok(assistant_msg)
+}
+
+fn should_auto_title(pre: Option<&Conversation>) -> bool {
+    match pre {
+        Some(c) => c.title.trim() == DEFAULT_CONVERSATION_TITLE,
+        None => false,
+    }
+}
+
+/// Best-effort GPT call to coin a <=30 char title. Silent on failure — the
+/// user can always rename manually via the sidebar.
+async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message: &str) {
+    let Ok(client) = openai_client() else { return };
+
+    let prompt = format!(
+        "Gere um título curto (máximo {TITLE_GEN_MAX_CHARS} caracteres, em português, \
+         sem aspas, sem ponto final) que resuma o assunto da seguinte mensagem:\n\n{first_message}"
+    );
+    let messages = vec![Message {
+        role: "user".to_string(),
+        content: prompt,
+    }];
+    let Ok(raw) = client.chat_completion("", &messages).await else {
+        return;
+    };
+
+    let title: String = raw
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '.' || c == ' ')
+        .chars()
+        .take(TITLE_GEN_MAX_CHARS)
+        .collect();
+
+    if title.is_empty() {
+        return;
+    }
+    let _ = queries::rename_conversation(pool, conversation_id, &title).await;
+}
+
+/// Return the prior history for GPT context. Precedence: conversation_id
+/// (new multi-thread path) over execution_id (legacy scope). Messages
+/// inserted just before the call are included since list_messages_by_*
+/// reads the fresh row.
+async fn history_for(
+    pool: &SqlitePool,
+    execution_id: Option<&str>,
+    conversation_id: Option<&str>,
+) -> Result<Vec<ChatMessage>, String> {
+    if let Some(id) = conversation_id {
+        queries::list_messages_by_conversation(pool, id).await
+    } else {
+        queries::list_messages(pool, execution_id).await
+    }
 }
 
 /// Low-level passthrough. Does not persist to chat history.
@@ -269,6 +356,16 @@ pub async fn call_openai(prompt: String) -> Result<String, String> {
         .chat_completion("", &messages)
         .await
         .map_err(|e| e.user_message())
+}
+
+/// Read chat history for a specific conversation thread. Used by the chat UI
+/// on mount to hydrate the message list before the user types.
+#[tauri::command]
+pub async fn list_messages_by_conversation(
+    conversation_id: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<ChatMessage>, String> {
+    queries::list_messages_by_conversation(&pool, &conversation_id).await
 }
 
 #[cfg(test)]

@@ -1,18 +1,15 @@
 import { useState } from "react";
+import { Menu } from "lucide-react";
 import { Outlet } from "react-router-dom";
 
-import { Header } from "./Header";
+import { Button } from "@/components/ui/button";
 import { Sidebar } from "./Sidebar";
-import { StatusBar } from "./StatusBar";
 
 /**
- * App shell — three-row grid (header / main+sidebar / statusbar) with a
- * two-column inner row. The first column uses `auto` width so it follows
- * Sidebar's breakpoint widths (200/60/200 px per docs/ux-flows.md §6).
- *
- * Below 800px the Sidebar is rendered with `position: fixed` and slides in as
- * a drawer; that removes it from grid flow so the `auto` column collapses to
- * 0 and `<main>` gets the full width via `col-span-2`.
+ * App shell for the ChatGPT-like layout: 260px sidebar on the left, main
+ * content takes the rest. On `< 800px` the sidebar becomes a drawer toggled
+ * by the hamburger in the floating mobile bar. No narrow rail mode anymore —
+ * the sidebar lists conversations and skills, which need width to breathe.
  */
 export function MainLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -22,31 +19,40 @@ export function MainLayout() {
   }
 
   return (
-    <div className="h-screen grid grid-rows-[auto_1fr_auto] grid-cols-[auto_1fr] overflow-hidden bg-background text-foreground">
-      <div className="col-span-2 row-start-1">
-        <Header onMenuClick={() => setDrawerOpen((o) => !o)} />
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <Sidebar open={drawerOpen} onNavigate={closeDrawer} />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <MobileHeader onMenuClick={() => setDrawerOpen((o) => !o)} />
+        <main className="min-h-0 flex-1 overflow-hidden">
+          <Outlet />
+        </main>
       </div>
 
-      <div className="row-start-2 col-start-1 max-[800px]:col-span-2">
-        <Sidebar open={drawerOpen} onNavigate={closeDrawer} />
-      </div>
-
-      <main className="row-start-2 col-start-2 min-w-0 overflow-auto max-[800px]:col-start-1 max-[800px]:col-span-2">
-        <Outlet />
-      </main>
-
-      <div className="col-span-2 row-start-3">
-        <StatusBar />
-      </div>
-
-      {drawerOpen && (
+      {drawerOpen ? (
         <button
           type="button"
           aria-label="Fechar menu"
           onClick={closeDrawer}
-          className="fixed inset-0 z-30 bg-black/60 min-[800px]:hidden"
+          className="fixed inset-0 z-30 bg-black/50 min-[800px]:hidden"
         />
-      )}
+      ) : null}
     </div>
+  );
+}
+
+function MobileHeader({ onMenuClick }: { onMenuClick: () => void }) {
+  return (
+    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 min-[800px]:hidden">
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onMenuClick}
+        aria-label="Abrir menu"
+      >
+        <Menu className="h-5 w-5" />
+      </Button>
+      <span className="font-bold tracking-tight">Genesis</span>
+    </header>
   );
 }

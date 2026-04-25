@@ -1,5 +1,10 @@
-//! App configuration. Persisted at `~/.genesis/config.toml`, overridable by
-//! `OPENAI_API_KEY` and `GENESIS_SKILLS_DIR` env vars (env wins over file).
+//! App configuration. Persisted at `~/.genesis/config.toml`.
+//!
+//! Precedence: config file wins over env vars for `openai_api_key` (users
+//! edit Settings and expect that to take effect even if a stale env var is
+//! exported in their shell). Env vars only fill values the config leaves
+//! empty. `GENESIS_SKILLS_DIR` still overrides the file since skill path is
+//! more of a dev knob than a credential.
 //!
 //! Per docs/security.md, the API key is NEVER committed to source control —
 //! the TOML lives in the user's home directory.
@@ -62,8 +67,9 @@ fn default_db_path() -> String {
 // ── load / save ─────────────────────────────────────────────────────────────
 
 /// Load config with this precedence:
-/// 1. `~/.genesis/config.toml` (if it exists)
-/// 2. Overrides from `OPENAI_API_KEY` and `GENESIS_SKILLS_DIR` env vars
+/// 1. `~/.genesis/config.toml` (wins for `openai_api_key`)
+/// 2. Env fallback: `OPENAI_API_KEY` fills the key ONLY when the file is
+///    empty; `GENESIS_SKILLS_DIR` overrides `skills_dir` either way
 /// 3. Defaults
 ///
 /// Also creates the skills directory if missing so skill listing doesn't fail
@@ -120,11 +126,22 @@ fn read_config_file(path: &Path) -> Result<Config, String> {
 }
 
 fn apply_env_overrides(cfg: &mut Config) {
-    if let Ok(k) = std::env::var("OPENAI_API_KEY") {
-        if !k.is_empty() {
-            cfg.openai_api_key = Some(k);
+    // openai_api_key: env is only a FALLBACK — the saved config wins so that
+    // editing Settings always takes effect, even with a stale shell-exported
+    // OPENAI_API_KEY still around.
+    if cfg
+        .openai_api_key
+        .as_deref()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        if let Ok(k) = std::env::var("OPENAI_API_KEY") {
+            if !k.is_empty() {
+                cfg.openai_api_key = Some(k);
+            }
         }
     }
+    // skills_dir: env DOES override (dev knob, not a credential).
     if let Ok(d) = std::env::var("GENESIS_SKILLS_DIR") {
         if !d.is_empty() {
             cfg.skills_dir = d;

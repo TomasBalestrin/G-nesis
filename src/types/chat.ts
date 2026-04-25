@@ -6,7 +6,15 @@ export type ChatRole = "user" | "assistant" | "system";
 export interface ChatMessage {
   id: string;
   execution_id: string | null;
+  conversation_id: string | null;
   role: ChatRole;
   content: string;
   created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
 }
