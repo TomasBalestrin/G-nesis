@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  AlertCircle,
   ArrowRight,
   CheckCircle2,
-  Copy,
-  Download,
   Eye,
   EyeOff,
   KeyRound,
@@ -18,21 +15,21 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/useToast";
 import {
   callOpenAI,
-  checkDependency,
   getConfig,
-  installDependency,
   saveConfig,
   type Config,
 } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 
-/** 4-step first-run wizard; rendered fullscreen when getConfig().needs_setup. */
+/** 3-step first-run wizard; rendered fullscreen when getConfig().needs_setup. */
 interface SetupWizardProps {
   initialConfig: Config;
   onComplete: () => void;
 }
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3;
+
+const TOTAL_STEPS = 3;
 
 export function SetupWizard({ initialConfig, onComplete }: SetupWizardProps) {
   const [step, setStep] = useState<Step>(1);
@@ -42,7 +39,7 @@ export function SetupWizard({ initialConfig, onComplete }: SetupWizardProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg-primary)] p-6">
       <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-lg animate-fade-in">
-        <StepIndicator current={step} total={4} />
+        <StepIndicator current={step} total={TOTAL_STEPS} />
         <div className="px-8 pb-8 pt-4">
           {step === 1 ? (
             <WelcomeStep onNext={() => setStep(2)} />
@@ -55,11 +52,6 @@ export function SetupWizard({ initialConfig, onComplete }: SetupWizardProps) {
               skillsDir={initialConfig.skills_dir}
               onNext={() => setStep(3)}
               onBack={() => setStep(1)}
-            />
-          ) : step === 3 ? (
-            <DependenciesStep
-              onNext={() => setStep(4)}
-              onBack={() => setStep(2)}
             />
           ) : (
             <DoneStep onFinish={onComplete} />
@@ -116,8 +108,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         </p>
       </div>
       <p className="text-xs text-[var(--text-tertiary)]">
-        Vamos configurar a OpenAI key e verificar dependências. Leva menos de
-        um minuto.
+        Configurar a OpenAI key leva menos de um minuto.
       </p>
       <Button onClick={onNext} size="lg" className="w-full">
         Começar
@@ -268,219 +259,7 @@ function ApiKeyStep({
   );
 }
 
-// ── step 3: dependencies ────────────────────────────────────────────────────
-
-interface DependencyDef {
-  id: string;
-  label: string;
-  description: string;
-  /** Truthy when brew can install it; falsy = show manual copy command. */
-  brewName: string | null;
-  /** Copy-pasteable install command when brew isn't the right channel. */
-  manualCommand?: string;
-}
-
-const DEPENDENCIES: DependencyDef[] = [
-  {
-    id: "ffmpeg",
-    label: "ffmpeg",
-    description: "Processamento de áudio/vídeo (usado por skills de mídia)",
-    brewName: "ffmpeg",
-  },
-  {
-    id: "claude",
-    label: "Claude Code CLI",
-    description: "Canal claude-code — spawn `claude -p` com JSON output",
-    brewName: null,
-    manualCommand: "npm install -g @anthropic-ai/claude-code",
-  },
-];
-
-type DepStatus = "checking" | "installed" | "missing" | "installing" | "error";
-
-interface DepState {
-  status: DepStatus;
-  message?: string;
-}
-
-function DependenciesStep({
-  onNext,
-  onBack,
-}: {
-  onNext: () => void;
-  onBack: () => void;
-}) {
-  const [states, setStates] = useState<Record<string, DepState>>(() =>
-    Object.fromEntries(DEPENDENCIES.map((d) => [d.id, { status: "checking" as DepStatus }])),
-  );
-
-  const refreshDep = useCallback(async (id: string) => {
-    setStates((prev) => ({ ...prev, [id]: { status: "checking" } }));
-    try {
-      const ok = await checkDependency({ name: id });
-      setStates((prev) => ({
-        ...prev,
-        [id]: { status: ok ? "installed" : "missing" },
-      }));
-    } catch (err) {
-      setStates((prev) => ({
-        ...prev,
-        [id]: {
-          status: "error",
-          message: err instanceof Error ? err.message : String(err),
-        },
-      }));
-    }
-  }, []);
-
-  useEffect(() => {
-    DEPENDENCIES.forEach((d) => void refreshDep(d.id));
-  }, [refreshDep]);
-
-  return (
-    <div className="space-y-5">
-      <header>
-        <h2 className="text-lg font-semibold">Dependências</h2>
-        <p className="mt-1 text-xs text-[var(--text-secondary)]">
-          Opcionais — skills específicas podem não exigir todas. Você pode
-          instalar depois.
-        </p>
-      </header>
-
-      <ul className="space-y-3">
-        {DEPENDENCIES.map((dep) => (
-          <DependencyRow
-            key={dep.id}
-            dep={dep}
-            state={states[dep.id]}
-            onRefresh={() => refreshDep(dep.id)}
-            onStatusChange={(next) =>
-              setStates((prev) => ({ ...prev, [dep.id]: next }))
-            }
-          />
-        ))}
-      </ul>
-
-      <div className="flex items-center justify-between pt-2">
-        <Button variant="ghost" onClick={onBack}>
-          Voltar
-        </Button>
-        <Button onClick={onNext}>
-          Continuar
-          <ArrowRight className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-interface DependencyRowProps {
-  dep: DependencyDef;
-  state: DepState;
-  onRefresh: () => void;
-  onStatusChange: (state: DepState) => void;
-}
-
-function DependencyRow({ dep, state, onRefresh, onStatusChange }: DependencyRowProps) {
-  const { toast } = useToast();
-
-  async function handleInstall() {
-    if (!dep.brewName) return;
-    onStatusChange({ status: "installing" });
-    try {
-      await installDependency({ name: dep.brewName });
-      toast({ title: `${dep.label} instalado` });
-      onRefresh();
-    } catch (err) {
-      onStatusChange({
-        status: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
-      toast({
-        title: `Falha ao instalar ${dep.label}`,
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
-    }
-  }
-
-  async function handleCopy() {
-    if (!dep.manualCommand) return;
-    try {
-      await navigator.clipboard.writeText(dep.manualCommand);
-      toast({ title: "Comando copiado" });
-    } catch {
-      toast({ title: "Copie manualmente", variant: "destructive" });
-    }
-  }
-
-  return (
-    <li className="rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <StatusBadge state={state} />
-            <span className="truncate font-mono text-sm font-semibold">
-              {dep.label}
-            </span>
-          </div>
-          <p className="mt-1 text-xs text-[var(--text-tertiary)]">
-            {dep.description}
-          </p>
-          {state.status === "error" && state.message ? (
-            <p className="mt-2 text-xs text-[var(--error)]">{state.message}</p>
-          ) : null}
-        </div>
-
-        {state.status === "missing" || state.status === "error" ? (
-          dep.brewName ? (
-            <Button size="sm" variant="outline" onClick={handleInstall}>
-              <Download className="h-4 w-4" />
-              Instalar
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={handleCopy}>
-              <Copy className="h-4 w-4" />
-              Copiar comando
-            </Button>
-          )
-        ) : null}
-
-        {state.status === "installing" ? (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Instalando…
-          </span>
-        ) : null}
-      </div>
-
-      {state.status === "missing" && !dep.brewName && dep.manualCommand ? (
-        <pre className="mt-2 overflow-x-auto rounded-md bg-[var(--code-bg)] px-3 py-2 font-mono text-xs text-[var(--code-text)]">
-          {dep.manualCommand}
-        </pre>
-      ) : null}
-    </li>
-  );
-}
-
-function StatusBadge({ state }: { state: DepState }) {
-  switch (state.status) {
-    case "installed":
-      return (
-        <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--success)]" />
-      );
-    case "missing":
-    case "error":
-      return <AlertCircle className="h-4 w-4 shrink-0 text-[var(--warning)]" />;
-    case "checking":
-    case "installing":
-      return (
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--text-tertiary)]" />
-      );
-  }
-}
-
-// ── step 4: done ────────────────────────────────────────────────────────────
+// ── step 3: done ────────────────────────────────────────────────────────────
 
 function DoneStep({ onFinish }: { onFinish: () => void }) {
   return (
@@ -491,8 +270,13 @@ function DoneStep({ onFinish }: { onFinish: () => void }) {
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Tudo pronto</h2>
         <p className="mx-auto mt-2 max-w-sm text-sm text-[var(--text-secondary)]">
-          Configuração salva. Digite <code className="rounded bg-[var(--code-bg)] px-1 font-mono text-xs">/skill-name</code>{" "}
-          no chat pra ativar skills ou converse livre com o assistente.
+          Configuração salva. Digite{" "}
+          <code className="rounded bg-[var(--code-bg)] px-1 font-mono text-xs">
+            /skill-name
+          </code>{" "}
+          no chat pra ativar skills, ou descreva o que quer fazer — o
+          assistente checa as ferramentas necessárias e pede permissão antes
+          de instalar qualquer coisa.
         </p>
       </div>
       <Button onClick={onFinish} size="lg" className="w-full">
