@@ -58,6 +58,24 @@ pub async fn delete_project(pool: &SqlitePool, id: &str) -> Result<(), String> {
 
 // ── executions ──────────────────────────────────────────────────────────────
 
+/// Count executions for `skill_name` that are still in flight (pending,
+/// running or paused). Used to block destructive actions like deleting the
+/// skill .md while a job is using it.
+pub async fn count_active_by_skill_name(
+    pool: &SqlitePool,
+    skill_name: &str,
+) -> Result<i64, String> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM executions
+         WHERE skill_name = ?1 AND status IN ('pending', 'running', 'paused')",
+    )
+    .bind(skill_name)
+    .fetch_one(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(count)
+}
+
 pub async fn list_executions_for_project(
     pool: &SqlitePool,
     project_id: &str,

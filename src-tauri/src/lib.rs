@@ -48,6 +48,7 @@ pub fn run() {
             skills::list_skills,
             skills::read_skill,
             skills::save_skill,
+            skills::delete_skill,
             skills::parse_skill,
             // projects
             projects::list_projects,

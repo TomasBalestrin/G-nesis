@@ -13,8 +13,17 @@ import {
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
+import { deleteSkill } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
@@ -333,30 +342,99 @@ function SkillItem({
   skill: SkillMeta;
   onNavigate: () => void;
 }) {
+  const { name: routeName } = useParams<{ name: string }>();
+  const isActive = routeName === skill.name;
+  const refreshSkills = useSkillsStore((s) => s.refresh);
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const description = skill.description.trim();
+
+  async function handleConfirmDelete() {
+    setDeleting(true);
+    try {
+      await deleteSkill({ name: skill.name });
+      toast({ title: `Skill ${skill.name} deletada` });
+      await refreshSkills();
+      if (isActive) navigate("/");
+    } catch (err) {
+      toast({
+        title: "Falha ao deletar skill",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmOpen(false);
+    }
+  }
+
   return (
-    <NavLink
-      to={`/skills/${encodeURIComponent(skill.name)}`}
-      onClick={onNavigate}
-      className={({ isActive }) =>
-        cn(
-          "flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
+    <>
+      <NavLink
+        to={`/skills/${encodeURIComponent(skill.name)}`}
+        onClick={onNavigate}
+        className={cn(
+          "group flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
           isActive
             ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
             : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
-        )
-      }
-    >
-      <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-xs">{skill.name}</span>
-        {description ? (
-          <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
-            {description}
-          </span>
-        ) : null}
-      </span>
-    </NavLink>
+        )}
+      >
+        <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-xs">{skill.name}</span>
+          {description ? (
+            <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
+              {description}
+            </span>
+          ) : null}
+        </span>
+        <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <IconButton
+            ariaLabel={`Deletar skill ${skill.name}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setConfirmOpen(true);
+            }}
+          >
+            <Trash2 className="h-3 w-3" />
+          </IconButton>
+        </span>
+      </NavLink>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deletar skill?</DialogTitle>
+            <DialogDescription>
+              O arquivo <span className="font-mono">{skill.name}.md</span> será
+              removido do <span className="font-mono">skills_dir</span>. Esta
+              ação não pode ser desfeita. Execuções em andamento bloqueiam a
+              deleção.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={deleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Deletando..." : "Deletar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

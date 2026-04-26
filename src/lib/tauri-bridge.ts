@@ -103,6 +103,12 @@ export function parseSkill(args: { name: string }): Promise<ParsedSkill> {
   return invoke("parse_skill", args);
 }
 
+/** Removes the `.md` from disk. Backend refuses if any execution is still
+ * in flight for the same skill. */
+export function deleteSkill(args: { name: string }): Promise<void> {
+  return invoke("delete_skill", args);
+}
+
 // ── projects ────────────────────────────────────────────────────────────────
 
 export function listProjects(): Promise<Project[]> {
