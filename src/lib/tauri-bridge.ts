@@ -15,6 +15,7 @@ import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { Execution, ExecutionDetail, Project } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
+import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
 export interface SafeInvokeOptions {
   /** Toast title shown after a successful call. Omit to stay silent on success. */
@@ -257,6 +258,51 @@ export function setAppState(args: {
   return invoke("set_app_state", args);
 }
 
+// ── workflows ───────────────────────────────────────────────────────────────
+
+/** Lightweight summary list — calls `commands::workflows::list_workflows`. */
+export function listWorkflows(): Promise<WorkflowSummary[]> {
+  return invoke("list_workflows");
+}
+
+export function readWorkflow(args: { name: string }): Promise<string> {
+  return invoke("read_workflow", args);
+}
+
+export function saveWorkflow(args: {
+  name: string;
+  content: string;
+}): Promise<void> {
+  return invoke("save_workflow", args);
+}
+
+export function deleteWorkflow(args: { name: string }): Promise<void> {
+  return invoke("delete_workflow", args);
+}
+
+/** Returns the parsed AST. Distinct command name from the JS `parseWorkflow`
+ *  helper would shadow — Tauri side is `parse_workflow`. */
+export function parseWorkflowFile(args: {
+  name: string;
+}): Promise<ParsedWorkflow> {
+  return invoke("parse_workflow", args);
+}
+
+/** Fire-and-forget — backend spawns the WorkflowExecutor and returns the
+ *  workflow_execution_id immediately. Progress flows via `workflow:*` events. */
+export function executeWorkflow(args: {
+  workflowName: string;
+  projectId?: string | null;
+}): Promise<string> {
+  return invoke("execute_workflow", args);
+}
+
+export function abortWorkflow(args: {
+  workflowExecutionId: string;
+}): Promise<void> {
+  return invoke("abort_workflow", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
@@ -271,3 +317,9 @@ export type {
   Project,
 } from "@/types/project";
 export type { ParsedSkill, SkillMeta } from "@/types/skill";
+export type {
+  ParsedWorkflow,
+  WorkflowMeta,
+  WorkflowStep,
+  WorkflowSummary,
+} from "@/types/workflow";

@@ -9,6 +9,9 @@ import { NewProjectForm } from "@/components/projects/NewProjectForm";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
+import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
+import { WorkflowList } from "@/components/workflows/WorkflowList";
+import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
 import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/useToast";
@@ -93,6 +96,14 @@ function App() {
               Same editor handles create (/skills/new) and edit (/skills/:name). */}
           <Route path="skills/new" element={<SkillEditor />} />
           <Route path="skills/:name" element={<SkillEditor />} />
+
+          {/* Workflows: full catalog page + viewer + editor. /:name shows
+              the read-only structured view; /:name/edit opens the markdown
+              editor for changes. */}
+          <Route path="workflows" element={<WorkflowList />} />
+          <Route path="workflows/new" element={<WorkflowEditor />} />
+          <Route path="workflows/:name" element={<WorkflowViewer />} />
+          <Route path="workflows/:name/edit" element={<WorkflowEditor />} />
 
           {/* Projects: list is inside Settings; these routes support
               creating and inspecting a single project. */}

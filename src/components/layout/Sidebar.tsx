@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   ChevronRight,
   FileCode,
+  GitBranch,
   MessageSquare,
   Moon,
   Pencil,
@@ -9,6 +10,7 @@ import {
   Settings,
   Sun,
   Trash2,
+  Workflow,
 } from "lucide-react";
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
@@ -27,8 +29,10 @@ import { deleteSkill } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
+import { useWorkflowsStore } from "@/stores/workflowsStore";
 import type { Conversation } from "@/types/chat";
 import type { SkillMeta } from "@/types/skill";
+import type { WorkflowSummary } from "@/types/workflow";
 
 interface SidebarProps {
   open: boolean;
@@ -80,6 +84,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         <ChatsSection onNavigate={onNavigate} />
         <SkillsSection onNavigate={onNavigate} />
+        <WorkflowsSection onNavigate={onNavigate} />
       </nav>
 
       <Footer />
@@ -435,6 +440,104 @@ function SkillItem({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+// ── workflows section ───────────────────────────────────────────────────────
+
+function WorkflowsSection({ onNavigate }: { onNavigate: () => void }) {
+  const [open, setOpen] = useState(true);
+  const items = useWorkflowsStore((s) => s.items);
+  const loading = useWorkflowsStore((s) => s.loading);
+  const loaded = useWorkflowsStore((s) => s.loaded);
+  const ensureLoaded = useWorkflowsStore((s) => s.ensureLoaded);
+
+  useEffect(() => {
+    void ensureLoaded();
+  }, [ensureLoaded]);
+
+  return (
+    <section>
+      <SectionHeader
+        label="Workflows"
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        action={
+          <Link
+            to="/workflows/new"
+            onClick={onNavigate}
+            aria-label="Novo workflow"
+            className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Link>
+        }
+      />
+      {open ? (
+        <div className="mt-1 space-y-0.5">
+          <NavLink
+            to="/workflows"
+            end
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-xs transition-colors duration-100",
+                isActive
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+              )
+            }
+          >
+            <Workflow className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+            Ver todos
+          </NavLink>
+          {loading && !loaded ? (
+            <p className="px-2 py-1 text-xs text-[var(--text-3)]">Carregando...</p>
+          ) : items.length === 0 ? (
+            <p className="px-2 py-1 text-xs text-[var(--text-3)]">
+              Nenhum workflow.
+            </p>
+          ) : (
+            items.map((wf) => (
+              <WorkflowItem key={wf.name} wf={wf} onNavigate={onNavigate} />
+            ))
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WorkflowItem({
+  wf,
+  onNavigate,
+}: {
+  wf: WorkflowSummary;
+  onNavigate: () => void;
+}) {
+  return (
+    <NavLink
+      to={`/workflows/${encodeURIComponent(wf.name)}`}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          "flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
+          isActive
+            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+            : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+        )
+      }
+    >
+      <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-mono text-xs">{wf.name}</span>
+        {wf.description.trim() ? (
+          <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
+            {wf.description}
+          </span>
+        ) : null}
+      </span>
+    </NavLink>
   );
 }
 
