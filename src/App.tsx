@@ -13,12 +13,20 @@ import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/useToast";
 import { getConfig } from "@/lib/tauri-bridge";
+import { useAppStore } from "@/stores/appStore";
 import type { Config } from "@/types/config";
 
 function App() {
   const [bootstrap, setBootstrap] = useState<Config | null>(null);
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
+  const hydrateAppState = useAppStore((s) => s.hydrateFromBackend);
   const { toast } = useToast();
+
+  // Pull persisted UI state (active project, active model) from app_state
+  // once the backend pool is up. Idempotent — internal flag guards re-runs.
+  useEffect(() => {
+    void hydrateAppState();
+  }, [hydrateAppState]);
 
   useEffect(() => {
     let cancelled = false;

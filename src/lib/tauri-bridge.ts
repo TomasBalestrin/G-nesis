@@ -235,6 +235,28 @@ export function installDependency(args: { name: string }): Promise<string> {
   return invoke("install_dependency", args);
 }
 
+// ── app_state (key/value store for cross-session UI state) ──────────────────
+
+/** Mirrors the Rust struct in src-tauri/src/db/models.rs::AppState. */
+export interface AppState {
+  key: string;
+  value: string;
+  updated_at: string;
+}
+
+/** Read a single key; resolves `null` when the key was never written. */
+export function getAppState(args: { key: string }): Promise<AppState | null> {
+  return invoke("get_app_state", args);
+}
+
+/** UPSERT a key. Returns the freshly-written row including new updated_at. */
+export function setAppState(args: {
+  key: string;
+  value: string;
+}): Promise<AppState> {
+  return invoke("set_app_state", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
