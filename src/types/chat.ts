@@ -20,6 +20,19 @@ export interface ChatMessage {
   created_at: string;
   /** Defaults to `"text"` when absent — used to route render logic. */
   type?: ChatMessageType;
+  /**
+   * Extended-thinking text from models that expose reasoning (Anthropic
+   * Claude with thinking blocks, OpenAI o1/o3). Streams in as the model
+   * thinks; rendered above the assistant content. `undefined` means the
+   * message has no thinking attached (regular text turn).
+   */
+  thinking?: string;
+  /**
+   * Short one-line summary of the thinking block — shown in the collapsed
+   * accordion header so the user can scan multiple turns without expanding
+   * each. Falls back to a generic label when omitted.
+   */
+  thinking_summary?: string;
 }
 
 export interface Conversation {
