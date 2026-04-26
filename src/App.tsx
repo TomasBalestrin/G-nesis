@@ -52,6 +52,7 @@ function App() {
           skills_dir: "",
           workflows_dir: "",
           db_path: "",
+          claude_cli_path: null,
           needs_setup: true,
         });
         setShowWizard(true);
