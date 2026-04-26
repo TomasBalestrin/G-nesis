@@ -8,6 +8,7 @@ pub mod config;
 pub mod db;
 pub mod orchestrator;
 
+use channels::terminal::TerminalRegistry;
 use commands::{
     app_state, chat, config as config_cmd, conversations, dependencies, execution, projects,
     skills, workflows,
@@ -38,6 +39,7 @@ pub fn run() {
             app.manage(pool);
 
             app.manage(ExecutionRegistry::new());
+            app.manage(TerminalRegistry::new());
 
             Ok(())
         })
@@ -85,6 +87,11 @@ pub fn run() {
             workflows::parse_workflow,
             workflows::execute_workflow,
             workflows::abort_workflow,
+            // terminal (PTY)
+            channels::terminal::terminal_spawn,
+            channels::terminal::terminal_write,
+            channels::terminal::terminal_resize,
+            channels::terminal::terminal_kill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

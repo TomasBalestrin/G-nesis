@@ -47,6 +47,19 @@ export interface ThinkingCompleteEvent {
   summary: string;
 }
 
+// ── terminal events (channels::terminal::TerminalRegistry) ─────────────────
+
+export interface TerminalDataEvent {
+  session_id: string;
+  /** Raw bytes from the PTY master. JS side wraps in Uint8Array before
+   *  feeding into xterm's `term.write()` so escape sequences land intact. */
+  data: number[];
+}
+
+export interface TerminalExitEvent {
+  session_id: string;
+}
+
 /**
  * Map of Tauri event name → payload type. Consumers pass the literal
  * event name to `useTauriEvent` and the payload is inferred.
@@ -59,6 +72,8 @@ export interface TauriEventMap {
   "execution:log": LogEvent;
   "chat:thinking_delta": ThinkingDeltaEvent;
   "chat:thinking_complete": ThinkingCompleteEvent;
+  "terminal:data": TerminalDataEvent;
+  "terminal:exit": TerminalExitEvent;
 }
 
 export type TauriEventName = keyof TauriEventMap;

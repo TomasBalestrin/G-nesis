@@ -303,6 +303,37 @@ export function abortWorkflow(args: {
   return invoke("abort_workflow", args);
 }
 
+// ── terminal (PTY) ──────────────────────────────────────────────────────────
+
+/** Start a new PTY session. Returns the session id used by subsequent
+ *  write/resize/kill calls. Output streams via `terminal:data` events. */
+export function terminalSpawn(args: {
+  rows: number;
+  cols: number;
+  cwd?: string | null;
+}): Promise<string> {
+  return invoke("terminal_spawn", args);
+}
+
+export function terminalWrite(args: {
+  sessionId: string;
+  data: number[];
+}): Promise<void> {
+  return invoke("terminal_write", args);
+}
+
+export function terminalResize(args: {
+  sessionId: string;
+  rows: number;
+  cols: number;
+}): Promise<void> {
+  return invoke("terminal_resize", args);
+}
+
+export function terminalKill(args: { sessionId: string }): Promise<void> {
+  return invoke("terminal_kill", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when

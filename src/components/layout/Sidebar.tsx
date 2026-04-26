@@ -9,6 +9,7 @@ import {
   Plus,
   Settings,
   Sun,
+  Terminal as TerminalIcon,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -547,13 +548,23 @@ function Footer() {
   const { isDark, toggle } = useTheme();
   return (
     <div className="flex items-center justify-between gap-2 border-t border-[var(--sb-bd)] px-3 py-3">
-      <Link
-        to="/settings"
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
-      >
-        <Settings className="h-4 w-4" />
-        Settings
-      </Link>
+      <div className="flex items-center gap-1">
+        <Link
+          to="/settings"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
+        >
+          <Settings className="h-4 w-4" />
+          Settings
+        </Link>
+        <Link
+          to="/terminal"
+          aria-label="Abrir terminal embutido"
+          title="Terminal"
+          className="flex items-center gap-2 rounded-md p-2 text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
+        >
+          <TerminalIcon className="h-4 w-4" />
+        </Link>
+      </div>
       <button
         type="button"
         onClick={toggle}
