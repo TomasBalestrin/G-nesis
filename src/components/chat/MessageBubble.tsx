@@ -320,7 +320,7 @@ interface SkillExecutePanelProps {
  * Inline "▶ Executar" action for skill-preview bubbles. Fetches projects on
  * mount, lets the user pick one, and fires the execute_skill command. Once
  * triggered, the button locks to prevent double-starts — progress streams
- * into the inline ExecutionBlock rendered below the chat messages.
+ * into the inline ExecutionMessage rendered right in the chat stream.
  */
 function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   const [projects, setProjects] = useState<Project[] | null>(null);

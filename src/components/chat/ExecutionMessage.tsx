@@ -1,16 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  Ban,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Circle,
-  Loader2,
-  Pause,
-  Play,
-  XCircle,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Ban, CheckCircle2, Pause, Play, XCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +18,9 @@ import {
   resumeExecution,
 } from "@/lib/tauri-bridge";
 import { useExecutionStore } from "@/stores/executionStore";
-import type { Execution, ExecutionStep, StepStatus, Tool } from "@/types/project";
+import type { Execution, ExecutionStep } from "@/types/project";
+
+import { InlineStepCard } from "./InlineStepCard";
 
 const TERMINAL: ReadonlyArray<Execution["status"]> = [
   "completed",
@@ -38,15 +29,15 @@ const TERMINAL: ReadonlyArray<Execution["status"]> = [
 ];
 
 /**
- * Inline execution surface rendered inside the chat stream after a skill is
- * launched. Reads streaming state from the execution store (kept up to date
- * by useExecution), so it just needs to subscribe — no IPC of its own.
+ * Inline execution surface, rendered by ChatPanel for any virtual chat
+ * message with `type === "execution"`. Reads streaming state from
+ * useExecutionStore (kept up to date by useExecution events) — no IPC of
+ * its own.
  *
- * One block per active execution. When the execution reaches a terminal
- * status the block locks into a final-summary state but stays visible so
- * the user has a record of what ran.
+ * One card per active execution. Locks into a final-summary state on
+ * terminal status but stays visible so the user has a record of what ran.
  */
-export function ExecutionBlock() {
+export function ExecutionMessage() {
   const activeExecution = useExecutionStore((s) => s.activeExecution);
   const steps = useExecutionStore((s) => s.steps);
   const logs = useExecutionStore((s) => s.logs);
@@ -67,7 +58,10 @@ export function ExecutionBlock() {
       const next = new Set(prev);
       let changed = false;
       for (const s of steps) {
-        if ((s.status === "running" || s.status === "failed") && !next.has(s.step_id)) {
+        if (
+          (s.status === "running" || s.status === "failed") &&
+          !next.has(s.step_id)
+        ) {
           next.add(s.step_id);
           changed = true;
         }
@@ -98,7 +92,7 @@ export function ExecutionBlock() {
       role="region"
       aria-label={`Execução de ${activeExecution.skill_name}`}
     >
-      <BlockHeader
+      <Header
         execution={activeExecution}
         completed={completed}
         total={total}
@@ -110,7 +104,7 @@ export function ExecutionBlock() {
           </div>
         ) : (
           steps.map((step) => (
-            <StepRow
+            <InlineStepCard
               key={step.step_id}
               step={step}
               expanded={expanded.has(step.step_id)}
@@ -127,14 +121,15 @@ export function ExecutionBlock() {
   );
 }
 
-interface BlockHeaderProps {
+interface HeaderProps {
   execution: Execution;
   completed: number;
   total: number;
 }
 
-function BlockHeader({ execution, completed, total }: BlockHeaderProps) {
-  const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+function Header({ execution, completed, total }: HeaderProps) {
+  const pct =
+    total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
   const isTerminal = TERMINAL.includes(execution.status);
 
   return (
@@ -148,7 +143,12 @@ function BlockHeader({ execution, completed, total }: BlockHeaderProps) {
             {completed}/{total || "?"} steps · {labelFor(execution.status)}
           </p>
         </div>
-        {!isTerminal ? <InlineControls executionId={execution.id} status={execution.status} /> : null}
+        {!isTerminal ? (
+          <InlineControls
+            executionId={execution.id}
+            status={execution.status}
+          />
+        ) : null}
       </div>
       <ProgressTrack pct={pct} status={execution.status} />
     </header>
@@ -280,93 +280,6 @@ function ProgressTrack({
   );
 }
 
-interface StepRowProps {
-  step: ExecutionStep;
-  expanded: boolean;
-  onToggle: () => void;
-  logs: string[];
-}
-
-function StepRow({ step, expanded, onToggle, logs }: StepRowProps) {
-  const { icon: Icon, color, spin } = iconFor(step.status);
-  const elapsed = currentDurationMs(step);
-  return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-lg border border-l-4 border-[var(--border-sub)]",
-        borderColorFor(step.status),
-      )}
-    >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
-      >
-        <Icon className={cn("h-4 w-4 shrink-0", color, spin && "animate-spin")} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-xs font-semibold">
-            {step.step_id}
-          </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-secondary)]">
-            <ToolBadge tool={step.tool} />
-            <span>{labelForStep(step.status)}</span>
-            {elapsed !== null ? (
-              <span className="font-mono">{formatDuration(elapsed)}</span>
-            ) : null}
-            {step.retries > 0 ? (
-              <span className="text-[var(--warning)]">
-                retries: {step.retries}
-              </span>
-            ) : null}
-          </div>
-        </div>
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-[var(--text-tertiary)]" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-[var(--text-tertiary)]" />
-        )}
-      </button>
-      {expanded ? (
-        <StepLogs logs={logs} stderr={step.status === "failed" ? step.error : null} />
-      ) : null}
-    </div>
-  );
-}
-
-function StepLogs({ logs, stderr }: { logs: string[]; stderr: string | null }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
-  }, [logs.length, stderr]);
-
-  if (logs.length === 0 && !stderr) {
-    return (
-      <div className="bg-[var(--code-bg)] px-3 py-2 font-mono text-[11px] italic text-[var(--text-tertiary)]">
-        Sem logs ainda.
-      </div>
-    );
-  }
-  return (
-    <div className="max-h-64 overflow-y-auto bg-[var(--code-bg)] px-3 py-2 font-mono text-[11px]">
-      {logs.map((line, i) => (
-        <div
-          key={i}
-          className="whitespace-pre-wrap break-words text-[var(--code-tx)]"
-        >
-          {line || " "}
-        </div>
-      ))}
-      {stderr ? (
-        <div className="mt-2 whitespace-pre-wrap break-words text-[var(--error)]">
-          {stderr}
-        </div>
-      ) : null}
-      <div ref={endRef} />
-    </div>
-  );
-}
-
 function FinalSummary({
   execution,
   steps,
@@ -392,9 +305,7 @@ function FinalSummary({
       <footer className="flex items-center gap-2 border-t border-[var(--border-sub)] px-4 py-3 text-xs text-[var(--error)]">
         <XCircle className="h-4 w-4" />
         <span>
-          {failed
-            ? `Falhou no step ${failed.step_id}.`
-            : "Execução falhou."}
+          {failed ? `Falhou no step ${failed.step_id}.` : "Execução falhou."}
         </span>
       </footer>
     );
@@ -408,64 +319,6 @@ function FinalSummary({
     );
   }
   return null;
-}
-
-function ToolBadge({ tool }: { tool: Tool }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-1.5 py-0 font-mono text-[10px] font-semibold",
-        toolStyles(tool),
-      )}
-    >
-      {tool}
-    </span>
-  );
-}
-
-function toolStyles(tool: Tool): string {
-  switch (tool) {
-    case "bash":
-      return "bg-[var(--tool-bash-soft)] text-[var(--tool-bash)]";
-    case "claude-code":
-      return "bg-[var(--tool-claude-code-soft)] text-[var(--tool-claude-code)]";
-    case "api":
-      return "bg-[var(--tool-api-soft)] text-[var(--tool-api)]";
-  }
-}
-
-interface IconSpec {
-  icon: LucideIcon;
-  color: string;
-  spin?: boolean;
-}
-
-function iconFor(status: StepStatus): IconSpec {
-  switch (status) {
-    case "pending":
-      return { icon: Circle, color: "text-[var(--text-tertiary)]" };
-    case "running":
-      return { icon: Loader2, color: "text-[var(--accent)]", spin: true };
-    case "success":
-      return { icon: CheckCircle2, color: "text-[var(--success)]" };
-    case "failed":
-      return { icon: XCircle, color: "text-[var(--error)]" };
-    case "skipped":
-      return { icon: Circle, color: "text-[var(--text-tertiary)]" };
-  }
-}
-
-function borderColorFor(status: StepStatus): string {
-  switch (status) {
-    case "running":
-      return "border-l-[var(--accent)]";
-    case "success":
-      return "border-l-[var(--success)]";
-    case "failed":
-      return "border-l-[var(--error)]";
-    default:
-      return "border-l-[var(--border-sub)]";
-  }
 }
 
 function labelFor(status: Execution["status"]): string {
@@ -483,29 +336,6 @@ function labelFor(status: Execution["status"]): string {
     case "aborted":
       return "Abortada";
   }
-}
-
-function labelForStep(status: StepStatus): string {
-  switch (status) {
-    case "pending":
-      return "Aguardando";
-    case "running":
-      return "Executando";
-    case "success":
-      return "Concluído";
-    case "failed":
-      return "Falhou";
-    case "skipped":
-      return "Ignorado";
-  }
-}
-
-function currentDurationMs(step: ExecutionStep): number | null {
-  if (step.duration_ms !== null) return step.duration_ms;
-  if (step.status !== "running" || !step.started_at) return null;
-  const started = Date.parse(step.started_at);
-  if (Number.isNaN(started)) return null;
-  return Math.max(0, Date.now() - started);
 }
 
 function totalElapsedMs(execution: Execution): number | null {
