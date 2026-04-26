@@ -142,9 +142,14 @@ fn skill_md_path(name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(file_name))
 }
 
-/// Load every `.md` under `skills_dir` and parse it. Broken files are
-/// skipped with a stderr warning — mirror of `commands::skills::list_skills`
-/// without cross-module borrowing through a `#[tauri::command]`.
+/// Load every `.md` under `skills_dir` and parse it. Walks the top level
+/// plus immediate subdirectories (e.g. `skills/meta/criar-skill.md`) so
+/// curated meta-skills stay discoverable without polluting the user's
+/// flat skill list. Deeper nesting is intentionally ignored to keep the
+/// scan cheap and avoid surprises.
+///
+/// Broken files are skipped with a stderr warning — one bad file should
+/// not hide the rest.
 fn load_skill_catalog() -> Vec<SkillMeta> {
     let Ok(dir) = skills_dir() else { return Vec::new() };
     let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
@@ -152,20 +157,41 @@ fn load_skill_catalog() -> Vec<SkillMeta> {
     let mut metas: Vec<SkillMeta> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                match skill_parser::parse_skill(&content) {
-                    Ok(skill) => metas.push(skill.meta),
-                    Err(err) => eprintln!(
-                        "[chat] pulando {} ao listar catálogo: {err}",
-                        path.display()
-                    ),
+        if path.is_dir() {
+            // One level deep — meta/, drafts/, etc.
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub in sub_entries.flatten() {
+                    push_skill_meta(&sub.path(), &mut metas);
                 }
             }
+        } else {
+            push_skill_meta(&path, &mut metas);
         }
     }
     metas.sort_by(|a, b| a.name.cmp(&b.name));
     metas
+}
+
+fn push_skill_meta(path: &std::path::Path, metas: &mut Vec<SkillMeta>) {
+    if path.extension().map(|e| e == "md").unwrap_or(false) {
+        if let Ok(content) = fs::read_to_string(path) {
+            match skill_parser::parse_skill(&content) {
+                Ok(skill) => metas.push(skill.meta),
+                Err(err) => eprintln!(
+                    "[chat] pulando {} ao listar catálogo: {err}",
+                    path.display()
+                ),
+            }
+        }
+    }
+}
+
+/// Slash commands whose response must come from the AI instead of the
+/// canned skill-preview path. `/criar-skill` is the only entry today —
+/// the orchestrator system prompt has the multi-turn guided flow that
+/// drives Phase 1 onward as a regular GPT response.
+fn is_ai_routed_slash_command(name: &str) -> bool {
+    matches!(name, "criar-skill")
 }
 
 fn format_step_line(index: usize, step: &SkillStep) -> String {
@@ -315,10 +341,19 @@ pub async fn send_chat_message(
 
     queries::insert_message(&pool, &user_msg).await?;
 
-    // Slash commands skip the AI roundtrip — no thinking, just the canned
-    // confirmation/preview text built from the parsed skill.
+    // Slash commands normally skip the AI roundtrip — `try_slash_reply`
+    // builds the canned skill preview directly. A short allowlist
+    // (`is_ai_routed_slash_command`) opts specific commands out: those go
+    // through GPT so the system prompt's multi-turn flows (e.g.
+    // `/criar-skill`) can drive the conversation instead.
+    let slash_command = extract_slash_command(&content).map(str::to_string);
+    let needs_ai = match slash_command.as_deref() {
+        Some(name) => is_ai_routed_slash_command(name),
+        None => true,
+    };
+
     let (reply_content, thinking, thinking_summary) =
-        if let Some(skill_name) = extract_slash_command(&content) {
+        if let (false, Some(skill_name)) = (needs_ai, slash_command.as_deref()) {
             (try_slash_reply(skill_name), None, None)
         } else {
             let history =

@@ -54,6 +54,70 @@ Regras de conteúdo:
 - **on_fail**: `retry N`, `continue`, ou `abort` (default).
 - Sempre forneça o `.md` completo em um único bloco; nada de explicação no meio. Antes do bloco escreva uma linha curta dizendo o que a skill faz; depois do bloco fale o que mais precisa.
 
+## /criar-skill — fluxo guiado (multi-turn)
+
+Quando a primeira mensagem do turno for `/criar-skill`, conduza o usuário por 5 fases conversacionais. Avance uma por turno, aguardando a resposta antes de prosseguir. Em qualquer fase o usuário pode pedir "pula direto pra geração" — respeite e vá pra Fase 5 com o que já foi coletado.
+
+**Fase 1 — Capacidades.** Apresente em formato curto o que a skill pode chamar:
+- Canais: `bash` (comando atômico, exit_code), `claude-code` (prompt livre, ferramentas Read/Bash/Edit), `api` (HTTP).
+- Variáveis automáticas: `{{repo_path}}`, `{{project_name}}`, `{{project_id}}` (vêm do projeto ativo) + qualquer `# Inputs` que a skill declarar.
+- Validação: `exit_code == N`, `output contains "..."`, combináveis com `and`/`or`.
+- `on_fail`: `retry N`, `continue`, `abort`.
+- Termine com "O que você quer automatizar?".
+
+**Fase 2 — Contexto.** Pergunte:
+- Em qual projeto vai rodar (use o `{{project_name}}` ativo se ele souber).
+- Descreva o objetivo em uma frase.
+- Quais ferramentas externas precisa (ffmpeg, git, jq, …)? Se faltar alguma, ofereça `Para fazer isso preciso do **<ferramenta>**. Posso instalar pra você?` (formato exato — o frontend renderiza botões inline).
+
+**Fase 3 — Perguntas específicas.** Detalhe os arquivos:
+- Caminhos absolutos de input e output.
+- Formato esperado (extensão, encoding).
+- Tratamento de erro: parar no primeiro falho? continuar e reportar? retry?
+
+**Fase 4 — Arquitetura.** Antes de gerar, esboce em lista numerada: para cada etapa, o `Canal`, o que faz e a `Validação`. Termine com "Posso gerar o `.md` agora? (sim / ajusta etapa N)" — confirmação explícita antes de Fase 5.
+
+**Fase 5 — Geração.** Emita o `.md` **completo** num único bloco markdown no **formato v2** (estrutura abaixo). Antes do bloco, uma linha resumo. Depois do bloco, sugira nome (kebab-case) e mencione o botão **Salvar Skill**.
+
+Formato v2 (preferir sobre v1 quando rodar via `/criar-skill`):
+
+```markdown
+---
+name: nome-kebab-case
+description: Frase curta
+version: "2.0"
+author: <nome>
+triggers:
+  - palavra-chave-curta
+---
+
+# Pré-requisitos
+- ferramenta-x instalada
+
+## Etapa 1
+Objetivo: <o que essa etapa faz>
+Canal: bash | claude-code | api
+Ação: <comando ou prompt>
+Validação: exit_code == 0
+Se falhar: retry 2 | continue | abort
+
+## Etapa 2
+Objetivo: ...
+Canal: ...
+Ação: |
+  multilinha quando precisar
+Validação: ...
+Se falhar: ...
+
+# Outputs
+- nome_do_output
+```
+
+Regras do fluxo guiado:
+- **Uma fase por turno.** Não bombardeie o usuário com tudo de uma vez.
+- **Não gere o `.md`** antes da confirmação da Fase 4.
+- Se o usuário pedir mudanças após Fase 5, gere a versão atualizada num novo bloco — o frontend mostra outro botão Salvar.
+
 ## REGRAS PARA DEPENDÊNCIAS
 Quando o usuário pedir algo que depende de uma ferramenta externa (`ffmpeg`, `imagemagick`, `python`, `pandoc`, etc.):
 
