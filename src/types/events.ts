@@ -33,6 +33,20 @@ export interface LogEvent {
   line: string;
 }
 
+// ── chat events (extended thinking streaming, ai/client.rs::ThinkingSink) ──
+
+export interface ThinkingDeltaEvent {
+  /** Conversation that owns the in-flight assistant turn. May be null when
+   *  the message wasn't scoped to a conversation (legacy execution-only). */
+  conversation_id: string | null;
+  delta: string;
+}
+
+export interface ThinkingCompleteEvent {
+  conversation_id: string | null;
+  summary: string;
+}
+
 /**
  * Map of Tauri event name → payload type. Consumers pass the literal
  * event name to `useTauriEvent` and the payload is inferred.
@@ -43,6 +57,8 @@ export interface TauriEventMap {
   "execution:step_failed": StepFailedEvent;
   "execution:completed": ExecutionCompletedEvent;
   "execution:log": LogEvent;
+  "chat:thinking_delta": ThinkingDeltaEvent;
+  "chat:thinking_complete": ThinkingCompleteEvent;
 }
 
 export type TauriEventName = keyof TauriEventMap;

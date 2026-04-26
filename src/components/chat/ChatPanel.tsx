@@ -3,12 +3,14 @@ import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useExecution } from "@/hooks/useExecution";
+import { useThinking } from "@/hooks/useThinking";
 import { useToast } from "@/hooks/useToast";
 import {
   listMessagesByConversation,
   safeInvoke,
   sendChatMessage,
 } from "@/lib/tauri-bridge";
+import { useChatStore } from "@/stores/chatStore";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import { useExecutionStore } from "@/stores/executionStore";
 import type { ChatMessage } from "@/types/chat";
@@ -16,6 +18,7 @@ import type { ChatMessage } from "@/types/chat";
 import { CommandInput } from "./CommandInput";
 import { ExecutionMessage } from "./ExecutionMessage";
 import { MessageBubble } from "./MessageBubble";
+import { ThinkingBlock } from "./ThinkingBlock";
 
 /**
  * Chat surface for a single conversation. Reads `conversationId` from the
@@ -34,10 +37,18 @@ export function ChatPanel() {
   const activeExecution = useExecutionStore((s) => s.activeExecution);
   const hasActiveExecution = activeExecution !== null;
   const refreshConversations = useConversationsStore((s) => s.refresh);
+  const startThinking = useChatStore((s) => s.startThinking);
+  const clearThinking = useChatStore((s) => s.clearThinking);
+  const isThinking = useChatStore((s) => s.isThinking);
+  const currentThinking = useChatStore((s) => s.currentThinking);
+  const currentThinkingSummary = useChatStore((s) => s.currentThinkingSummary);
   const endRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   useExecution();
+  // Bridge backend `chat:thinking_*` events into the chat store. Filters by
+  // route conversationId so concurrent threads don't cross-contaminate.
+  useThinking(conversationId || null);
 
   // Hydrate from SQLite whenever the route conversation changes.
   useEffect(() => {
@@ -81,15 +92,25 @@ export function ChatPanel() {
     };
     setMessages((prev) => [...prev, optimistic]);
 
+    // Reset the thinking buffer for the new turn — stale text from a
+    // previous failed completion would otherwise leak into the new bubble.
+    startThinking(conversationId);
     setSending(true);
-    const reply = await safeInvoke(
-      () => sendChatMessage({ content, conversationId }),
-      { errorTitle: "Falha ao enviar mensagem" },
-    );
-    setSending(false);
-    if (reply) {
-      setMessages((prev) => [...prev, reply]);
-      refreshConversations();
+    try {
+      const reply = await safeInvoke(
+        () => sendChatMessage({ content, conversationId }),
+        { errorTitle: "Falha ao enviar mensagem" },
+      );
+      if (reply) {
+        setMessages((prev) => [...prev, reply]);
+        refreshConversations();
+      }
+    } finally {
+      setSending(false);
+      // The persisted assistant message already carries its own thinking
+      // (rendered by MessageBubble's collapsed ThinkingBlock); the live
+      // store buffer can be released regardless of success/failure.
+      clearThinking();
     }
   }
 
@@ -126,7 +147,19 @@ export function ChatPanel() {
               ),
             )
           )}
-          {sending ? <TypingIndicator /> : null}
+          {sending && isThinking ? (
+            <div className="flex w-full justify-start">
+              <article className="max-w-[80%] px-1 py-1">
+                <ThinkingBlock
+                  thinking={currentThinking}
+                  summary={currentThinkingSummary ?? undefined}
+                  streaming
+                />
+              </article>
+            </div>
+          ) : sending ? (
+            <TypingIndicator />
+          ) : null}
           <div ref={endRef} />
         </div>
       </ScrollArea>
