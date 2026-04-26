@@ -17,12 +17,15 @@ use std::path::PathBuf;
 use sqlx::SqlitePool;
 use tauri::State;
 
-use crate::ai::client::{Message, OpenAIClient};
+use crate::ai::client::{AiClient, Message, OpenAIClient};
+use crate::ai::models::{self, ModelConfig};
 use crate::ai::prompts::{self, ORCHESTRATOR_SYSTEM_PROMPT};
 use crate::config;
 use crate::db::models::{ChatMessage, Conversation};
 use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
+
+const ACTIVE_MODEL_KEY: &str = "active_model_id";
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -38,6 +41,27 @@ fn openai_client() -> Result<OpenAIClient, String> {
         "OPENAI_API_KEY não configurada. Abra Settings e cole sua key.".to_string()
     })?;
     OpenAIClient::new(key).map_err(|e| e.user_message())
+}
+
+/// Build the right `AiClient` for `model`. Reads both API keys from the
+/// config TOML so the same clientless caller can route to OpenAI or
+/// Anthropic without inspecting the model itself.
+fn ai_client_for_model(model: &ModelConfig) -> Result<AiClient, String> {
+    let cfg = config::load_config()?;
+    AiClient::for_model(
+        model,
+        cfg.openai_api_key.as_deref(),
+        cfg.anthropic_api_key.as_deref(),
+    )
+    .map_err(|e| e.user_message())
+}
+
+/// Resolve the user's currently-picked model from `app_state`. Falls back to
+/// the static default if the row is missing or carries an unknown id.
+async fn active_model(pool: &sqlx::SqlitePool) -> &'static ModelConfig {
+    let row = queries::get_state(pool, ACTIVE_MODEL_KEY).await.ok().flatten();
+    let id = row.map(|s| s.value).unwrap_or_default();
+    models::resolve_model(&id)
 }
 
 // ── slash command handling ──────────────────────────────────────────────────
@@ -258,7 +282,8 @@ pub async fn send_chat_message(
         let catalog = load_skill_catalog();
         let system_prompt = prompts::with_skill_catalog(ORCHESTRATOR_SYSTEM_PROMPT, &catalog);
 
-        let client = openai_client()?;
+        let model = active_model(&pool).await;
+        let client = ai_client_for_model(model)?;
         client
             .chat_completion(&system_prompt, &messages)
             .await
@@ -295,10 +320,11 @@ fn should_auto_title(pre: Option<&Conversation>) -> bool {
     }
 }
 
-/// Best-effort GPT call to coin a <=30 char title. Silent on failure — the
-/// user can always rename manually via the sidebar.
+/// Best-effort title-generation call via the user's active model. Silent on
+/// failure — the user can always rename manually via the sidebar.
 async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message: &str) {
-    let Ok(client) = openai_client() else { return };
+    let model = active_model(pool).await;
+    let Ok(client) = ai_client_for_model(model) else { return };
 
     let prompt = format!(
         "Gere um título curto (máximo {TITLE_GEN_MAX_CHARS} caracteres, em português, \

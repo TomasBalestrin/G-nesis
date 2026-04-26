@@ -25,6 +25,13 @@ pub struct Config {
     #[serde(default = "default_db_path")]
     pub db_path: String,
 
+    /// Optional Anthropic API key. Empty/absent disables the
+    /// claude-* model entries in the chat router. Same precedence rules
+    /// as `openai_api_key`: file wins, env (`ANTHROPIC_API_KEY`) is
+    /// fallback only.
+    #[serde(default)]
+    pub anthropic_api_key: Option<String>,
+
     /// Optional explicit path to the `claude` CLI. When set, the
     /// claude-code channel skips PATH discovery and uses this binary
     /// directly — useful when the user has a non-standard install
@@ -44,6 +51,7 @@ impl Default for Config {
             openai_api_key: None,
             skills_dir: default_skills_dir(),
             db_path: default_db_path(),
+            anthropic_api_key: None,
             claude_cli_path: None,
             needs_setup: true,
         }
@@ -104,17 +112,17 @@ pub fn load_config() -> Result<Config, String> {
 /// `db_path` is not user-configurable here — it's always
 /// `~/.genesis/genesis.db` to match the SQLite setup in `db::init_db`.
 pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result<Config, String> {
-    // Preserve `claude_cli_path` across saves — `save_config` is wired to
-    // the Settings page which doesn't (yet) expose that field, so a naive
-    // overwrite would silently wipe the user's override.
-    let preserved_claude_path = read_config_file(&config_path())
-        .ok()
-        .and_then(|c| c.claude_cli_path);
+    // Preserve fields the Settings UI doesn't expose yet — naive save would
+    // silently wipe the user's TOML overrides.
+    let preserved = read_config_file(&config_path()).ok();
+    let preserved_claude_path = preserved.as_ref().and_then(|c| c.claude_cli_path.clone());
+    let preserved_anthropic_key = preserved.and_then(|c| c.anthropic_api_key);
 
     let to_write = Config {
         openai_api_key: openai_api_key.filter(|k| !k.is_empty()),
         skills_dir,
         db_path: default_db_path(),
+        anthropic_api_key: preserved_anthropic_key,
         claude_cli_path: preserved_claude_path,
         needs_setup: false,
     };
@@ -154,6 +162,19 @@ fn apply_env_overrides(cfg: &mut Config) {
         if let Ok(k) = std::env::var("OPENAI_API_KEY") {
             if !k.is_empty() {
                 cfg.openai_api_key = Some(k);
+            }
+        }
+    }
+    // anthropic_api_key: same fallback policy — env fills only when file is empty.
+    if cfg
+        .anthropic_api_key
+        .as_deref()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
+            if !k.is_empty() {
+                cfg.anthropic_api_key = Some(k);
             }
         }
     }
