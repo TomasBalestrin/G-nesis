@@ -51,6 +51,22 @@ impl ResolveContext {
         self.tasks.insert(key.into(), value.into());
     }
 
+    /// Pre-populate the inputs namespace with the active project's metadata
+    /// so skills can reference `{{repo_path}}`, `{{project_name}}` and
+    /// `{{project_id}}` without declaring them in the skill's `# Inputs`
+    /// section. Called by `execute_skill` after resolving the project.
+    pub fn with_project(
+        mut self,
+        repo_path: impl Into<String>,
+        name: impl Into<String>,
+        id: impl Into<String>,
+    ) -> Self {
+        self.set_input("repo_path", repo_path);
+        self.set_input("project_name", name);
+        self.set_input("project_id", id);
+        self
+    }
+
     fn lookup(&self, key: &str) -> Option<&str> {
         if let Some((ns, rest)) = key.split_once('.') {
             let ns_map: Option<&HashMap<String, String>> = match ns {
@@ -229,5 +245,28 @@ mod tests {
         // as a flat lookup across all maps.
         let out = resolve("{{weird.name}}", &c).unwrap();
         assert_eq!(out, "works");
+    }
+
+    #[test]
+    fn with_project_seeds_repo_path_and_name_and_id() {
+        let c = ResolveContext::new().with_project(
+            "/Users/me/repos/genesis",
+            "Genesis",
+            "0000-uuid",
+        );
+
+        assert_eq!(
+            resolve(
+                "cd {{repo_path}} && echo {{project_name}} ({{project_id}})",
+                &c,
+            )
+            .unwrap(),
+            "cd /Users/me/repos/genesis && echo Genesis (0000-uuid)",
+        );
+        // Explicit namespace also works.
+        assert_eq!(
+            resolve("{{inputs.project_name}}", &c).unwrap(),
+            "Genesis",
+        );
     }
 }

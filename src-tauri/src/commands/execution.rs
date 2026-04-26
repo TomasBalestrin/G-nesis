@@ -1,10 +1,11 @@
 //! Tauri IPC handlers for skill execution control.
 //!
 //! `execute_skill` is fire-and-forget from the frontend's perspective: it
-//! loads the project + parses the skill + inserts the execution row, then
-//! spawns a Tokio task that drives the Executor and returns the new
-//! `execution_id` immediately. Progress and terminal status flow via events
-//! (`execution:step_*`, `execution:completed`).
+//! resolves the project (either the explicit `project_id` arg or the
+//! persisted `active_project_id` from app_state), parses the skill, inserts
+//! the execution row, then spawns a Tokio task that drives the Executor and
+//! returns the new `execution_id` immediately. Progress and terminal status
+//! flow via events (`execution:step_*`, `execution:completed`).
 //!
 //! `abort`/`pause`/`resume` flip atomic flags stored in `ExecutionRegistry`.
 
@@ -20,6 +21,8 @@ use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill};
 use crate::orchestrator::variable_resolver::ResolveContext;
 use crate::orchestrator::{ExecutionHandle, ExecutionRegistry, Executor};
+
+const ACTIVE_PROJECT_KEY: &str = "active_project_id";
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -43,17 +46,42 @@ fn read_skill_content(name: &str) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("falha ao ler skill `{name}`: {e}"))
 }
 
+/// Resolve a project: explicit id wins; empty/None falls back to the
+/// persisted `app_state.active_project_id`. Returns a clear error when
+/// neither path yields a usable id — the orchestrator can't run a skill
+/// without a working directory.
+async fn resolve_project_id(
+    pool: &SqlitePool,
+    explicit: Option<String>,
+) -> Result<String, String> {
+    if let Some(id) = explicit.filter(|s| !s.is_empty()) {
+        return Ok(id);
+    }
+    let row = queries::get_state(pool, ACTIVE_PROJECT_KEY).await?;
+    let id = row.map(|s| s.value).unwrap_or_default();
+    if id.is_empty() {
+        return Err(
+            "Nenhum projeto selecionado. Escolha um projeto no rodapé do chat \
+             ou cadastre um em Settings."
+                .to_string(),
+        );
+    }
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn execute_skill(
     skill_name: String,
-    project_id: String,
+    project_id: Option<String>,
     pool: State<'_, SqlitePool>,
     registry: State<'_, ExecutionRegistry>,
     app: AppHandle,
 ) -> Result<String, String> {
-    let project = queries::get_project(&pool, &project_id)
+    let resolved_id = resolve_project_id(&pool, project_id).await?;
+
+    let project = queries::get_project(&pool, &resolved_id)
         .await?
-        .ok_or_else(|| format!("projeto `{project_id}` não encontrado"))?;
+        .ok_or_else(|| format!("projeto `{resolved_id}` não encontrado"))?;
 
     let content = read_skill_content(&skill_name)?;
     let skill: ParsedSkill = skill_parser::parse_skill(&content)?;
@@ -82,6 +110,15 @@ pub async fn execute_skill(
     let app_for_task = app.clone();
     let cwd = Some(project.repo_path.clone());
 
+    // Pre-seed the resolver with project metadata. Skills that reference
+    // {{repo_path}} / {{project_name}} / {{project_id}} get them populated
+    // automatically without the user having to declare them as inputs.
+    let ctx = ResolveContext::new().with_project(
+        project.repo_path.clone(),
+        project.name.clone(),
+        project.id.clone(),
+    );
+
     tauri::async_runtime::spawn(async move {
         let executor = Executor::new(
             app_for_task,
@@ -90,7 +127,7 @@ pub async fn execute_skill(
             exec_id_for_task.clone(),
             cwd,
         );
-        let _final_state = executor.run(skill, ResolveContext::new()).await;
+        let _final_state = executor.run(skill, ctx).await;
         registry_owned.remove(&exec_id_for_task).await;
     });
 
