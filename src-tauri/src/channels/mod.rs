@@ -8,6 +8,7 @@
 pub mod api;
 pub mod bash;
 pub mod claude_code;
+pub mod terminal;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

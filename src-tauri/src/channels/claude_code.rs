@@ -13,6 +13,7 @@
 //! argv.
 
 use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -21,12 +22,69 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::channels::bash::child_env_overrides;
 use crate::channels::{
     Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS,
 };
+use crate::config;
 
-const CLAUDE_BIN: &str = "claude";
 const ALLOWED_TOOLS: &str = "Bash,Read,Edit";
+
+/// Common install locations for the `claude` CLI, probed in this order
+/// before falling back to PATH. Covers npm-global (Node managed by user),
+/// Homebrew (Apple Silicon + Intel) and ~/.local/bin.
+fn candidate_paths() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    vec![
+        home.join(".npm-global/bin/claude"),
+        PathBuf::from("/opt/homebrew/bin/claude"),
+        PathBuf::from("/usr/local/bin/claude"),
+        home.join(".local/bin/claude"),
+    ]
+}
+
+/// Resolve the absolute path of the `claude` CLI. Order:
+/// 1. `claude_cli_path` from config.toml (explicit user override)
+/// 2. Well-known install dirs (`candidate_paths`)
+/// 3. `which claude` against the inherited PATH
+///
+/// Returns a clear error pointing to install instructions when nothing
+/// resolves — better than the generic `NotFound` we'd get from spawn.
+fn resolve_claude_binary() -> Result<PathBuf, String> {
+    if let Ok(cfg) = config::load_config() {
+        if let Some(override_path) = cfg.claude_cli_path.filter(|p| !p.is_empty()) {
+            let p = PathBuf::from(&override_path);
+            if p.is_file() {
+                return Ok(p);
+            }
+            return Err(format!(
+                "claude_cli_path em config.toml aponta para `{override_path}` mas o arquivo \
+                 não existe. Corrija o caminho ou remova o campo para usar a busca automática."
+            ));
+        }
+    }
+
+    for candidate in candidate_paths() {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join("claude");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Err(
+        "`claude` CLI não encontrado. Instale com `npm install -g @anthropic-ai/claude-code` \
+         ou defina `claude_cli_path` em ~/.genesis/config.toml apontando para o binário."
+            .into(),
+    )
+}
 
 #[derive(Debug, Deserialize)]
 struct ClaudeJsonOutput {
@@ -80,7 +138,9 @@ impl Channel for ClaudeCodeChannel {
     async fn execute(&self, input: ChannelInput) -> Result<ChannelOutput, ChannelError> {
         let prompt = Self::build_prompt(&input);
 
-        let mut cmd = Command::new(CLAUDE_BIN);
+        let claude_bin = resolve_claude_binary().map_err(ChannelError::Spawn)?;
+
+        let mut cmd = Command::new(&claude_bin);
         cmd.arg("-p")
             .arg(&prompt)
             .arg("--output-format")
@@ -95,17 +155,20 @@ impl Channel for ClaudeCodeChannel {
         if let Some(cwd) = &input.cwd {
             cmd.current_dir(cwd);
         }
-        for (k, v) in &input.env {
+        // Same login-shell PATH lift as BashChannel — claude itself shells
+        // out to git/npm/etc. and needs them resolvable.
+        for (k, v) in child_env_overrides(&input.env) {
             cmd.env(k, v);
         }
 
         let child = cmd.spawn().map_err(|e| match e.kind() {
-            ErrorKind::NotFound => ChannelError::Spawn(
-                "`claude` CLI não encontrado no PATH. Instale com \
-                 `npm install -g @anthropic-ai/claude-code`"
-                    .into(),
-            ),
-            _ => ChannelError::Spawn(format!("claude: {e}")),
+            ErrorKind::NotFound => ChannelError::Spawn(format!(
+                "`claude` resolvido em {} mas spawn falhou (NotFound). Reinstale com \
+                 `npm install -g @anthropic-ai/claude-code` ou ajuste claude_cli_path \
+                 em ~/.genesis/config.toml.",
+                claude_bin.display()
+            )),
+            _ => ChannelError::Spawn(format!("claude ({}): {e}", claude_bin.display())),
         })?;
 
         let timeout_secs = input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);

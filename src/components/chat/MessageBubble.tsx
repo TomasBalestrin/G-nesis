@@ -26,6 +26,8 @@ import { useSkillsStore } from "@/stores/skillsStore";
 import type { ChatMessage } from "@/types/chat";
 import type { Project } from "@/types/project";
 
+import { ThinkingBlock } from "./ThinkingBlock";
+
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -110,6 +112,11 @@ export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
     () => (isUser ? null : splitSegments(message.content)),
     [isUser, message.content],
   );
+  // Treat presence of `thinking` as the streaming gate: while the assistant
+  // text body is still empty, the model is mid-reasoning. Once content
+  // lands the block collapses on its own (see ThinkingBlock effect).
+  const hasThinking = !isUser && (message.thinking?.length ?? 0) > 0;
+  const thinkingStreaming = hasThinking && message.content.trim().length === 0;
 
   return (
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
@@ -122,6 +129,13 @@ export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
             : "px-1 py-1 text-[var(--text-primary)]",
         )}
       >
+        {hasThinking ? (
+          <ThinkingBlock
+            thinking={message.thinking ?? ""}
+            summary={message.thinking_summary}
+            streaming={thinkingStreaming}
+          />
+        ) : null}
         {isUser || !segments ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
             {message.content}
@@ -320,7 +334,7 @@ interface SkillExecutePanelProps {
  * Inline "▶ Executar" action for skill-preview bubbles. Fetches projects on
  * mount, lets the user pick one, and fires the execute_skill command. Once
  * triggered, the button locks to prevent double-starts — progress streams
- * into the inline ExecutionBlock rendered below the chat messages.
+ * into the inline ExecutionMessage rendered right in the chat stream.
  */
 function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   const [projects, setProjects] = useState<Project[] | null>(null);

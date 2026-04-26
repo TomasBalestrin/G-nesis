@@ -3,6 +3,14 @@
 
 export type ChatRole = "user" | "assistant" | "system";
 
+/**
+ * Discriminator used by the chat renderer to switch between regular text
+ * bubbles and inline execution cards. Only set on virtual messages built
+ * by ChatPanel from the execution store — DB rows are always implicitly
+ * `"text"` (omitted on the wire, defaulted at the render boundary).
+ */
+export type ChatMessageType = "text" | "execution";
+
 export interface ChatMessage {
   id: string;
   execution_id: string | null;
@@ -10,6 +18,21 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   created_at: string;
+  /** Defaults to `"text"` when absent — used to route render logic. */
+  type?: ChatMessageType;
+  /**
+   * Extended-thinking text from models that expose reasoning (Anthropic
+   * Claude with thinking blocks, OpenAI o1/o3). Streams in as the model
+   * thinks; rendered above the assistant content. `undefined` means the
+   * message has no thinking attached (regular text turn).
+   */
+  thinking?: string;
+  /**
+   * Short one-line summary of the thinking block — shown in the collapsed
+   * accordion header so the user can scan multiple turns without expanding
+   * each. Falls back to a generic label when omitted.
+   */
+  thinking_summary?: string;
 }
 
 export interface Conversation {

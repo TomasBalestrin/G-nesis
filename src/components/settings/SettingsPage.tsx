@@ -4,11 +4,13 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  FileCode,
   FolderGit2,
   FolderOpen,
   KeyRound,
   Plus,
   Save,
+  Terminal,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -18,6 +20,7 @@ import { useTauriCommand } from "@/hooks/useTauriCommand";
 import { useToast } from "@/hooks/useToast";
 import {
   callOpenAI,
+  checkDependency,
   getConfig,
   listProjects,
   saveConfig,
@@ -41,6 +44,7 @@ export function SettingsPage() {
   const [skillsDir, setSkillsDir] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [initialNeedsSetup, setInitialNeedsSetup] = useState(false);
+  const [savedClaudePath, setSavedClaudePath] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -53,6 +57,7 @@ export function SettingsPage() {
         const cfg = await getConfig();
         setApiKey(cfg.openai_api_key ?? "");
         setSkillsDir(cfg.skills_dir);
+        setSavedClaudePath(cfg.claude_cli_path ?? null);
         setInitialNeedsSetup(cfg.needs_setup);
       } catch (err) {
         toast({
@@ -249,10 +254,152 @@ export function SettingsPage() {
             </Button>
           </div>
 
+          <ClaudeCliSection savedPath={savedClaudePath} />
+
           <ProjectsSection />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Diagnostic section for the Claude Code CLI path. The backend
+ * (`config.claude_cli_path` + `channels::claude_code::resolve_claude_binary`)
+ * already supports an explicit override, but the current `save_config`
+ * IPC doesn't expose the field — persistence is via direct edit of
+ * `~/.genesis/config.toml`. This section gives the user the tools to
+ * find a valid path and verify it before they paste it into the TOML.
+ *
+ *   - Top input: read-only display of the saved override (what's in
+ *     config.toml). When unset, the resolver falls back to PATH lookup.
+ *   - Bottom input + file picker: scratch area for proposing a path. The
+ *     picker fills the input.
+ *   - Testar: runs `check_dependency("claude")` — a fast probe of
+ *     /opt/homebrew/bin, /usr/local/bin, ~/.npm-global/bin, ~/.local/bin,
+ *     and PATH. Confirms whether the CLI is discoverable system-wide.
+ */
+function ClaudeCliSection({ savedPath }: { savedPath: string | null }) {
+  const [proposed, setProposed] = useState("");
+  const [testing, setTesting] = useState(false);
+  const { toast } = useToast();
+
+  // Pre-fill the proposed input with whatever's already saved, so the user
+  // can read it visually + iterate without retyping.
+  useEffect(() => {
+    if (savedPath && proposed === "") {
+      setProposed(savedPath);
+    }
+  }, [savedPath, proposed]);
+
+  async function pickFile() {
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: "Selecione o binário do Claude CLI",
+      });
+      if (typeof selected === "string") {
+        setProposed(selected);
+      }
+    } catch (err) {
+      toast({
+        title: "Falha ao abrir seletor de arquivo",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    try {
+      const found = await checkDependency({ name: "claude" });
+      if (found) {
+        toast({
+          title: "Claude CLI encontrado",
+          description:
+            "O backend conseguiu localizar o binário em uma das pastas conhecidas (Homebrew, npm-global, ~/.local/bin) ou no PATH.",
+        });
+      } else {
+        toast({
+          title: "Claude CLI não encontrado",
+          description:
+            "O probe automático não achou o binário. Use o seletor pra apontar manualmente e cole o caminho em ~/.genesis/config.toml.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Falha ao testar Claude CLI",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Section
+      icon={<Terminal className="h-4 w-4" />}
+      title="Claude CLI"
+      description="Override manual do binário usado pelo canal claude-code. Vazio = descoberta automática (Homebrew, npm-global, ~/.local/bin, PATH)."
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-[var(--text-secondary)]">
+            Caminho atual (config.toml)
+          </label>
+          <Input
+            value={savedPath ?? ""}
+            placeholder="(usando descoberta automática)"
+            readOnly
+            disabled
+            className="font-mono"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-[var(--text-secondary)]">
+            Caminho proposto
+          </label>
+          <div className="flex gap-2">
+            <Input
+              value={proposed}
+              onChange={(e) => setProposed(e.target.value)}
+              placeholder="/opt/homebrew/bin/claude"
+              className="font-mono"
+            />
+            <Button type="button" variant="outline" onClick={pickFile}>
+              <FileCode className="h-4 w-4" />
+              Selecionar
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleTest}
+              disabled={testing}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {testing ? "Testando..." : "Testar"}
+            </Button>
+          </div>
+        </div>
+
+        <p className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-tertiary)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+          Pra fixar um caminho específico, cole-o em{" "}
+          <code className="rounded bg-[var(--code-bg)] px-1 font-mono text-[var(--code-tx)]">
+            ~/.genesis/config.toml
+          </code>{" "}
+          como{" "}
+          <code className="rounded bg-[var(--code-bg)] px-1 font-mono text-[var(--code-tx)]">
+            claude_cli_path = &quot;/seu/caminho&quot;
+          </code>{" "}
+          e reinicie o app. O override é preservado entre saves do Settings.
+        </p>
+      </div>
+    </Section>
   );
 }
 

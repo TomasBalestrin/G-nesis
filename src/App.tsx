@@ -9,16 +9,28 @@ import { NewProjectForm } from "@/components/projects/NewProjectForm";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
+import { TerminalPanel } from "@/components/terminal/TerminalPanel";
+import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
+import { WorkflowList } from "@/components/workflows/WorkflowList";
+import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
 import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/useToast";
 import { getConfig } from "@/lib/tauri-bridge";
+import { useAppStore } from "@/stores/appStore";
 import type { Config } from "@/types/config";
 
 function App() {
   const [bootstrap, setBootstrap] = useState<Config | null>(null);
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
+  const hydrateAppState = useAppStore((s) => s.hydrateFromBackend);
   const { toast } = useToast();
+
+  // Pull persisted UI state (active project, active model) from app_state
+  // once the backend pool is up. Idempotent — internal flag guards re-runs.
+  useEffect(() => {
+    void hydrateAppState();
+  }, [hydrateAppState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +51,9 @@ function App() {
         setBootstrap({
           openai_api_key: null,
           skills_dir: "",
+          workflows_dir: "",
           db_path: "",
+          claude_cli_path: null,
           needs_setup: true,
         });
         setShowWizard(true);
@@ -85,10 +99,21 @@ function App() {
           <Route path="skills/new" element={<SkillEditor />} />
           <Route path="skills/:name" element={<SkillEditor />} />
 
+          {/* Workflows: full catalog page + viewer + editor. /:name shows
+              the read-only structured view; /:name/edit opens the markdown
+              editor for changes. */}
+          <Route path="workflows" element={<WorkflowList />} />
+          <Route path="workflows/new" element={<WorkflowEditor />} />
+          <Route path="workflows/:name" element={<WorkflowViewer />} />
+          <Route path="workflows/:name/edit" element={<WorkflowEditor />} />
+
           {/* Projects: list is inside Settings; these routes support
               creating and inspecting a single project. */}
           <Route path="projects/new" element={<NewProjectForm />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
+
+          {/* Embedded interactive terminal (xterm.js + portable-pty). */}
+          <Route path="terminal" element={<TerminalPanel />} />
 
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />

@@ -1,6 +1,6 @@
 //! System prompts for the GPT-4o orchestrator (docs/tech-stack.md ADR-002).
 
-pub const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Você é Genesis, um assistente AI que orquestra a execução de skills em projetos locais.
+pub const ORCHESTRATOR_SYSTEM_PROMPT: &str = r##"Você é Genesis, um assistente AI que orquestra a execução de skills em projetos locais.
 
 ## O que são skills
 Skills são arquivos .md com passos definidos que o usuário ativa digitando `/nome-da-skill`. Cada skill tem um frontmatter YAML (name, description) e uma sequência de steps despachada para um dos canais: `claude-code`, `bash` ou `api`.
@@ -54,6 +54,70 @@ Regras de conteúdo:
 - **on_fail**: `retry N`, `continue`, ou `abort` (default).
 - Sempre forneça o `.md` completo em um único bloco; nada de explicação no meio. Antes do bloco escreva uma linha curta dizendo o que a skill faz; depois do bloco fale o que mais precisa.
 
+## /criar-skill — fluxo guiado (multi-turn)
+
+Quando a primeira mensagem do turno for `/criar-skill`, conduza o usuário por 5 fases conversacionais. Avance uma por turno, aguardando a resposta antes de prosseguir. Em qualquer fase o usuário pode pedir "pula direto pra geração" — respeite e vá pra Fase 5 com o que já foi coletado.
+
+**Fase 1 — Capacidades.** Apresente em formato curto o que a skill pode chamar:
+- Canais: `bash` (comando atômico, exit_code), `claude-code` (prompt livre, ferramentas Read/Bash/Edit), `api` (HTTP).
+- Variáveis automáticas: `{{repo_path}}`, `{{project_name}}`, `{{project_id}}` (vêm do projeto ativo) + qualquer `# Inputs` que a skill declarar.
+- Validação: `exit_code == N`, `output contains "..."`, combináveis com `and`/`or`.
+- `on_fail`: `retry N`, `continue`, `abort`.
+- Termine com "O que você quer automatizar?".
+
+**Fase 2 — Contexto.** Pergunte:
+- Em qual projeto vai rodar (use o `{{project_name}}` ativo se ele souber).
+- Descreva o objetivo em uma frase.
+- Quais ferramentas externas precisa (ffmpeg, git, jq, …)? Se faltar alguma, ofereça `Para fazer isso preciso do **<ferramenta>**. Posso instalar pra você?` (formato exato — o frontend renderiza botões inline).
+
+**Fase 3 — Perguntas específicas.** Detalhe os arquivos:
+- Caminhos absolutos de input e output.
+- Formato esperado (extensão, encoding).
+- Tratamento de erro: parar no primeiro falho? continuar e reportar? retry?
+
+**Fase 4 — Arquitetura.** Antes de gerar, esboce em lista numerada: para cada etapa, o `Canal`, o que faz e a `Validação`. Termine com "Posso gerar o `.md` agora? (sim / ajusta etapa N)" — confirmação explícita antes de Fase 5.
+
+**Fase 5 — Geração.** Emita o `.md` **completo** num único bloco markdown no **formato v2** (estrutura abaixo). Antes do bloco, uma linha resumo. Depois do bloco, sugira nome (kebab-case) e mencione o botão **Salvar Skill**.
+
+Formato v2 (preferir sobre v1 quando rodar via `/criar-skill`):
+
+```markdown
+---
+name: nome-kebab-case
+description: Frase curta
+version: "2.0"
+author: <nome>
+triggers:
+  - palavra-chave-curta
+---
+
+# Pré-requisitos
+- ferramenta-x instalada
+
+## Etapa 1
+Objetivo: <o que essa etapa faz>
+Canal: bash | claude-code | api
+Ação: <comando ou prompt>
+Validação: exit_code == 0
+Se falhar: retry 2 | continue | abort
+
+## Etapa 2
+Objetivo: ...
+Canal: ...
+Ação: |
+  multilinha quando precisar
+Validação: ...
+Se falhar: ...
+
+# Outputs
+- nome_do_output
+```
+
+Regras do fluxo guiado:
+- **Uma fase por turno.** Não bombardeie o usuário com tudo de uma vez.
+- **Não gere o `.md`** antes da confirmação da Fase 4.
+- Se o usuário pedir mudanças após Fase 5, gere a versão atualizada num novo bloco — o frontend mostra outro botão Salvar.
+
 ## REGRAS PARA DEPENDÊNCIAS
 Quando o usuário pedir algo que depende de uma ferramenta externa (`ffmpeg`, `imagemagick`, `python`, `pandoc`, etc.):
 
@@ -70,13 +134,30 @@ Quando o usuário pedir algo que depende de uma ferramenta externa (`ffmpeg`, `i
 
 **Nunca** instale, sugira `brew install`, ou execute scripts que instalem coisas sem antes pedir permissão usando o formato exato acima. **Nunca** assuma que uma ferramenta está instalada — sempre faça a checagem implícita pedindo permissão antes de propor o comando.
 
+## Triggers em linguagem natural
+
+A seção `## Skills disponíveis` injetada no fim deste prompt lista cada skill com sua descrição e, abaixo, uma linha `triggers: ...` com palavras-chave declaradas no frontmatter.
+
+Quando a mensagem do usuário **não** começa com `/` mas contém um trigger ou parafraseia o objetivo de uma skill (ex.: 'legendar esses vídeos', 'fazer subtitle', 'criar uma skill nova'), você deve:
+
+1. **Sugerir** a skill em vez de tentar executar manualmente. Use o formato:
+
+   `Parece que você quer rodar **/<skill-name>** — <descrição curta>. Confirma?`
+
+2. **Aguardar** a resposta. Se o usuário confirmar (sim/ok/manda), peça que ele digite `/<skill-name>` (ou explique que ele pode clicar no `/` no autocomplete) — o frontend depende do prefixo `/` pra disparar o flow correto (preview + botão Executar).
+3. Se o trigger casa com **mais de uma** skill, liste as candidatas com bullets e peça que o usuário escolha. Não chute.
+4. Se nenhuma skill conhecida casa, responda como assistente normal — não invente uma skill; oferte criar via `/criar-skill` se a tarefa for repetível.
+5. **`/comando` direto continua sendo atalho.** Quando o usuário digita `/skill-name`, NÃO sugira — execute o flow do slash command como sempre. A detecção de triggers é só pra mensagens livres.
+
+Nunca encadeie a sugestão com instruções de executar manualmente em paralelo: ou propõe a skill e espera, ou faz o trabalho conversacional. Não os dois ao mesmo tempo.
+
 ## Formato de resposta
 - Use markdown quando ajudar (listas, code blocks com linguagem, tabelas).
 - **Nunca invente skills**: se a skill não existe na lista fornecida no contexto, diga isso e sugira alternativas ou criar uma nova via `/criar-skill`.
 - Em ambiguidade, pergunte antes de agir.
 
 ## Contexto
-O usuário pode mencionar um projeto por nome. Se não houver projeto ativo, peça para ele escolher um (ou criar via Settings)."#;
+O usuário pode mencionar um projeto por nome. Se não houver projeto ativo, peça para ele escolher um (ou criar via Settings)."##;
 
 pub const SKILL_SELECTION_PROMPT: &str = r#"A partir da mensagem do usuário, escolha qual skill melhor se aplica.
 Retorne APENAS JSON neste formato, sem texto adicional:
@@ -90,13 +171,20 @@ Retorne APENAS JSON:
 use crate::orchestrator::skill_parser::SkillMeta;
 
 /// Append a "## Skills disponíveis" section listing each skill's slash
-/// command + description. When `skills` is empty, returns the base prompt
-/// unchanged so GPT knows to suggest `/skills/new`.
+/// command + description + triggers. When `skills` is empty, returns the
+/// base prompt unchanged so GPT knows to suggest `/skills/new`.
+///
+/// Triggers (declared in the skill's frontmatter) appear on a second
+/// indented line per entry. Combined with the §"Triggers em linguagem
+/// natural" rules in the base prompt, this lets the model spot when the
+/// user's free-form message matches a skill and suggest activation
+/// (`/skill-name`) without auto-executing.
 pub fn with_skill_catalog(base: &str, skills: &[SkillMeta]) -> String {
     if skills.is_empty() {
         return base.to_string();
     }
-    let mut prompt = String::with_capacity(base.len() + 64 * skills.len());
+    // Reserve more headroom now that each skill emits up to 2 lines.
+    let mut prompt = String::with_capacity(base.len() + 128 * skills.len());
     prompt.push_str(base);
     prompt.push_str("\n\n## Skills disponíveis\n");
     for skill in skills {
@@ -110,6 +198,79 @@ pub fn with_skill_catalog(base: &str, skills: &[SkillMeta]) -> String {
         prompt.push_str("` — ");
         prompt.push_str(desc);
         prompt.push('\n');
+
+        if !skill.triggers.is_empty() {
+            prompt.push_str("  triggers: ");
+            for (i, t) in skill.triggers.iter().enumerate() {
+                if i > 0 {
+                    prompt.push_str(", ");
+                }
+                prompt.push_str(t);
+            }
+            prompt.push('\n');
+        }
     }
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(name: &str, description: &str, triggers: &[&str]) -> SkillMeta {
+        SkillMeta {
+            name: name.into(),
+            description: description.into(),
+            triggers: triggers.iter().map(|t| (*t).to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn empty_catalog_returns_base_prompt_unchanged() {
+        let out = with_skill_catalog("BASE", &[]);
+        assert_eq!(out, "BASE");
+    }
+
+    #[test]
+    fn catalog_lists_each_skill_and_description() {
+        let skills = vec![
+            meta("legendar-videos", "Lista vídeos e gera legendas", &[]),
+            meta("debug-sistema", "", &[]),
+        ];
+        let out = with_skill_catalog("BASE", &skills);
+        assert!(out.contains("- `/legendar-videos` — Lista vídeos e gera legendas"));
+        assert!(out.contains("- `/debug-sistema` — (sem descrição)"));
+    }
+
+    #[test]
+    fn catalog_renders_triggers_when_present() {
+        let skills = vec![meta(
+            "legendar-videos",
+            "Lista vídeos e gera legendas",
+            &["legendar", "subtitle"],
+        )];
+        let out = with_skill_catalog("BASE", &skills);
+        assert!(out.contains("- `/legendar-videos` — Lista vídeos e gera legendas"));
+        assert!(
+            out.contains("triggers: legendar, subtitle"),
+            "expected triggers line, got: {out}",
+        );
+    }
+
+    #[test]
+    fn catalog_omits_triggers_line_when_empty() {
+        let skills = vec![meta("plain-skill", "sem triggers", &[])];
+        let out = with_skill_catalog("BASE", &skills);
+        assert!(!out.contains("triggers:"));
+    }
+
+    #[test]
+    fn base_prompt_documents_natural_language_triggers() {
+        // Sanity-check: the trigger-detection rules must be discoverable
+        // by GPT in the system prompt. If someone removes the section by
+        // accident, the suggestion behavior silently regresses.
+        assert!(ORCHESTRATOR_SYSTEM_PROMPT.contains("Triggers em linguagem natural"));
+        assert!(ORCHESTRATOR_SYSTEM_PROMPT.contains("`/<skill-name>`"));
+    }
 }

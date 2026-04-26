@@ -15,6 +15,7 @@ import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { Execution, ExecutionDetail, Project } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
+import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
 export interface SafeInvokeOptions {
   /** Toast title shown after a successful call. Omit to stay silent on success. */
@@ -101,6 +102,12 @@ export function saveSkill(args: {
 
 export function parseSkill(args: { name: string }): Promise<ParsedSkill> {
   return invoke("parse_skill", args);
+}
+
+/** Removes the `.md` from disk. Backend refuses if any execution is still
+ * in flight for the same skill. */
+export function deleteSkill(args: { name: string }): Promise<void> {
+  return invoke("delete_skill", args);
 }
 
 // ── projects ────────────────────────────────────────────────────────────────
@@ -229,6 +236,104 @@ export function installDependency(args: { name: string }): Promise<string> {
   return invoke("install_dependency", args);
 }
 
+// ── app_state (key/value store for cross-session UI state) ──────────────────
+
+/** Mirrors the Rust struct in src-tauri/src/db/models.rs::AppState. */
+export interface AppState {
+  key: string;
+  value: string;
+  updated_at: string;
+}
+
+/** Read a single key; resolves `null` when the key was never written. */
+export function getAppState(args: { key: string }): Promise<AppState | null> {
+  return invoke("get_app_state", args);
+}
+
+/** UPSERT a key. Returns the freshly-written row including new updated_at. */
+export function setAppState(args: {
+  key: string;
+  value: string;
+}): Promise<AppState> {
+  return invoke("set_app_state", args);
+}
+
+// ── workflows ───────────────────────────────────────────────────────────────
+
+/** Lightweight summary list — calls `commands::workflows::list_workflows`. */
+export function listWorkflows(): Promise<WorkflowSummary[]> {
+  return invoke("list_workflows");
+}
+
+export function readWorkflow(args: { name: string }): Promise<string> {
+  return invoke("read_workflow", args);
+}
+
+export function saveWorkflow(args: {
+  name: string;
+  content: string;
+}): Promise<void> {
+  return invoke("save_workflow", args);
+}
+
+export function deleteWorkflow(args: { name: string }): Promise<void> {
+  return invoke("delete_workflow", args);
+}
+
+/** Returns the parsed AST. Distinct command name from the JS `parseWorkflow`
+ *  helper would shadow — Tauri side is `parse_workflow`. */
+export function parseWorkflowFile(args: {
+  name: string;
+}): Promise<ParsedWorkflow> {
+  return invoke("parse_workflow", args);
+}
+
+/** Fire-and-forget — backend spawns the WorkflowExecutor and returns the
+ *  workflow_execution_id immediately. Progress flows via `workflow:*` events. */
+export function executeWorkflow(args: {
+  workflowName: string;
+  projectId?: string | null;
+}): Promise<string> {
+  return invoke("execute_workflow", args);
+}
+
+export function abortWorkflow(args: {
+  workflowExecutionId: string;
+}): Promise<void> {
+  return invoke("abort_workflow", args);
+}
+
+// ── terminal (PTY) ──────────────────────────────────────────────────────────
+
+/** Start a new PTY session. Returns the session id used by subsequent
+ *  write/resize/kill calls. Output streams via `terminal:data` events. */
+export function terminalSpawn(args: {
+  rows: number;
+  cols: number;
+  cwd?: string | null;
+}): Promise<string> {
+  return invoke("terminal_spawn", args);
+}
+
+export function terminalWrite(args: {
+  sessionId: string;
+  data: number[];
+}): Promise<void> {
+  return invoke("terminal_write", args);
+}
+
+export function terminalResize(args: {
+  sessionId: string;
+  rows: number;
+  cols: number;
+}): Promise<void> {
+  return invoke("terminal_resize", args);
+}
+
+export function terminalKill(args: { sessionId: string }): Promise<void> {
+  return invoke("terminal_kill", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
@@ -243,3 +348,9 @@ export type {
   Project,
 } from "@/types/project";
 export type { ParsedSkill, SkillMeta } from "@/types/skill";
+export type {
+  ParsedWorkflow,
+  WorkflowMeta,
+  WorkflowStep,
+  WorkflowSummary,
+} from "@/types/workflow";

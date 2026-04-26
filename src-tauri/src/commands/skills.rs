@@ -12,7 +12,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sqlx::SqlitePool;
+use tauri::State;
+
 use crate::config;
+use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta};
 
 fn skills_dir() -> Result<PathBuf, String> {
@@ -91,6 +95,32 @@ pub async fn save_skill(name: String, content: String) -> Result<(), String> {
         .map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
     fs::write(&path, content)
         .map_err(|e| format!("falha ao salvar skill `{name}`: {e}"))
+}
+
+/// Delete the .md file backing a skill. Refuses to proceed when at least one
+/// execution of the same skill is still pending/running/paused — keeps the
+/// `.md` available to the executor's retry/log path until the job settles.
+#[tauri::command]
+pub async fn delete_skill(
+    name: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<(), String> {
+    let dir = skills_dir()?;
+    let path = skill_path(&dir, &name)?;
+
+    let active = queries::count_active_by_skill_name(&pool, &name).await?;
+    if active > 0 {
+        return Err(format!(
+            "skill `{name}` está sendo executada agora ({active} execução(ões) ativas). \
+             Aborte ou aguarde antes de deletar."
+        ));
+    }
+
+    if !path.exists() {
+        return Err(format!("skill `{name}` não encontrada"));
+    }
+    fs::remove_file(&path).map_err(|e| format!("falha ao deletar skill `{name}`: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]

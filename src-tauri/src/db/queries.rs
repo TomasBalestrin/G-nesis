@@ -3,7 +3,9 @@
 
 use sqlx::SqlitePool;
 
-use crate::db::models::{ChatMessage, Conversation, Execution, ExecutionStep, Project};
+use crate::db::models::{
+    AppState, ChatMessage, Conversation, Execution, ExecutionStep, Project,
+};
 
 fn map_err(e: sqlx::Error) -> String {
     format!("db error: {e}")
@@ -57,6 +59,24 @@ pub async fn delete_project(pool: &SqlitePool, id: &str) -> Result<(), String> {
 }
 
 // ── executions ──────────────────────────────────────────────────────────────
+
+/// Count executions for `skill_name` that are still in flight (pending,
+/// running or paused). Used to block destructive actions like deleting the
+/// skill .md while a job is using it.
+pub async fn count_active_by_skill_name(
+    pool: &SqlitePool,
+    skill_name: &str,
+) -> Result<i64, String> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM executions
+         WHERE skill_name = ?1 AND status IN ('pending', 'running', 'paused')",
+    )
+    .bind(skill_name)
+    .fetch_one(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(count)
+}
 
 pub async fn list_executions_for_project(
     pool: &SqlitePool,
@@ -197,7 +217,7 @@ pub async fn update_step_status(
 // ── chat_messages ───────────────────────────────────────────────────────────
 
 const MESSAGE_COLUMNS: &str =
-    "id, execution_id, conversation_id, role, content, created_at";
+    "id, execution_id, conversation_id, role, content, created_at, thinking, thinking_summary";
 
 pub async fn list_messages(
     pool: &SqlitePool,
@@ -236,14 +256,17 @@ pub async fn list_messages_by_conversation(
 
 pub async fn insert_message(pool: &SqlitePool, message: &ChatMessage) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO chat_messages (id, execution_id, conversation_id, role, content)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO chat_messages
+            (id, execution_id, conversation_id, role, content, thinking, thinking_summary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
     .bind(&message.id)
     .bind(&message.execution_id)
     .bind(&message.conversation_id)
     .bind(&message.role)
     .bind(&message.content)
+    .bind(&message.thinking)
+    .bind(&message.thinking_summary)
     .execute(pool)
     .await
     .map_err(map_err)?;
@@ -332,4 +355,43 @@ pub async fn touch_conversation(pool: &SqlitePool, id: &str) -> Result<(), Strin
     .await
     .map_err(map_err)?;
     Ok(())
+}
+
+// ── app_state (key/value) ───────────────────────────────────────────────────
+
+/// Returns the row for `key` if it exists. Defaults seeded by migration 003
+/// guarantee the canonical keys (`active_project_id`, `active_model_id`)
+/// always resolve to a row after first startup.
+pub async fn get_state(pool: &SqlitePool, key: &str) -> Result<Option<AppState>, String> {
+    sqlx::query_as::<_, AppState>(
+        "SELECT key, value, updated_at FROM app_state WHERE key = ?1",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// UPSERT a single key. Returns the freshly written row so callers can echo
+/// the new `updated_at` to the frontend without an extra query.
+pub async fn set_state(
+    pool: &SqlitePool,
+    key: &str,
+    value: &str,
+) -> Result<AppState, String> {
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+
+    get_state(pool, key)
+        .await?
+        .ok_or_else(|| format!("app_state row `{key}` desapareceu após upsert"))
 }

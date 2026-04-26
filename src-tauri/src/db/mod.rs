@@ -23,6 +23,8 @@ pub type DbPool = SqlitePool;
 
 const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_conversations.sql");
+const MIGRATION_003: &str = include_str!("../../migrations/003_app_state.sql");
+const MIGRATION_005: &str = include_str!("../../migrations/005_workflows.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -70,6 +72,21 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
         .await
         .map_err(|e| format!("migration 002 failed: {e}"))?;
 
+    // 003 — app_state key/value store + default seeds.
+    pool.execute(MIGRATION_003)
+        .await
+        .map_err(|e| format!("migration 003 failed: {e}"))?;
+
+    // 004 — extended-thinking columns on chat_messages. ADD COLUMN is
+    // idempotent via pragma_table_info guard (SQLite has no IF NOT EXISTS).
+    ensure_chat_messages_thinking(pool).await?;
+
+    // 005 — workflows table. The .md file under ~/.genesis/workflows/
+    // remains source-of-truth; the row is an index + cached metadata.
+    pool.execute(MIGRATION_005)
+        .await
+        .map_err(|e| format!("migration 005 failed: {e}"))?;
+
     Ok(())
 }
 
@@ -98,5 +115,36 @@ async fn ensure_chat_messages_conversation_id(pool: &DbPool) -> Result<(), Strin
     .execute(pool)
     .await
     .map_err(|e| format!("failed to add conversation_id column: {e}"))?;
+    Ok(())
+}
+
+/// Adds the `thinking` and `thinking_summary` columns to `chat_messages`
+/// when they're absent. Same guard pattern as the conversation_id ALTER —
+/// SQLite's lack of `ADD COLUMN IF NOT EXISTS` means we have to introspect.
+async fn ensure_chat_messages_thinking(pool: &DbPool) -> Result<(), String> {
+    let rows = sqlx::query("SELECT name FROM pragma_table_info('chat_messages')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("pragma table_info failed: {e}"))?;
+
+    let names: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    if !names.iter().any(|n| n == "thinking") {
+        sqlx::query("ALTER TABLE chat_messages ADD COLUMN thinking TEXT")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("failed to add thinking column: {e}"))?;
+    }
+
+    if !names.iter().any(|n| n == "thinking_summary") {
+        sqlx::query("ALTER TABLE chat_messages ADD COLUMN thinking_summary TEXT")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("failed to add thinking_summary column: {e}"))?;
+    }
+
     Ok(())
 }

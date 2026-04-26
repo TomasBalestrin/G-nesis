@@ -22,8 +22,25 @@ pub struct Config {
     #[serde(default = "default_skills_dir")]
     pub skills_dir: String,
 
+    #[serde(default = "default_workflows_dir")]
+    pub workflows_dir: String,
+
     #[serde(default = "default_db_path")]
     pub db_path: String,
+
+    /// Optional Anthropic API key. Empty/absent disables the
+    /// claude-* model entries in the chat router. Same precedence rules
+    /// as `openai_api_key`: file wins, env (`ANTHROPIC_API_KEY`) is
+    /// fallback only.
+    #[serde(default)]
+    pub anthropic_api_key: Option<String>,
+
+    /// Optional explicit path to the `claude` CLI. When set, the
+    /// claude-code channel skips PATH discovery and uses this binary
+    /// directly — useful when the user has a non-standard install
+    /// (asdf, rbenv-style version managers) that the default lookup misses.
+    #[serde(default)]
+    pub claude_cli_path: Option<String>,
 
     /// True when no API key is configured — the UI should show the setup screen.
     /// Never serialized: recomputed after every load from the final merged state.
@@ -36,7 +53,10 @@ impl Default for Config {
         Self {
             openai_api_key: None,
             skills_dir: default_skills_dir(),
+            workflows_dir: default_workflows_dir(),
             db_path: default_db_path(),
+            anthropic_api_key: None,
+            claude_cli_path: None,
             needs_setup: true,
         }
     }
@@ -58,6 +78,10 @@ pub fn config_path() -> PathBuf {
 
 fn default_skills_dir() -> String {
     config_dir().join("skills").to_string_lossy().into_owned()
+}
+
+fn default_workflows_dir() -> String {
+    config_dir().join("workflows").to_string_lossy().into_owned()
 }
 
 fn default_db_path() -> String {
@@ -86,6 +110,7 @@ pub fn load_config() -> Result<Config, String> {
         .unwrap_or(true);
 
     ensure_dir(Path::new(&cfg.skills_dir))?;
+    ensure_dir(Path::new(&cfg.workflows_dir))?;
 
     Ok(cfg)
 }
@@ -96,10 +121,24 @@ pub fn load_config() -> Result<Config, String> {
 /// `db_path` is not user-configurable here — it's always
 /// `~/.genesis/genesis.db` to match the SQLite setup in `db::init_db`.
 pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result<Config, String> {
+    // Preserve fields the Settings UI doesn't expose yet — naive save would
+    // silently wipe the user's TOML overrides.
+    let preserved = read_config_file(&config_path()).ok();
+    let preserved_claude_path = preserved.as_ref().and_then(|c| c.claude_cli_path.clone());
+    let preserved_workflows_dir = preserved
+        .as_ref()
+        .map(|c| c.workflows_dir.clone())
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(default_workflows_dir);
+    let preserved_anthropic_key = preserved.and_then(|c| c.anthropic_api_key);
+
     let to_write = Config {
         openai_api_key: openai_api_key.filter(|k| !k.is_empty()),
         skills_dir,
+        workflows_dir: preserved_workflows_dir,
         db_path: default_db_path(),
+        anthropic_api_key: preserved_anthropic_key,
+        claude_cli_path: preserved_claude_path,
         needs_setup: false,
     };
 
@@ -138,6 +177,19 @@ fn apply_env_overrides(cfg: &mut Config) {
         if let Ok(k) = std::env::var("OPENAI_API_KEY") {
             if !k.is_empty() {
                 cfg.openai_api_key = Some(k);
+            }
+        }
+    }
+    // anthropic_api_key: same fallback policy — env fills only when file is empty.
+    if cfg
+        .anthropic_api_key
+        .as_deref()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
+            if !k.is_empty() {
+                cfg.anthropic_api_key = Some(k);
             }
         }
     }

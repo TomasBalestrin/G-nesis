@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSkillsStore } from "@/stores/skillsStore";
 
+import { ModelSelector } from "./ModelSelector";
+import { ProjectSelector } from "./ProjectSelector";
 import { SlashCommandModal, filterSkills } from "./SlashCommandModal";
 
 const MAX_HEIGHT = 200;
@@ -136,12 +138,14 @@ export function CommandInput({
       <form
         onSubmit={handleFormSubmit}
         className={cn(
-          "flex items-end gap-2 rounded-xl p-2 transition-colors",
+          "flex flex-wrap items-end gap-2 rounded-xl p-2 transition-colors",
           "bg-[var(--bg-tertiary)]",
           "focus-within:ring-2 focus-within:ring-[var(--accent-ring)]",
           isCommand && "ring-2 ring-[var(--accent)]",
         )}
       >
+        <ProjectSelector />
+        <ModelSelector />
         {isCommand && (
           <Slash
             aria-hidden
@@ -160,7 +164,7 @@ export function CommandInput({
           aria-autocomplete={slashOpen ? "list" : undefined}
           aria-expanded={slashOpen}
           className={cn(
-            "flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed",
+            "min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed",
             "text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none",
             isCommand && "font-mono text-[var(--accent)]",
           )}

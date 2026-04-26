@@ -4,8 +4,17 @@
 //! name + argv array — we NEVER do `sh -c "..."` (docs/security.md §3). The
 //! child is spawned via `tokio::process::Command` with `kill_on_drop(true)`,
 //! so a timed-out step kills the process when the future is dropped.
+//!
+//! On macOS, GUI apps launched via `.app` inherit a stripped PATH from
+//! launchctl (`/usr/bin:/bin:/usr/sbin:/sbin`), losing whatever the user
+//! configured in `.zshrc` / `.bashrc` (Homebrew, asdf, npm-global, etc.).
+//! We detect $SHELL once at startup and replay `$SHELL -l -c env` to capture
+//! the login PATH (and a few related vars), then merge that into every
+//! spawned child unless the caller explicitly overrides.
 
+use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,6 +24,106 @@ use tokio::time::timeout;
 use crate::channels::{
     Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS,
 };
+
+/// Variables we lift from the login shell. Limited to PATH-adjacent things —
+/// we don't want to import the user's full env (which may contain secrets
+/// they didn't intend to forward to skill subprocesses).
+const LOGIN_ENV_KEYS: &[&str] = &[
+    "PATH",
+    "MANPATH",
+    "LANG",
+    "LC_ALL",
+    "HOMEBREW_PREFIX",
+    "HOMEBREW_CELLAR",
+    "HOMEBREW_REPOSITORY",
+];
+
+/// Fallback PATH when the login-shell probe fails. Covers the common
+/// install locations on macOS (Apple Silicon + Intel Homebrew, npm-global,
+/// pyenv-style ~/.local/bin) plus the system minimum.
+const FALLBACK_PATH_SUFFIX: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+];
+
+fn login_env() -> &'static HashMap<String, String> {
+    static CACHE: OnceLock<HashMap<String, String>> = OnceLock::new();
+    CACHE.get_or_init(probe_login_env)
+}
+
+/// Run the user's login shell with `-l -c env`, parse the output, and
+/// extract the keys we care about. Synchronous + best-effort: timeouts or
+/// missing $SHELL fall back to the inherited environment.
+fn probe_login_env() -> HashMap<String, String> {
+    let mut env = HashMap::new();
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+
+    // 5s is generous for `env`; if the user's rc files take longer than
+    // that we'd rather start the app than block. Standard library Command
+    // (sync) is fine here — we run this exactly once at first channel use.
+    let probe = std::process::Command::new(&shell)
+        .args(["-l", "-c", "env"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    if let Ok(output) = probe {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some((key, value)) = line.split_once('=') {
+                    if LOGIN_ENV_KEYS.contains(&key) {
+                        env.insert(key.to_string(), value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // PATH is the critical piece. If the probe didn't yield one, build a
+    // synthesized PATH from the inherited value + FALLBACK_PATH_SUFFIX so
+    // children at least find Homebrew binaries.
+    if !env.contains_key("PATH") {
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        let mut parts: Vec<String> = if inherited.is_empty() {
+            Vec::new()
+        } else {
+            vec![inherited]
+        };
+        for dir in FALLBACK_PATH_SUFFIX {
+            parts.push((*dir).to_string());
+        }
+        env.insert("PATH".into(), parts.join(":"));
+    }
+
+    env
+}
+
+/// Compose the env passed to a child process. Login-shell vars are layered
+/// first, then any caller-provided overrides win — so a step that wants to
+/// inject `OPENAI_API_KEY` or override PATH still does.
+pub(crate) fn child_env_overrides(extra: &[(String, String)]) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = login_env()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (k, v) in extra {
+        if let Some(existing) = env.iter_mut().find(|(ek, _)| ek == k) {
+            existing.1 = v.clone();
+        } else {
+            env.push((k.clone(), v.clone()));
+        }
+    }
+    env
+}
 
 pub struct BashChannel;
 
@@ -57,7 +166,10 @@ impl Channel for BashChannel {
         if let Some(cwd) = &input.cwd {
             cmd.current_dir(cwd);
         }
-        for (k, v) in &input.env {
+        // Lift login-shell PATH (Homebrew, npm-global, etc.) before applying
+        // step-specific overrides so the user's binaries resolve even when the
+        // app was launched via .app/launchctl.
+        for (k, v) in child_env_overrides(&input.env) {
             cmd.env(k, v);
         }
 

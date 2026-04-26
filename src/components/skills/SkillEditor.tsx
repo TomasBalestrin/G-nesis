@@ -1,15 +1,23 @@
 import { useEffect, useState } from "react";
-import { Save } from "lucide-react";
+import { Save, Trash2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
-import { readSkill, saveSkill } from "@/lib/tauri-bridge";
+import { deleteSkill, readSkill, saveSkill } from "@/lib/tauri-bridge";
 import { useSkillsStore } from "@/stores/skillsStore";
 
 // Default scaffold for `/skills/new`. Parses cleanly under
@@ -60,6 +68,8 @@ export function SkillEditor() {
   const [preview, setPreview] = useState(isEdit ? "" : TEMPLATE);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -99,6 +109,26 @@ export function SkillEditor() {
     const timer = setTimeout(() => setPreview(content), 300);
     return () => clearTimeout(timer);
   }, [content]);
+
+  async function handleDelete() {
+    if (!isEdit) return;
+    setDeleting(true);
+    try {
+      await deleteSkill({ name: routeName });
+      toast({ title: `Skill ${routeName} deletada` });
+      await refreshSkills();
+      navigate("/");
+    } catch (err) {
+      toast({
+        title: "Falha ao deletar skill",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
 
   async function handleSave() {
     const trimmed = name.trim();
@@ -153,6 +183,17 @@ export function SkillEditor() {
             />
           )}
         </div>
+        {isEdit ? (
+          <Button
+            variant="outline"
+            onClick={() => setConfirmDelete(true)}
+            disabled={saving || loading || deleting}
+            aria-label={`Deletar skill ${routeName}`}
+          >
+            <Trash2 className="h-4 w-4" />
+            Deletar
+          </Button>
+        ) : null}
         <Button
           onClick={handleSave}
           disabled={saving || loading || !name.trim()}
@@ -161,6 +202,36 @@ export function SkillEditor() {
           {saving ? "Salvando..." : "Salvar"}
         </Button>
       </header>
+
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deletar skill {routeName}?</DialogTitle>
+            <DialogDescription>
+              O arquivo <span className="font-mono">{routeName}.md</span> será
+              removido do <span className="font-mono">skills_dir</span>. Esta
+              ação não pode ser desfeita. Execuções em andamento bloqueiam a
+              deleção.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Deletando..." : "Deletar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div
         className={cn(

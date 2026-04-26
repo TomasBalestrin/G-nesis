@@ -2,24 +2,38 @@ import { useEffect, useState } from "react";
 import {
   ChevronRight,
   FileCode,
+  GitBranch,
   MessageSquare,
   Moon,
   Pencil,
   Plus,
   Settings,
   Sun,
+  Terminal as TerminalIcon,
   Trash2,
+  Workflow,
 } from "lucide-react";
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
+import { deleteSkill } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
+import { useWorkflowsStore } from "@/stores/workflowsStore";
 import type { Conversation } from "@/types/chat";
 import type { SkillMeta } from "@/types/skill";
+import type { WorkflowSummary } from "@/types/workflow";
 
 interface SidebarProps {
   open: boolean;
@@ -71,6 +85,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         <ChatsSection onNavigate={onNavigate} />
         <SkillsSection onNavigate={onNavigate} />
+        <WorkflowsSection onNavigate={onNavigate} />
       </nav>
 
       <Footer />
@@ -333,10 +348,177 @@ function SkillItem({
   skill: SkillMeta;
   onNavigate: () => void;
 }) {
+  const { name: routeName } = useParams<{ name: string }>();
+  const isActive = routeName === skill.name;
+  const refreshSkills = useSkillsStore((s) => s.refresh);
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const description = skill.description.trim();
+
+  async function handleConfirmDelete() {
+    setDeleting(true);
+    try {
+      await deleteSkill({ name: skill.name });
+      toast({ title: `Skill ${skill.name} deletada` });
+      await refreshSkills();
+      if (isActive) navigate("/");
+    } catch (err) {
+      toast({
+        title: "Falha ao deletar skill",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmOpen(false);
+    }
+  }
+
+  return (
+    <>
+      <NavLink
+        to={`/skills/${encodeURIComponent(skill.name)}`}
+        onClick={onNavigate}
+        className={cn(
+          "group flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
+          isActive
+            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+            : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+        )}
+      >
+        <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-xs">{skill.name}</span>
+          {description ? (
+            <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
+              {description}
+            </span>
+          ) : null}
+        </span>
+        <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <IconButton
+            ariaLabel={`Deletar skill ${skill.name}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setConfirmOpen(true);
+            }}
+          >
+            <Trash2 className="h-3 w-3" />
+          </IconButton>
+        </span>
+      </NavLink>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deletar skill?</DialogTitle>
+            <DialogDescription>
+              O arquivo <span className="font-mono">{skill.name}.md</span> será
+              removido do <span className="font-mono">skills_dir</span>. Esta
+              ação não pode ser desfeita. Execuções em andamento bloqueiam a
+              deleção.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={deleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Deletando..." : "Deletar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ── workflows section ───────────────────────────────────────────────────────
+
+function WorkflowsSection({ onNavigate }: { onNavigate: () => void }) {
+  const [open, setOpen] = useState(true);
+  const items = useWorkflowsStore((s) => s.items);
+  const loading = useWorkflowsStore((s) => s.loading);
+  const loaded = useWorkflowsStore((s) => s.loaded);
+  const ensureLoaded = useWorkflowsStore((s) => s.ensureLoaded);
+
+  useEffect(() => {
+    void ensureLoaded();
+  }, [ensureLoaded]);
+
+  return (
+    <section>
+      <SectionHeader
+        label="Workflows"
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        action={
+          <Link
+            to="/workflows/new"
+            onClick={onNavigate}
+            aria-label="Novo workflow"
+            className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Link>
+        }
+      />
+      {open ? (
+        <div className="mt-1 space-y-0.5">
+          <NavLink
+            to="/workflows"
+            end
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-xs transition-colors duration-100",
+                isActive
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+              )
+            }
+          >
+            <Workflow className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+            Ver todos
+          </NavLink>
+          {loading && !loaded ? (
+            <p className="px-2 py-1 text-xs text-[var(--text-3)]">Carregando...</p>
+          ) : items.length === 0 ? (
+            <p className="px-2 py-1 text-xs text-[var(--text-3)]">
+              Nenhum workflow.
+            </p>
+          ) : (
+            items.map((wf) => (
+              <WorkflowItem key={wf.name} wf={wf} onNavigate={onNavigate} />
+            ))
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WorkflowItem({
+  wf,
+  onNavigate,
+}: {
+  wf: WorkflowSummary;
+  onNavigate: () => void;
+}) {
   return (
     <NavLink
-      to={`/skills/${encodeURIComponent(skill.name)}`}
+      to={`/workflows/${encodeURIComponent(wf.name)}`}
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
@@ -347,12 +529,12 @@ function SkillItem({
         )
       }
     >
-      <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+      <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-xs">{skill.name}</span>
-        {description ? (
+        <span className="block truncate font-mono text-xs">{wf.name}</span>
+        {wf.description.trim() ? (
           <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
-            {description}
+            {wf.description}
           </span>
         ) : null}
       </span>
@@ -366,13 +548,23 @@ function Footer() {
   const { isDark, toggle } = useTheme();
   return (
     <div className="flex items-center justify-between gap-2 border-t border-[var(--sb-bd)] px-3 py-3">
-      <Link
-        to="/settings"
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
-      >
-        <Settings className="h-4 w-4" />
-        Settings
-      </Link>
+      <div className="flex items-center gap-1">
+        <Link
+          to="/settings"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
+        >
+          <Settings className="h-4 w-4" />
+          Settings
+        </Link>
+        <Link
+          to="/terminal"
+          aria-label="Abrir terminal embutido"
+          title="Terminal"
+          className="flex items-center gap-2 rounded-md p-2 text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
+        >
+          <TerminalIcon className="h-4 w-4" />
+        </Link>
+      </div>
       <button
         type="button"
         onClick={toggle}

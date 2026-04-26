@@ -8,8 +8,10 @@ pub mod config;
 pub mod db;
 pub mod orchestrator;
 
+use channels::terminal::TerminalRegistry;
 use commands::{
-    chat, config as config_cmd, conversations, dependencies, execution, projects, skills,
+    app_state, chat, config as config_cmd, conversations, dependencies, execution, projects,
+    skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -37,6 +39,7 @@ pub fn run() {
             app.manage(pool);
 
             app.manage(ExecutionRegistry::new());
+            app.manage(TerminalRegistry::new());
 
             Ok(())
         })
@@ -48,6 +51,7 @@ pub fn run() {
             skills::list_skills,
             skills::read_skill,
             skills::save_skill,
+            skills::delete_skill,
             skills::parse_skill,
             // projects
             projects::list_projects,
@@ -72,6 +76,22 @@ pub fn run() {
             // dependencies
             dependencies::check_dependency,
             dependencies::install_dependency,
+            // app_state (UI cross-session state)
+            app_state::get_app_state,
+            app_state::set_app_state,
+            // workflows
+            workflows::list_workflows,
+            workflows::read_workflow,
+            workflows::save_workflow,
+            workflows::delete_workflow,
+            workflows::parse_workflow,
+            workflows::execute_workflow,
+            workflows::abort_workflow,
+            // terminal (PTY)
+            channels::terminal::terminal_spawn,
+            channels::terminal::terminal_write,
+            channels::terminal::terminal_resize,
+            channels::terminal::terminal_kill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

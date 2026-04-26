@@ -14,15 +14,64 @@
 use std::fs;
 use std::path::PathBuf;
 
+use serde::Serialize;
 use sqlx::SqlitePool;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
-use crate::ai::client::{Message, OpenAIClient};
+use crate::ai::client::{AiClient, ChatOutput, Message, OpenAIClient, ThinkingSink};
+use crate::ai::models::{self, ModelConfig};
 use crate::ai::prompts::{self, ORCHESTRATOR_SYSTEM_PROMPT};
 use crate::config;
 use crate::db::models::{ChatMessage, Conversation};
 use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
+
+const ACTIVE_MODEL_KEY: &str = "active_model_id";
+
+// ── thinking event sink ─────────────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+struct ThinkingDeltaEvent {
+    conversation_id: Option<String>,
+    delta: String,
+}
+
+#[derive(Clone, Serialize)]
+struct ThinkingCompleteEvent {
+    conversation_id: Option<String>,
+    summary: String,
+}
+
+/// Forwards thinking events from the AI client to the WebView. Lives only
+/// for the duration of one `send_chat_message` call. Errors from `emit`
+/// are swallowed: a missing window or dropped channel can't impact the
+/// chat completion itself.
+struct AppHandleSink {
+    app: AppHandle,
+    conversation_id: Option<String>,
+}
+
+impl ThinkingSink for AppHandleSink {
+    fn thinking_delta(&self, delta: &str) {
+        let _ = self.app.emit(
+            "chat:thinking_delta",
+            ThinkingDeltaEvent {
+                conversation_id: self.conversation_id.clone(),
+                delta: delta.to_string(),
+            },
+        );
+    }
+
+    fn thinking_complete(&self, summary: &str) {
+        let _ = self.app.emit(
+            "chat:thinking_complete",
+            ThinkingCompleteEvent {
+                conversation_id: self.conversation_id.clone(),
+                summary: summary.to_string(),
+            },
+        );
+    }
+}
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -38,6 +87,27 @@ fn openai_client() -> Result<OpenAIClient, String> {
         "OPENAI_API_KEY não configurada. Abra Settings e cole sua key.".to_string()
     })?;
     OpenAIClient::new(key).map_err(|e| e.user_message())
+}
+
+/// Build the right `AiClient` for `model`. Reads both API keys from the
+/// config TOML so the same clientless caller can route to OpenAI or
+/// Anthropic without inspecting the model itself.
+fn ai_client_for_model(model: &ModelConfig) -> Result<AiClient, String> {
+    let cfg = config::load_config()?;
+    AiClient::for_model(
+        model,
+        cfg.openai_api_key.as_deref(),
+        cfg.anthropic_api_key.as_deref(),
+    )
+    .map_err(|e| e.user_message())
+}
+
+/// Resolve the user's currently-picked model from `app_state`. Falls back to
+/// the static default if the row is missing or carries an unknown id.
+async fn active_model(pool: &sqlx::SqlitePool) -> &'static ModelConfig {
+    let row = queries::get_state(pool, ACTIVE_MODEL_KEY).await.ok().flatten();
+    let id = row.map(|s| s.value).unwrap_or_default();
+    models::resolve_model(&id)
 }
 
 // ── slash command handling ──────────────────────────────────────────────────
@@ -72,9 +142,14 @@ fn skill_md_path(name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(file_name))
 }
 
-/// Load every `.md` under `skills_dir` and parse it. Broken files are
-/// skipped with a stderr warning — mirror of `commands::skills::list_skills`
-/// without cross-module borrowing through a `#[tauri::command]`.
+/// Load every `.md` under `skills_dir` and parse it. Walks the top level
+/// plus immediate subdirectories (e.g. `skills/meta/criar-skill.md`) so
+/// curated meta-skills stay discoverable without polluting the user's
+/// flat skill list. Deeper nesting is intentionally ignored to keep the
+/// scan cheap and avoid surprises.
+///
+/// Broken files are skipped with a stderr warning — one bad file should
+/// not hide the rest.
 fn load_skill_catalog() -> Vec<SkillMeta> {
     let Ok(dir) = skills_dir() else { return Vec::new() };
     let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
@@ -82,20 +157,41 @@ fn load_skill_catalog() -> Vec<SkillMeta> {
     let mut metas: Vec<SkillMeta> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                match skill_parser::parse_skill(&content) {
-                    Ok(skill) => metas.push(skill.meta),
-                    Err(err) => eprintln!(
-                        "[chat] pulando {} ao listar catálogo: {err}",
-                        path.display()
-                    ),
+        if path.is_dir() {
+            // One level deep — meta/, drafts/, etc.
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub in sub_entries.flatten() {
+                    push_skill_meta(&sub.path(), &mut metas);
                 }
             }
+        } else {
+            push_skill_meta(&path, &mut metas);
         }
     }
     metas.sort_by(|a, b| a.name.cmp(&b.name));
     metas
+}
+
+fn push_skill_meta(path: &std::path::Path, metas: &mut Vec<SkillMeta>) {
+    if path.extension().map(|e| e == "md").unwrap_or(false) {
+        if let Ok(content) = fs::read_to_string(path) {
+            match skill_parser::parse_skill(&content) {
+                Ok(skill) => metas.push(skill.meta),
+                Err(err) => eprintln!(
+                    "[chat] pulando {} ao listar catálogo: {err}",
+                    path.display()
+                ),
+            }
+        }
+    }
+}
+
+/// Slash commands whose response must come from the AI instead of the
+/// canned skill-preview path. `/criar-skill` is the only entry today —
+/// the orchestrator system prompt has the multi-turn guided flow that
+/// drives Phase 1 onward as a regular GPT response.
+fn is_ai_routed_slash_command(name: &str) -> bool {
+    matches!(name, "criar-skill")
 }
 
 fn format_step_line(index: usize, step: &SkillStep) -> String {
@@ -221,6 +317,7 @@ pub async fn send_chat_message(
     content: String,
     execution_id: Option<String>,
     conversation_id: Option<String>,
+    app: AppHandle,
     pool: State<'_, SqlitePool>,
 ) -> Result<ChatMessage, String> {
     let user_msg = ChatMessage {
@@ -230,6 +327,8 @@ pub async fn send_chat_message(
         role: "user".to_string(),
         content: content.clone(),
         created_at: now_iso(),
+        thinking: None,
+        thinking_summary: None,
     };
 
     // Snapshot of the conversation row BEFORE we insert the user message —
@@ -242,28 +341,51 @@ pub async fn send_chat_message(
 
     queries::insert_message(&pool, &user_msg).await?;
 
-    let reply_content = if let Some(skill_name) = extract_slash_command(&content) {
-        try_slash_reply(skill_name)
-    } else {
-        let history = history_for(&pool, execution_id.as_deref(), conversation_id.as_deref())
-            .await?;
-        let messages: Vec<Message> = history
-            .iter()
-            .map(|m| Message {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            })
-            .collect();
-
-        let catalog = load_skill_catalog();
-        let system_prompt = prompts::with_skill_catalog(ORCHESTRATOR_SYSTEM_PROMPT, &catalog);
-
-        let client = openai_client()?;
-        client
-            .chat_completion(&system_prompt, &messages)
-            .await
-            .map_err(|e| e.user_message())?
+    // Slash commands normally skip the AI roundtrip — `try_slash_reply`
+    // builds the canned skill preview directly. A short allowlist
+    // (`is_ai_routed_slash_command`) opts specific commands out: those go
+    // through GPT so the system prompt's multi-turn flows (e.g.
+    // `/criar-skill`) can drive the conversation instead.
+    let slash_command = extract_slash_command(&content).map(str::to_string);
+    let needs_ai = match slash_command.as_deref() {
+        Some(name) => is_ai_routed_slash_command(name),
+        None => true,
     };
+
+    let (reply_content, thinking, thinking_summary) =
+        if let (false, Some(skill_name)) = (needs_ai, slash_command.as_deref()) {
+            (try_slash_reply(skill_name), None, None)
+        } else {
+            let history =
+                history_for(&pool, execution_id.as_deref(), conversation_id.as_deref()).await?;
+            let messages: Vec<Message> = history
+                .iter()
+                .map(|m| Message {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect();
+
+            let catalog = load_skill_catalog();
+            let system_prompt = prompts::with_skill_catalog(ORCHESTRATOR_SYSTEM_PROMPT, &catalog);
+
+            let model = active_model(&pool).await;
+            let client = ai_client_for_model(model)?;
+
+            let sink = AppHandleSink {
+                app: app.clone(),
+                conversation_id: conversation_id.clone(),
+            };
+            let ChatOutput {
+                content,
+                thinking,
+                thinking_summary,
+            } = client
+                .chat_completion_with_thinking(&system_prompt, &messages, Some(&sink))
+                .await
+                .map_err(|e| e.user_message())?;
+            (content, thinking, thinking_summary)
+        };
 
     let assistant_msg = ChatMessage {
         id: new_id(),
@@ -272,6 +394,8 @@ pub async fn send_chat_message(
         role: "assistant".to_string(),
         content: reply_content,
         created_at: now_iso(),
+        thinking,
+        thinking_summary,
     };
     queries::insert_message(&pool, &assistant_msg).await?;
 
@@ -295,10 +419,11 @@ fn should_auto_title(pre: Option<&Conversation>) -> bool {
     }
 }
 
-/// Best-effort GPT call to coin a <=30 char title. Silent on failure — the
-/// user can always rename manually via the sidebar.
+/// Best-effort title-generation call via the user's active model. Silent on
+/// failure — the user can always rename manually via the sidebar.
 async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message: &str) {
-    let Ok(client) = openai_client() else { return };
+    let model = active_model(pool).await;
+    let Ok(client) = ai_client_for_model(model) else { return };
 
     let prompt = format!(
         "Gere um título curto (máximo {TITLE_GEN_MAX_CHARS} caracteres, em português, \
