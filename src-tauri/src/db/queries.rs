@@ -3,7 +3,9 @@
 
 use sqlx::SqlitePool;
 
-use crate::db::models::{ChatMessage, Conversation, Execution, ExecutionStep, Project};
+use crate::db::models::{
+    AppState, ChatMessage, Conversation, Execution, ExecutionStep, Project,
+};
 
 fn map_err(e: sqlx::Error) -> String {
     format!("db error: {e}")
@@ -350,4 +352,43 @@ pub async fn touch_conversation(pool: &SqlitePool, id: &str) -> Result<(), Strin
     .await
     .map_err(map_err)?;
     Ok(())
+}
+
+// ── app_state (key/value) ───────────────────────────────────────────────────
+
+/// Returns the row for `key` if it exists. Defaults seeded by migration 003
+/// guarantee the canonical keys (`active_project_id`, `active_model_id`)
+/// always resolve to a row after first startup.
+pub async fn get_state(pool: &SqlitePool, key: &str) -> Result<Option<AppState>, String> {
+    sqlx::query_as::<_, AppState>(
+        "SELECT key, value, updated_at FROM app_state WHERE key = ?1",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// UPSERT a single key. Returns the freshly written row so callers can echo
+/// the new `updated_at` to the frontend without an extra query.
+pub async fn set_state(
+    pool: &SqlitePool,
+    key: &str,
+    value: &str,
+) -> Result<AppState, String> {
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+
+    get_state(pool, key)
+        .await?
+        .ok_or_else(|| format!("app_state row `{key}` desapareceu após upsert"))
 }

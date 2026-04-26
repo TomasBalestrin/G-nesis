@@ -23,6 +23,7 @@ pub type DbPool = SqlitePool;
 
 const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_conversations.sql");
+const MIGRATION_003: &str = include_str!("../../migrations/003_app_state.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -69,6 +70,11 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
     pool.execute(MIGRATION_002)
         .await
         .map_err(|e| format!("migration 002 failed: {e}"))?;
+
+    // 003 — app_state key/value store + default seeds.
+    pool.execute(MIGRATION_003)
+        .await
+        .map_err(|e| format!("migration 003 failed: {e}"))?;
 
     Ok(())
 }

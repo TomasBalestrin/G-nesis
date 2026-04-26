@@ -63,3 +63,13 @@ pub struct Conversation {
     pub created_at: String,
     pub updated_at: String,
 }
+
+/// Generic single-row-per-key store for UI state that survives between
+/// sessions (active project, active model, etc). Backed by the `app_state`
+/// table — see migration 003.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AppState {
+    pub key: String,
+    pub value: String,
+    pub updated_at: String,
+}
