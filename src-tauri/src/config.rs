@@ -25,6 +25,13 @@ pub struct Config {
     #[serde(default = "default_db_path")]
     pub db_path: String,
 
+    /// Optional explicit path to the `claude` CLI. When set, the
+    /// claude-code channel skips PATH discovery and uses this binary
+    /// directly — useful when the user has a non-standard install
+    /// (asdf, rbenv-style version managers) that the default lookup misses.
+    #[serde(default)]
+    pub claude_cli_path: Option<String>,
+
     /// True when no API key is configured — the UI should show the setup screen.
     /// Never serialized: recomputed after every load from the final merged state.
     #[serde(default, skip_deserializing)]
@@ -37,6 +44,7 @@ impl Default for Config {
             openai_api_key: None,
             skills_dir: default_skills_dir(),
             db_path: default_db_path(),
+            claude_cli_path: None,
             needs_setup: true,
         }
     }
@@ -96,10 +104,18 @@ pub fn load_config() -> Result<Config, String> {
 /// `db_path` is not user-configurable here — it's always
 /// `~/.genesis/genesis.db` to match the SQLite setup in `db::init_db`.
 pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result<Config, String> {
+    // Preserve `claude_cli_path` across saves — `save_config` is wired to
+    // the Settings page which doesn't (yet) expose that field, so a naive
+    // overwrite would silently wipe the user's override.
+    let preserved_claude_path = read_config_file(&config_path())
+        .ok()
+        .and_then(|c| c.claude_cli_path);
+
     let to_write = Config {
         openai_api_key: openai_api_key.filter(|k| !k.is_empty()),
         skills_dir,
         db_path: default_db_path(),
+        claude_cli_path: preserved_claude_path,
         needs_setup: false,
     };
 
