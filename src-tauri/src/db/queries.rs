@@ -217,7 +217,7 @@ pub async fn update_step_status(
 // ── chat_messages ───────────────────────────────────────────────────────────
 
 const MESSAGE_COLUMNS: &str =
-    "id, execution_id, conversation_id, role, content, created_at";
+    "id, execution_id, conversation_id, role, content, created_at, thinking, thinking_summary";
 
 pub async fn list_messages(
     pool: &SqlitePool,
@@ -256,14 +256,17 @@ pub async fn list_messages_by_conversation(
 
 pub async fn insert_message(pool: &SqlitePool, message: &ChatMessage) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO chat_messages (id, execution_id, conversation_id, role, content)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO chat_messages
+            (id, execution_id, conversation_id, role, content, thinking, thinking_summary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
     .bind(&message.id)
     .bind(&message.execution_id)
     .bind(&message.conversation_id)
     .bind(&message.role)
     .bind(&message.content)
+    .bind(&message.thinking)
+    .bind(&message.thinking_summary)
     .execute(pool)
     .await
     .map_err(map_err)?;

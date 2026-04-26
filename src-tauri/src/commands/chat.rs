@@ -14,10 +14,11 @@
 use std::fs;
 use std::path::PathBuf;
 
+use serde::Serialize;
 use sqlx::SqlitePool;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
-use crate::ai::client::{AiClient, Message, OpenAIClient};
+use crate::ai::client::{AiClient, ChatOutput, Message, OpenAIClient, ThinkingSink};
 use crate::ai::models::{self, ModelConfig};
 use crate::ai::prompts::{self, ORCHESTRATOR_SYSTEM_PROMPT};
 use crate::config;
@@ -26,6 +27,51 @@ use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
 
 const ACTIVE_MODEL_KEY: &str = "active_model_id";
+
+// ── thinking event sink ─────────────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+struct ThinkingDeltaEvent {
+    conversation_id: Option<String>,
+    delta: String,
+}
+
+#[derive(Clone, Serialize)]
+struct ThinkingCompleteEvent {
+    conversation_id: Option<String>,
+    summary: String,
+}
+
+/// Forwards thinking events from the AI client to the WebView. Lives only
+/// for the duration of one `send_chat_message` call. Errors from `emit`
+/// are swallowed: a missing window or dropped channel can't impact the
+/// chat completion itself.
+struct AppHandleSink {
+    app: AppHandle,
+    conversation_id: Option<String>,
+}
+
+impl ThinkingSink for AppHandleSink {
+    fn thinking_delta(&self, delta: &str) {
+        let _ = self.app.emit(
+            "chat:thinking_delta",
+            ThinkingDeltaEvent {
+                conversation_id: self.conversation_id.clone(),
+                delta: delta.to_string(),
+            },
+        );
+    }
+
+    fn thinking_complete(&self, summary: &str) {
+        let _ = self.app.emit(
+            "chat:thinking_complete",
+            ThinkingCompleteEvent {
+                conversation_id: self.conversation_id.clone(),
+                summary: summary.to_string(),
+            },
+        );
+    }
+}
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -245,6 +291,7 @@ pub async fn send_chat_message(
     content: String,
     execution_id: Option<String>,
     conversation_id: Option<String>,
+    app: AppHandle,
     pool: State<'_, SqlitePool>,
 ) -> Result<ChatMessage, String> {
     let user_msg = ChatMessage {
@@ -254,6 +301,8 @@ pub async fn send_chat_message(
         role: "user".to_string(),
         content: content.clone(),
         created_at: now_iso(),
+        thinking: None,
+        thinking_summary: None,
     };
 
     // Snapshot of the conversation row BEFORE we insert the user message —
@@ -266,29 +315,42 @@ pub async fn send_chat_message(
 
     queries::insert_message(&pool, &user_msg).await?;
 
-    let reply_content = if let Some(skill_name) = extract_slash_command(&content) {
-        try_slash_reply(skill_name)
-    } else {
-        let history = history_for(&pool, execution_id.as_deref(), conversation_id.as_deref())
-            .await?;
-        let messages: Vec<Message> = history
-            .iter()
-            .map(|m| Message {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            })
-            .collect();
+    // Slash commands skip the AI roundtrip — no thinking, just the canned
+    // confirmation/preview text built from the parsed skill.
+    let (reply_content, thinking, thinking_summary) =
+        if let Some(skill_name) = extract_slash_command(&content) {
+            (try_slash_reply(skill_name), None, None)
+        } else {
+            let history =
+                history_for(&pool, execution_id.as_deref(), conversation_id.as_deref()).await?;
+            let messages: Vec<Message> = history
+                .iter()
+                .map(|m| Message {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect();
 
-        let catalog = load_skill_catalog();
-        let system_prompt = prompts::with_skill_catalog(ORCHESTRATOR_SYSTEM_PROMPT, &catalog);
+            let catalog = load_skill_catalog();
+            let system_prompt = prompts::with_skill_catalog(ORCHESTRATOR_SYSTEM_PROMPT, &catalog);
 
-        let model = active_model(&pool).await;
-        let client = ai_client_for_model(model)?;
-        client
-            .chat_completion(&system_prompt, &messages)
-            .await
-            .map_err(|e| e.user_message())?
-    };
+            let model = active_model(&pool).await;
+            let client = ai_client_for_model(model)?;
+
+            let sink = AppHandleSink {
+                app: app.clone(),
+                conversation_id: conversation_id.clone(),
+            };
+            let ChatOutput {
+                content,
+                thinking,
+                thinking_summary,
+            } = client
+                .chat_completion_with_thinking(&system_prompt, &messages, Some(&sink))
+                .await
+                .map_err(|e| e.user_message())?;
+            (content, thinking, thinking_summary)
+        };
 
     let assistant_msg = ChatMessage {
         id: new_id(),
@@ -297,6 +359,8 @@ pub async fn send_chat_message(
         role: "assistant".to_string(),
         content: reply_content,
         created_at: now_iso(),
+        thinking,
+        thinking_summary,
     };
     queries::insert_message(&pool, &assistant_msg).await?;
 

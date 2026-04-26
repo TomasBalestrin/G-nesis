@@ -331,6 +331,10 @@ pub struct AnthropicClient {
     api_key: String,
     model: String,
     max_tokens: u32,
+    /// When `Some`, the streaming variant enables Anthropic's extended
+    /// thinking mode with this token budget. `None` = thinking disabled
+    /// (model doesn't support it or caller didn't opt in).
+    thinking_budget: Option<u32>,
 }
 
 impl AnthropicClient {
@@ -345,7 +349,16 @@ impl AnthropicClient {
             api_key,
             model: model.into(),
             max_tokens,
+            thinking_budget: None,
         })
+    }
+
+    /// Enable extended thinking for streaming calls. `budget` must be
+    /// strictly less than `max_tokens` (Anthropic 400s otherwise) — the
+    /// caller is expected to pass `max_tokens / 2` or similar.
+    pub fn with_thinking_budget(mut self, budget: u32) -> Self {
+        self.thinking_budget = Some(budget);
+        self
     }
 
     pub async fn chat_completion(
@@ -370,6 +383,8 @@ impl AnthropicClient {
             max_tokens: self.max_tokens,
             system: if system.is_empty() { None } else { Some(system) },
             messages,
+            stream: None,
+            thinking: None,
         };
 
         let resp = self
@@ -396,6 +411,325 @@ impl AnthropicClient {
 
         decode_anthropic(resp).await
     }
+
+    /// Streaming variant. Issues a `stream: true` request and parses
+    /// Anthropic's SSE protocol, routing thinking_delta events to `sink`
+    /// and accumulating both thinking + text into the returned
+    /// `ChatOutput`. Single-shot (no retry) since partial streams can't
+    /// be safely replayed mid-token.
+    pub async fn chat_completion_streaming(
+        &self,
+        system: &str,
+        history: &[Message],
+        sink: Option<&dyn ThinkingSink>,
+    ) -> Result<ChatOutput, AiError> {
+        let normalized = normalize_for_anthropic(history);
+
+        let thinking_block = self.thinking_budget.map(|budget| AnthropicThinkingConfig {
+            kind: "enabled",
+            budget_tokens: budget,
+        });
+
+        let body = AnthropicMessagesRequest {
+            model: &self.model,
+            max_tokens: self.max_tokens,
+            system: if system.is_empty() { None } else { Some(system) },
+            messages: &normalized,
+            stream: Some(true),
+            thinking: thinking_block,
+        };
+
+        let resp = self
+            .client
+            .post(ANTHROPIC_MESSAGES_URL)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    AiError::Timeout {
+                        provider: Provider::Anthropic,
+                    }
+                } else {
+                    AiError::Network {
+                        provider: Provider::Anthropic,
+                        message: e.to_string(),
+                    }
+                }
+            })?;
+
+        // Status check before streaming — surface 401/429/5xx with the
+        // same error taxonomy as the non-streaming path.
+        let status = resp.status();
+        let provider = Provider::Anthropic;
+        match status {
+            StatusCode::OK => {}
+            StatusCode::UNAUTHORIZED => return Err(AiError::Unauthorized { provider }),
+            StatusCode::TOO_MANY_REQUESTS => return Err(AiError::RateLimited { provider }),
+            code if code.is_server_error() => {
+                return Err(AiError::ServerError {
+                    provider,
+                    status: code.as_u16(),
+                });
+            }
+            code if code.is_client_error() => {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(AiError::BadRequest {
+                    provider,
+                    message: format!("http {code}: {text}"),
+                });
+            }
+            code => {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(AiError::Network {
+                    provider,
+                    message: format!("http {code}: {text}"),
+                });
+            }
+        }
+
+        consume_anthropic_stream(resp, sink).await
+    }
+}
+
+/// Reads the Anthropic SSE stream chunk by chunk, parses events, and
+/// returns the assembled `ChatOutput`. `sink` (if any) receives
+/// `ThinkingDelta` for each `thinking_delta` and one `ThinkingComplete`
+/// when the thinking content_block ends.
+async fn consume_anthropic_stream(
+    mut resp: reqwest::Response,
+    sink: Option<&dyn ThinkingSink>,
+) -> Result<ChatOutput, AiError> {
+    let provider = Provider::Anthropic;
+    let mut buf = SseBuffer::new();
+    // Indexed by content_block index — Anthropic interleaves blocks.
+    let mut block_kinds: std::collections::HashMap<u64, &'static str> =
+        std::collections::HashMap::new();
+    let mut content = String::new();
+    let mut thinking = String::new();
+    let mut thinking_emitted_complete = false;
+
+    while let Some(chunk) = resp.chunk().await.map_err(|e| AiError::Network {
+        provider,
+        message: format!("stream chunk: {e}"),
+    })? {
+        let text = std::str::from_utf8(&chunk).map_err(|e| AiError::Decode {
+            provider,
+            message: e.to_string(),
+        })?;
+
+        for evt in buf.push(text) {
+            // Only `data:` payloads carry useful info; `event:` is mirrored
+            // by the JSON's `type` field so we lean on that.
+            let parsed: AnthropicStreamEvent = match serde_json::from_str(&evt.data) {
+                Ok(p) => p,
+                // Skip unparseable lines; Anthropic occasionally adds new
+                // event types we don't model. Don't crash on those.
+                Err(_) => continue,
+            };
+
+            match parsed {
+                AnthropicStreamEvent::ContentBlockStart {
+                    index,
+                    content_block,
+                } => {
+                    let kind = match content_block.kind.as_str() {
+                        "thinking" => "thinking",
+                        "text" => "text",
+                        _ => "other",
+                    };
+                    block_kinds.insert(index, kind);
+                }
+                AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
+                    let kind = block_kinds.get(&index).copied().unwrap_or("other");
+                    match (kind, delta) {
+                        ("thinking", AnthropicDelta::ThinkingDelta { thinking: chunk }) => {
+                            thinking.push_str(&chunk);
+                            if let Some(sink) = sink {
+                                sink.thinking_delta(&chunk);
+                            }
+                        }
+                        ("text", AnthropicDelta::TextDelta { text }) => {
+                            content.push_str(&text);
+                        }
+                        _ => {}
+                    }
+                }
+                AnthropicStreamEvent::ContentBlockStop { index } => {
+                    if !thinking_emitted_complete && block_kinds.get(&index).copied() == Some("thinking") {
+                        thinking_emitted_complete = true;
+                        let summary = derive_thinking_summary(&thinking);
+                        if let Some(sink) = sink {
+                            sink.thinking_complete(&summary);
+                        }
+                    }
+                }
+                AnthropicStreamEvent::MessageStop => break,
+                AnthropicStreamEvent::Error { error } => {
+                    return Err(AiError::BadRequest {
+                        provider,
+                        message: format!("anthropic stream error: {} ({})", error.message, error.kind),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if content.trim().is_empty() && thinking.trim().is_empty() {
+        return Err(AiError::EmptyResponse { provider });
+    }
+
+    let thinking_summary = if thinking.is_empty() {
+        None
+    } else {
+        Some(derive_thinking_summary(&thinking))
+    };
+
+    Ok(ChatOutput {
+        content,
+        thinking: if thinking.is_empty() { None } else { Some(thinking) },
+        thinking_summary,
+    })
+}
+
+/// One-line summary of a thinking block — first non-empty line, trimmed
+/// and capped to ~80 chars. Used by the UI's collapsed-accordion header.
+fn derive_thinking_summary(thinking: &str) -> String {
+    let first = thinking
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let mut cap = String::new();
+    for ch in first.chars().take(80) {
+        cap.push(ch);
+    }
+    if first.chars().count() > 80 {
+        cap.push('…');
+    }
+    cap
+}
+
+// ── streaming sink + outputs ────────────────────────────────────────────────
+
+/// Output of a chat completion. `thinking` is `None` for providers/models
+/// that don't expose reasoning.
+#[derive(Debug, Clone, Default)]
+pub struct ChatOutput {
+    pub content: String,
+    pub thinking: Option<String>,
+    pub thinking_summary: Option<String>,
+}
+
+/// Receiver for live thinking events — implemented by chat.rs to forward
+/// each delta to the WebView via `Emitter::emit`.
+pub trait ThinkingSink: Send + Sync {
+    fn thinking_delta(&self, delta: &str);
+    fn thinking_complete(&self, summary: &str);
+}
+
+// ── SSE parser ──────────────────────────────────────────────────────────────
+
+struct SseBuffer {
+    buf: String,
+}
+
+struct SseEvent {
+    #[allow(dead_code)]
+    name: String,
+    data: String,
+}
+
+impl SseBuffer {
+    fn new() -> Self {
+        Self { buf: String::new() }
+    }
+
+    /// Push raw bytes from the stream and return any complete events
+    /// (those terminated by a blank line per the SSE spec).
+    fn push(&mut self, chunk: &str) -> Vec<SseEvent> {
+        self.buf.push_str(chunk);
+        let mut out = Vec::new();
+        while let Some(idx) = self.buf.find("\n\n") {
+            let raw: String = self.buf.drain(..idx + 2).collect();
+            if let Some(evt) = parse_sse_block(raw.trim_end_matches('\n')) {
+                out.push(evt);
+            }
+        }
+        out
+    }
+}
+
+fn parse_sse_block(raw: &str) -> Option<SseEvent> {
+    let mut name = String::new();
+    let mut data = String::new();
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("event: ") {
+            name = rest.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("data: ") {
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(rest);
+        }
+        // Comments (lines starting with `:`) and other fields are ignored.
+    }
+    if data.is_empty() {
+        return None;
+    }
+    Some(SseEvent { name, data })
+}
+
+// ── Anthropic stream event DTOs ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicStreamEvent {
+    MessageStart,
+    ContentBlockStart {
+        index: u64,
+        content_block: AnthropicStreamContentBlock,
+    },
+    ContentBlockDelta {
+        index: u64,
+        delta: AnthropicDelta,
+    },
+    ContentBlockStop {
+        index: u64,
+    },
+    MessageDelta,
+    MessageStop,
+    Ping,
+    Error {
+        error: AnthropicStreamError,
+    },
+}
+
+#[derive(Deserialize)]
+struct AnthropicStreamContentBlock {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicDelta {
+    TextDelta { text: String },
+    ThinkingDelta { thinking: String },
+    InputJsonDelta,
+    SignatureDelta,
+}
+
+#[derive(Deserialize)]
+struct AnthropicStreamError {
+    #[serde(rename = "type")]
+    kind: String,
+    message: String,
 }
 
 fn normalize_for_anthropic(history: &[Message]) -> Vec<Message> {
@@ -459,6 +793,17 @@ struct AnthropicMessagesRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<&'a str>,
     messages: &'a [Message],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinkingConfig>,
+}
+
+#[derive(Serialize)]
+struct AnthropicThinkingConfig {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    budget_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -508,11 +853,19 @@ impl AiClient {
                     .ok_or(AiError::MissingApiKey {
                         provider: Provider::Anthropic,
                     })?;
-                Ok(AiClient::Anthropic(AnthropicClient::new(
+                let mut client = AnthropicClient::new(
                     key.to_string(),
                     model.id,
                     model.max_tokens,
-                )?))
+                )?;
+                if model.supports_thinking {
+                    // Half of max_tokens, floored at 1024 so the thinking
+                    // budget is meaningful even on small ceilings. Anthropic
+                    // requires budget < max_tokens.
+                    let budget = (model.max_tokens / 2).max(1024).min(model.max_tokens.saturating_sub(1));
+                    client = client.with_thinking_budget(budget);
+                }
+                Ok(AiClient::Anthropic(client))
             }
         }
     }
@@ -525,6 +878,30 @@ impl AiClient {
         match self {
             AiClient::OpenAi(c) => c.chat_completion(system, history).await,
             AiClient::Anthropic(c) => c.chat_completion(system, history).await,
+        }
+    }
+
+    /// Streaming variant that surfaces thinking blocks via `sink`. OpenAI
+    /// today doesn't expose reasoning via this client (o1/o3 hide it
+    /// server-side), so for OpenAI this falls back to a non-streaming call
+    /// with `thinking: None`. Anthropic uses real SSE streaming when the
+    /// model supports thinking.
+    pub async fn chat_completion_with_thinking(
+        &self,
+        system: &str,
+        history: &[Message],
+        sink: Option<&dyn ThinkingSink>,
+    ) -> Result<ChatOutput, AiError> {
+        match self {
+            AiClient::OpenAi(c) => {
+                let content = c.chat_completion(system, history).await?;
+                Ok(ChatOutput {
+                    content,
+                    thinking: None,
+                    thinking_summary: None,
+                })
+            }
+            AiClient::Anthropic(c) => c.chat_completion_streaming(system, history, sink).await,
         }
     }
 }
@@ -569,6 +946,44 @@ mod tests {
             provider: Provider::OpenAi,
         };
         assert!(err.user_message().contains("OpenAI"));
+    }
+
+    #[test]
+    fn derive_thinking_summary_takes_first_line_capped() {
+        let s = derive_thinking_summary("");
+        assert!(s.is_empty());
+
+        let s = derive_thinking_summary("\n\n  primeira linha real \nsegunda\n");
+        assert_eq!(s, "primeira linha real");
+
+        let long = "a".repeat(200);
+        let s = derive_thinking_summary(&long);
+        // 80 chars + ellipsis
+        assert_eq!(s.chars().count(), 81);
+        assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn sse_buffer_assembles_events_across_chunks() {
+        let mut buf = SseBuffer::new();
+        let evts = buf.push("event: foo\ndata: {\"a\":");
+        assert!(evts.is_empty());
+
+        let evts = buf.push("1}\n\nevent: bar\ndata: x\n\n");
+        assert_eq!(evts.len(), 2);
+        assert_eq!(evts[0].name, "foo");
+        assert_eq!(evts[0].data, "{\"a\":1}");
+        assert_eq!(evts[1].name, "bar");
+        assert_eq!(evts[1].data, "x");
+    }
+
+    #[test]
+    fn anthropic_client_with_thinking_budget_chains() {
+        let c = match AnthropicClient::new("sk-ant-1234".into(), "claude-sonnet-4-5", 8192) {
+            Ok(c) => c.with_thinking_budget(4000),
+            Err(_) => panic!("constructor with non-empty key should succeed"),
+        };
+        assert_eq!(c.thinking_budget, Some(4000));
     }
 
     #[test]
