@@ -1,0 +1,217 @@
+/* =============================================================================
+   GENESIS — design-system.css
+
+   Bridge entre o Claude Design System (design.css, fonte de verdade) e o
+   código existente que referencia tokens v3 (--bg-primary, --accent, --tool-*,
+   etc). Estratégia em 3 camadas:
+
+     1. Importa design.css verbatim — tipografia, espaçamento, radius,
+        sombras, transições, breakpoints, tokens de componentes, paleta base
+        (escalas 50-950 do azul, laranja, cream, warm) e os 4 temas
+        ([data-theme="blue-light/dark/orange-light/orange-dark"]).
+
+     2. Aplica AZUL DARK como tema padrão em :root. Valores idênticos ao
+        bloco [data-theme="blue-dark"] do design.css. ZERO invenção.
+        [data-theme="light"] aplica AZUL LIGHT.
+
+     3. Aliases para os nomes v3 que os componentes já usam, mapeados aos
+        tokens semânticos do design system.
+============================================================================= */
+
+@import './design.css';
+
+
+/* =============================================================================
+   :ROOT  =  AZUL DARK
+   Cópia exata do bloco [data-theme="blue-dark"] em design.css.
+============================================================================= */
+
+:root {
+  /* Backgrounds */
+  --bg:           #1a1815;
+  --bg-subtle:    #2a2723;
+  --bg-muted:     #3d3a35;
+
+  /* Superfícies */
+  --surface:      #252320;
+  --surface-low:  #2a2723;
+
+  /* Bordas */
+  --border:       #3d3a35;
+  --border-sub:   #2e2b27;
+  --border-str:   #524e48;
+
+  /* Texto */
+  --text:         #f0ede8;
+  --text-2:       #d1ccc4;
+  --text-3:       #918d84;
+  --text-dis:     #726e67;
+
+  /* Primário (azul dark — mais brilhante p/ contraste sobre fundos escuros) */
+  --primary:      #4A76EA;
+  --primary-h:    #7898EF;
+  --primary-a:    #AABFF6;
+  --primary-bg:   rgba(26, 92, 230, 0.14);
+  --primary-mu:   rgba(26, 92, 230, 0.22);
+  --primary-tx:   #7898EF;
+  --primary-bd:   rgba(26, 92, 230, 0.35);
+
+  /* Input */
+  --input-bg:     #1f1d1a;
+  --input-bd:     #3d3a35;
+  --input-focus:  #4A76EA;
+
+  /* Sidebar */
+  --sb-bg:        #1a1815;
+  --sb-bd:        #2a2723;
+  --sb-hover:     #2a2723;
+  --sb-active:    rgba(26, 92, 230, 0.14);
+  --sb-text:      #b1ada1;
+  --sb-text-a:    #7898EF;
+
+  /* Código */
+  --code-bg:      #1a1815;
+  --code-tx:      #e4e0db;
+
+  /* Sombras */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
+  --shadow-md:    0 4px 8px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
+  --shadow-lg:    0 12px 24px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.30);
+  --shadow-xl:    0 24px 48px rgba(0,0,0,0.55), 0 8px 16px rgba(0,0,0,0.35);
+  --shadow-acc:   0 4px 16px rgba(74,118,234,0.30), 0 1px 4px rgba(74,118,234,0.15);
+
+  /* Focus */
+  --focus-ring:   0 0 0 2px #1a1815, 0 0 0 4px #4A76EA;
+
+  /* Seleção */
+  --sel-bg:       rgba(26, 92, 230, 0.28);
+  --sel-tx:       #AABFF6;
+}
+
+
+/* =============================================================================
+   [data-theme="light"]  =  AZUL LIGHT
+   Cópia exata do bloco [data-theme="blue-light"] em design.css.
+============================================================================= */
+
+[data-theme="light"] {
+  /* Backgrounds */
+  --bg:           #faf9f5;
+  --bg-subtle:    #f4f3ee;
+  --bg-muted:     #ece9e0;
+
+  /* Superfícies */
+  --surface:      #ffffff;
+  --surface-low:  #f4f3ee;
+
+  /* Bordas */
+  --border:       #d1ccc4;
+  --border-sub:   #e4e0db;
+  --border-str:   #b1ada1;
+
+  /* Texto */
+  --text:         #1a1815;
+  --text-2:       #57534d;
+  --text-3:       #918d84;
+  --text-dis:     #b1ada1;
+
+  /* Primário (azul light — base #1A5CE6) */
+  --primary:      #1A5CE6;
+  --primary-h:    #1449B8;
+  --primary-a:    #0F368A;
+  --primary-bg:   #EEF3FD;
+  --primary-mu:   #D4E2FB;
+  --primary-tx:   #0F368A;
+  --primary-bd:   #AABFF6;
+
+  /* Input */
+  --input-bg:     #ffffff;
+  --input-bd:     #d1ccc4;
+  --input-focus:  #1A5CE6;
+
+  /* Sidebar */
+  --sb-bg:        #f4f3ee;
+  --sb-bd:        #e4e0db;
+  --sb-hover:     #ece9e0;
+  --sb-active:    #EEF3FD;
+  --sb-text:      #57534d;
+  --sb-text-a:    #0F368A;
+
+  /* Código */
+  --code-bg:      #f0eeec;
+  --code-tx:      #3d3a35;
+
+  /* Sombras */
+  --shadow-sm:    0 1px 3px rgba(26,24,21,0.08), 0 1px 2px rgba(26,24,21,0.05);
+  --shadow-md:    0 4px 8px rgba(26,24,21,0.08), 0 2px 4px rgba(26,24,21,0.05);
+  --shadow-lg:    0 12px 24px rgba(26,24,21,0.10), 0 4px 8px rgba(26,24,21,0.05);
+  --shadow-xl:    0 24px 48px rgba(26,24,21,0.12), 0 8px 16px rgba(26,24,21,0.06);
+  --shadow-acc:   0 4px 16px rgba(26,92,230,0.25), 0 1px 4px rgba(26,92,230,0.12);
+
+  /* Focus */
+  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #7898EF;
+
+  /* Seleção */
+  --sel-bg:       #D4E2FB;
+  --sel-tx:       #0A245C;
+}
+
+
+/* =============================================================================
+   COMPATIBILITY ALIASES
+   Traduzem os nomes v3 que os componentes referenciam para os tokens
+   semânticos do design system. Cada alias é apenas var() — nunca um valor
+   literal. Isso garante que quando o tema flipa via [data-theme="light"],
+   tudo flipa junto sem duplicação.
+============================================================================= */
+
+:root,
+[data-theme="light"] {
+  /* Backgrounds (v3 → design system) */
+  --bg-primary:    var(--bg);
+  --bg-secondary:  var(--surface);
+  --bg-tertiary:   var(--bg-muted);
+  --bg-hover:      var(--bg-muted);
+
+  /* Texto */
+  --text-primary:   var(--text);
+  --text-secondary: var(--text-2);
+  --text-tertiary:  var(--text-3);
+
+  /* Accent (v3 names) → primário do design system */
+  --accent:          var(--primary);
+  --accent-hover:    var(--primary-h);
+  --accent-soft:     var(--primary-bg);
+  --accent-ring:     var(--primary-bd);
+  --accent-contrast: #ffffff;
+
+  /* Status (v3 short names → status-* do design system) */
+  --success:      var(--status-success-tx);
+  --success-soft: var(--status-success-bg);
+  --error:        var(--status-error-tx);
+  --error-soft:   var(--status-error-bg);
+  --warning:      var(--status-warning-tx);
+  --warning-soft: var(--status-warning-bg);
+  --info:         var(--status-info-tx);
+  --info-soft:    var(--status-info-bg);
+
+  /* Chat — mensagem do usuário usa o primário (per design.md §componentes) */
+  --chat-user-bg:   var(--primary);
+  --chat-user-text: #ffffff;
+
+  /* Code aliases */
+  --code-text: var(--code-tx);
+
+  /* Sidebar alias */
+  --sidebar-bg: var(--sb-bg);
+
+  /* Tool palette para badges de execução. Reaproveita os status colors
+     (verde/azul) e a escala laranja já presente em design.css §01 — zero
+     valores novos. */
+  --tool-bash:             var(--status-success-tx);
+  --tool-bash-soft:        var(--status-success-bg);
+  --tool-claude-code:      var(--orange-700);
+  --tool-claude-code-soft: var(--orange-100);
+  --tool-api:              var(--status-info-tx);
+  --tool-api-soft:         var(--status-info-bg);
+}

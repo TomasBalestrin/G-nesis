@@ -14,15 +14,17 @@ function readInitialTheme(): Theme {
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
-  if (theme === "dark") {
-    root.classList.add("dark");
+  // Tema padrão (sem atributo) já é Azul Dark via :root no design-system.css.
+  // [data-theme="light"] sobrescreve para Azul Light. Removemos o atributo
+  // ao voltar pra dark pra cair no fallback do :root.
+  if (theme === "light") {
+    root.setAttribute("data-theme", "light");
   } else {
-    root.classList.remove("dark");
+    root.removeAttribute("data-theme");
   }
-  // Keep the legacy `data-theme` attribute in sync so any remaining
-  // selector from the old 4-theme file behaves gracefully until it's
-  // fully migrated.
-  root.setAttribute("data-theme", theme === "dark" ? "blue-dark" : "blue-light");
+  // Mantém a classe .dark pra qualquer utilitário do tailwindcss-animate ou
+  // selector legado que ainda assuma o esquema antigo.
+  root.classList.toggle("dark", theme === "dark");
 }
 
 /**
