@@ -47,6 +47,7 @@ function App() {
         setBootstrap({
           openai_api_key: null,
           skills_dir: "",
+          workflows_dir: "",
           db_path: "",
           needs_setup: true,
         });

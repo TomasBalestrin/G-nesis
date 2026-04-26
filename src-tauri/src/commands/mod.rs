@@ -8,3 +8,4 @@ pub mod dependencies;
 pub mod execution;
 pub mod projects;
 pub mod skills;
+pub mod workflows;

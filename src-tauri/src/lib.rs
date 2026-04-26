@@ -10,7 +10,7 @@ pub mod orchestrator;
 
 use commands::{
     app_state, chat, config as config_cmd, conversations, dependencies, execution, projects,
-    skills,
+    skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -77,6 +77,14 @@ pub fn run() {
             // app_state (UI cross-session state)
             app_state::get_app_state,
             app_state::set_app_state,
+            // workflows
+            workflows::list_workflows,
+            workflows::read_workflow,
+            workflows::save_workflow,
+            workflows::delete_workflow,
+            workflows::parse_workflow,
+            workflows::execute_workflow,
+            workflows::abort_workflow,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

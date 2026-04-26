@@ -22,6 +22,9 @@ pub struct Config {
     #[serde(default = "default_skills_dir")]
     pub skills_dir: String,
 
+    #[serde(default = "default_workflows_dir")]
+    pub workflows_dir: String,
+
     #[serde(default = "default_db_path")]
     pub db_path: String,
 
@@ -50,6 +53,7 @@ impl Default for Config {
         Self {
             openai_api_key: None,
             skills_dir: default_skills_dir(),
+            workflows_dir: default_workflows_dir(),
             db_path: default_db_path(),
             anthropic_api_key: None,
             claude_cli_path: None,
@@ -74,6 +78,10 @@ pub fn config_path() -> PathBuf {
 
 fn default_skills_dir() -> String {
     config_dir().join("skills").to_string_lossy().into_owned()
+}
+
+fn default_workflows_dir() -> String {
+    config_dir().join("workflows").to_string_lossy().into_owned()
 }
 
 fn default_db_path() -> String {
@@ -102,6 +110,7 @@ pub fn load_config() -> Result<Config, String> {
         .unwrap_or(true);
 
     ensure_dir(Path::new(&cfg.skills_dir))?;
+    ensure_dir(Path::new(&cfg.workflows_dir))?;
 
     Ok(cfg)
 }
@@ -116,11 +125,17 @@ pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result
     // silently wipe the user's TOML overrides.
     let preserved = read_config_file(&config_path()).ok();
     let preserved_claude_path = preserved.as_ref().and_then(|c| c.claude_cli_path.clone());
+    let preserved_workflows_dir = preserved
+        .as_ref()
+        .map(|c| c.workflows_dir.clone())
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(default_workflows_dir);
     let preserved_anthropic_key = preserved.and_then(|c| c.anthropic_api_key);
 
     let to_write = Config {
         openai_api_key: openai_api_key.filter(|k| !k.is_empty()),
         skills_dir,
+        workflows_dir: preserved_workflows_dir,
         db_path: default_db_path(),
         anthropic_api_key: preserved_anthropic_key,
         claude_cli_path: preserved_claude_path,
