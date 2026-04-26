@@ -24,6 +24,7 @@ pub type DbPool = SqlitePool;
 const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_conversations.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_app_state.sql");
+const MIGRATION_005: &str = include_str!("../../migrations/005_workflows.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -79,6 +80,12 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
     // 004 — extended-thinking columns on chat_messages. ADD COLUMN is
     // idempotent via pragma_table_info guard (SQLite has no IF NOT EXISTS).
     ensure_chat_messages_thinking(pool).await?;
+
+    // 005 — workflows table. The .md file under ~/.genesis/workflows/
+    // remains source-of-truth; the row is an index + cached metadata.
+    pool.execute(MIGRATION_005)
+        .await
+        .map_err(|e| format!("migration 005 failed: {e}"))?;
 
     Ok(())
 }
