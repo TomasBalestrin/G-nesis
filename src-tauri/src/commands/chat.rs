@@ -20,13 +20,12 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::ai::client::{AiClient, ChatOutput, Message, OpenAIClient, ThinkingSink};
 use crate::ai::models::{self, ModelConfig};
-// TODO C1d: ORCHESTRATOR_SYSTEM_PROMPT was deleted in C1a; using
-// compose_system_prompt() as a stop-gap that builds the same prompt at
-// runtime (CORE + REASONING + SKILLS + TOOLS + PROJECTS + RULES + TRIGGERS,
-// without USER_CONTEXT placeholders). C1d will swap to
-// compose_system_prompt_with_user(...) once the user context is wired
-// from app_state + knowledge_summary.
-use crate::ai::prompts::{self};
+// System prompt now composed via prompts::build_system_prompt(...) which
+// pulls user_name + company_name from app_state and the knowledge_summary
+// singleton row. Substitutes the {{...}} placeholders before the prompt
+// reaches GPT, so the model gets a fully resolved system prompt instead
+// of literal template tokens.
+use crate::ai::prompts;
 use crate::config;
 use crate::db::models::{ChatMessage, Conversation};
 use crate::db::queries;
@@ -373,10 +372,25 @@ pub async fn send_chat_message(
                 .collect();
 
             let catalog = load_skill_catalog();
-            // TODO C1d: replace with compose_system_prompt_with_user(...)
-            // once the user-context substitution path lands.
-            let base = prompts::compose_system_prompt();
-            let system_prompt = prompts::with_skill_catalog(&base, &catalog);
+            let user_name = queries::get_app_state(&pool, "user_name")
+                .await
+                .ok()
+                .flatten();
+            let company_name = queries::get_app_state(&pool, "company_name")
+                .await
+                .ok()
+                .flatten();
+            let summary = queries::get_knowledge_summary(&pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|s| s.summary);
+            let system_prompt = prompts::build_system_prompt(
+                user_name.as_deref(),
+                company_name.as_deref(),
+                summary.as_deref(),
+                &catalog,
+            );
 
             let model = active_model(&pool).await;
             let client = ai_client_for_model(model)?;
