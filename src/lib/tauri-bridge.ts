@@ -13,6 +13,7 @@ import { reportFatalError } from "@/hooks/useFatalError";
 import { toast } from "@/hooks/useToast";
 import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
+import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 import type { Execution, ExecutionDetail, Project } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
@@ -334,6 +335,59 @@ export function terminalKill(args: { sessionId: string }): Promise<void> {
   return invoke("terminal_kill", args);
 }
 
+// ── knowledge base ──────────────────────────────────────────────────────────
+
+/** Persist a `.md` file describing the user. Backend triggers a
+ *  best-effort summary regen; failures there don't fail the upload —
+ *  caller can retry via `regenerateKnowledgeSummary`. */
+export function uploadKnowledgeFile(args: {
+  filename: string;
+  content: string;
+}): Promise<KnowledgeFileMeta> {
+  return invoke("upload_knowledge_file", args);
+}
+
+export function listKnowledgeFiles(): Promise<KnowledgeFileMeta[]> {
+  return invoke("list_knowledge_files");
+}
+
+export function deleteKnowledgeFile(args: { id: string }): Promise<void> {
+  return invoke("delete_knowledge_file", args);
+}
+
+/** Returns `null` when no summary has been generated yet (no files, or
+ *  all uploads failed regen). */
+export function getKnowledgeSummary(): Promise<KnowledgeSummary | null> {
+  return invoke("get_knowledge_summary");
+}
+
+/** User-driven retry. Surfaces backend errors (missing key, OpenAI down,
+ *  network) — wrap in `safeInvoke` if the caller wants a toast. */
+export function regenerateKnowledgeSummary(): Promise<KnowledgeSummary | null> {
+  return invoke("regenerate_knowledge_summary");
+}
+
+// ── app_state value-only helpers ────────────────────────────────────────────
+//
+// These are the lighter façade on top of the row-based `getAppState` /
+// `setAppState` (defined above for the existing `appStore`). When you
+// only care about the value column, prefer these — fewer fields to
+// destructure, fewer bytes over the wire. Both APIs persist to the same
+// `app_state` table.
+
+export function getAppStateValue(args: {
+  key: string;
+}): Promise<string | null> {
+  return invoke("get_app_state_value", args);
+}
+
+export function setAppStateValue(args: {
+  key: string;
+  value: string;
+}): Promise<void> {
+  return invoke("set_app_state_value", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
@@ -347,6 +401,7 @@ export type {
   ExecutionStep,
   Project,
 } from "@/types/project";
+export type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 export type { ParsedSkill, SkillMeta } from "@/types/skill";
 export type {
   ParsedWorkflow,
