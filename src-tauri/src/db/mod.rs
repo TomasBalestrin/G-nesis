@@ -25,6 +25,7 @@ const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_conversations.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_app_state.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_workflows.sql");
+const MIGRATION_006: &str = include_str!("../../migrations/006_knowledge.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -86,6 +87,13 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
     pool.execute(MIGRATION_005)
         .await
         .map_err(|e| format!("migration 005 failed: {e}"))?;
+
+    // 006 — knowledge base (knowledge_files + singleton knowledge_summary).
+    // app_state is also re-created via IF NOT EXISTS so the schema is
+    // self-contained on fresh installs.
+    pool.execute(MIGRATION_006)
+        .await
+        .map_err(|e| format!("migration 006 failed: {e}"))?;
 
     Ok(())
 }

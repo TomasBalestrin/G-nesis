@@ -10,8 +10,8 @@ pub mod orchestrator;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
-    app_state, chat, config as config_cmd, conversations, dependencies, execution, projects,
-    skills, workflows,
+    app_state, chat, config as config_cmd, conversations, dependencies, execution, knowledge,
+    projects, skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -79,6 +79,14 @@ pub fn run() {
             // app_state (UI cross-session state)
             app_state::get_app_state,
             app_state::set_app_state,
+            // knowledge base (uploads + summarizer + value-only app_state helpers)
+            knowledge::upload_knowledge_file,
+            knowledge::list_knowledge_files,
+            knowledge::delete_knowledge_file,
+            knowledge::get_knowledge_summary,
+            knowledge::regenerate_knowledge_summary,
+            knowledge::get_app_state_value,
+            knowledge::set_app_state_value,
             // workflows
             workflows::list_workflows,
             workflows::read_workflow,

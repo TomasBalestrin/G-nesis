@@ -80,3 +80,37 @@ pub struct AppState {
     pub value: String,
     pub updated_at: String,
 }
+
+/// Single uploaded markdown file in the knowledge base. Full row is
+/// returned by `get_knowledge_file(id)` and bulk-fetched when the
+/// summarizer regenerates the digest. Other surfaces (sidebar list,
+/// settings) prefer `KnowledgeFileMeta` to keep payloads small.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct KnowledgeFile {
+    pub id: String,
+    pub filename: String,
+    pub content: String,
+    pub uploaded_at: String,
+}
+
+/// Lightweight projection of `KnowledgeFile` for list views — drops the
+/// `content` column (can run into hundreds of KB per row). Maps to
+/// `SELECT id, filename, uploaded_at FROM knowledge_files ...`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct KnowledgeFileMeta {
+    pub id: String,
+    pub filename: String,
+    pub uploaded_at: String,
+}
+
+/// AI-generated digest of all uploaded knowledge files, stored as a
+/// singleton row (id = 'singleton'). UPSERT-ed every time the summarizer
+/// runs. `source_count` records how many files contributed to the
+/// current text — useful for stale-detection in the UI.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct KnowledgeSummary {
+    pub id: String,
+    pub summary: String,
+    pub generated_at: String,
+    pub source_count: i64,
+}
