@@ -383,6 +383,60 @@ pub fn with_skill_catalog(base: &str, skills: &[SkillMeta]) -> String {
     prompt
 }
 
+/// High-level composer used by chat callers that have user context to
+/// substitute. Builds the full system prompt by appending each modular
+/// section in canonical order, conditionally including
+/// [`PROMPT_USER_CONTEXT`] (only when both `user_name` and `company_name`
+/// are present), and finishing with [`with_skill_catalog`] so GPT sees
+/// the live skill list.
+///
+/// Section order matches `system-prompt-genesis.md` § "COMPOSIÇÃO DO
+/// PROMPT":
+///   CORE → USER_CONTEXT? → REASONING → SKILLS → TOOLS → PROJECTS →
+///   RULES → "## Skills disponíveis" (via `with_skill_catalog`)
+///
+/// Placeholder substitution:
+///   - `{{user_name}}`         → `user_name`
+///   - `{{company_name}}`      → `company_name`
+///   - `{{knowledge_summary}}` → `knowledge_summary` or
+///                                "Nenhum documento fornecido ainda."
+///                                when the caller passes `None`
+///
+/// USER_CONTEXT is gated on the pair (`user_name`, `company_name`)
+/// because both are required by the section template — including a
+/// half-resolved block ("Nome: " with empty value) would confuse GPT
+/// more than skipping it. `knowledge_summary` is allowed to be `None`
+/// in isolation since the user might have completed onboarding without
+/// uploading any docs yet.
+pub fn build_system_prompt(
+    user_name: Option<&str>,
+    company_name: Option<&str>,
+    knowledge_summary: Option<&str>,
+    skills: &[SkillMeta],
+) -> String {
+    let mut sections: Vec<String> = Vec::with_capacity(7);
+
+    sections.push(PROMPT_CORE.to_string());
+
+    if let (Some(name), Some(company)) = (user_name, company_name) {
+        let summary = knowledge_summary.unwrap_or("Nenhum documento fornecido ainda.");
+        let resolved = PROMPT_USER_CONTEXT
+            .replace("{{user_name}}", name)
+            .replace("{{company_name}}", company)
+            .replace("{{knowledge_summary}}", summary);
+        sections.push(resolved);
+    }
+
+    sections.push(PROMPT_REASONING.to_string());
+    sections.push(PROMPT_SKILLS.to_string());
+    sections.push(PROMPT_TOOLS.to_string());
+    sections.push(PROMPT_PROJECTS.to_string());
+    sections.push(PROMPT_RULES.to_string());
+
+    let base = sections.join("\n\n");
+    with_skill_catalog(&base, skills)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
