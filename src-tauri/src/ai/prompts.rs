@@ -3,25 +3,24 @@
 //! ## Modular sections
 //!
 //! Each block of the system prompt is exposed as a named constant so
-//! composers (Task C1d, future routers) can inject user context, reorder,
-//! or A/B-test individual sections without rewriting the whole prompt.
-//! Source-of-truth is `system-prompt-genesis.md` at the repo root; each
-//! constant is a verbatim copy of one section.
+//! composers can inject user context, reorder, or A/B-test individual
+//! sections without rewriting the whole prompt. Source-of-truth is
+//! `system-prompt-genesis.md` at the repo root; each constant is a
+//! verbatim copy of one section.
 //!
 //!   - [`PROMPT_CORE`]          — identity, mission, communication rules
 //!   - [`PROMPT_USER_CONTEXT`]  — `{{user_name}}` / `{{company_name}}` /
 //!                                `{{knowledge_summary}}` placeholders
-//!   - [`PROMPT_REASONING`]     — *pending — populated in C1b*
-//!   - [`PROMPT_SKILLS`]        — what skills are, create flow, triggers
-//!   - [`PROMPT_TOOLS`]         — dependency permission protocol
+//!   - [`PROMPT_REASONING`]     — internal 7-step problem-solving protocol
+//!   - [`PROMPT_SKILLS`]        — what skills are, create flow, activation
+//!   - [`PROMPT_TOOLS`]         — bash/claude-code/api channels + deps
 //!   - [`PROMPT_PROJECTS`]      — active project disambiguation
-//!   - [`PROMPT_RULES`]         — response format & invariants
+//!   - [`PROMPT_RULES`]         — pode/não pode/tom
 //!
-//! Master string is built at runtime by [`compose_system_prompt`] (which
-//! skips `PROMPT_USER_CONTEXT` so literal placeholders never reach GPT) —
-//! the previous `ORCHESTRATOR_SYSTEM_PROMPT` literal const was deleted in
-//! C1a. C1d will introduce `compose_system_prompt_with_user(...)` for
-//! callers that have user context to substitute.
+//! Master string is built at runtime by [`compose_system_prompt`], which
+//! skips [`PROMPT_USER_CONTEXT`] so literal placeholders never reach GPT.
+//! Callers that have user context to substitute should use
+//! `compose_system_prompt_with_user(...)` (added in a follow-up task).
 
 /// CORE — identity, mission, and communication rules. Verbatim from
 /// `system-prompt-genesis.md` § "CORE — Missão e Identidade". Includes
@@ -436,66 +435,89 @@ mod tests {
         assert!(!out.contains("triggers:"));
     }
 
-    // TODO C1d: rewrite against compose_system_prompt() (or the future
-    // compose_system_prompt_with_user) — the markers below were tied to
-    // the old monolithic ORCHESTRATOR_SYSTEM_PROMPT (deleted in C1a) and
-    // the doc-new TRIGGERS section uses different wording ("Triggers de
-    // skills" vs "Triggers em linguagem natural").
-    #[cfg(any())]
+    /// Sanity-check that PROMPT_SKILLS still documents the activation
+    /// pathway (slash command + natural-language trigger fallback).
+    /// Replaces the C1-era `base_prompt_documents_natural_language_triggers`
+    /// which referenced the deleted master constant — now the activation
+    /// rules live inside PROMPT_SKILLS § "Ativação de skills" so the
+    /// markers below are the new canonical ones.
     #[test]
-    fn base_prompt_documents_natural_language_triggers() {
-        assert!(ORCHESTRATOR_SYSTEM_PROMPT.contains("Triggers em linguagem natural"));
-        assert!(ORCHESTRATOR_SYSTEM_PROMPT.contains("`/<skill-name>`"));
+    fn skills_section_documents_activation_path() {
+        assert!(
+            PROMPT_SKILLS.contains("### Ativação de skills"),
+            "PROMPT_SKILLS missing the activation heading",
+        );
+        assert!(
+            PROMPT_SKILLS.contains("/nome-da-skill"),
+            "PROMPT_SKILLS missing the slash-command activation marker",
+        );
+        assert!(
+            PROMPT_SKILLS.contains("linguagem natural"),
+            "PROMPT_SKILLS missing the natural-language fallback marker",
+        );
     }
 
-    // TODO C1d: rewrite against compose_system_prompt() — references the
-    // deleted ORCHESTRATOR_SYSTEM_PROMPT and uses old SKILLS/TOOLS markers
-    // ("## CRIAR SKILL", "## /criar-skill — fluxo guiado", "## REGRAS
-    // PARA DEPENDÊNCIAS") that no longer match the doc-new content.
-    #[cfg(any())]
+    /// "No invention" guarantee: every modular constant ships at least one
+    /// distinctive marker that survives the verbatim copy from the doc and
+    /// reaches `compose_system_prompt`'s output. PROMPT_USER_CONTEXT is
+    /// excluded — compose deliberately drops it (placeholders), checked in
+    /// `compose_skips_user_context_and_has_no_blank_gaps`.
     #[test]
-    fn each_modular_section_markers_are_in_master() {
-        // (constant text, [markers that must appear both in the const
-        // body and in the master]).  Markers are unique-enough chunks
-        // that catch text rewrites — picking section headings + a
-        // distinctive line from inside each one.
+    fn each_modular_section_appears_in_compose_output() {
+        let composed = compose_system_prompt();
         let cases: &[(&str, &str, &[&str])] = &[
             (
                 "PROMPT_CORE",
                 PROMPT_CORE,
                 &[
-                    "Você é Genesis, um assistente AI",
-                    "## O que são skills",
-                    "## Seu papel",
+                    "Você é Genesis — o assistente",
+                    "Sua missão é simples",
+                    "Regras de comunicação:",
+                ],
+            ),
+            (
+                "PROMPT_REASONING",
+                PROMPT_REASONING,
+                &[
+                    "## Como você pensa",
+                    "### Passo 1 — Entender a dor",
+                    "### Passo 7 — Entregar",
                 ],
             ),
             (
                 "PROMPT_SKILLS",
                 PROMPT_SKILLS,
                 &[
-                    "## REGRAS PARA SKILLS",
-                    "## CRIAR SKILL",
-                    "## /criar-skill — fluxo guiado (multi-turn)",
-                    "## Triggers em linguagem natural",
+                    "## Skills",
+                    "### Quando criar uma skill",
+                    "### Ativação de skills",
                 ],
             ),
             (
                 "PROMPT_TOOLS",
                 PROMPT_TOOLS,
-                &["## REGRAS PARA DEPENDÊNCIAS"],
+                &[
+                    "## Suas ferramentas",
+                    "### bash (terminal)",
+                    "### claude-code",
+                    "### api (HTTP)",
+                    "### Dependências",
+                ],
             ),
             (
                 "PROMPT_PROJECTS",
                 PROMPT_PROJECTS,
-                &[
-                    "## Contexto",
-                    "Se não houver projeto ativo",
-                ],
+                &["## Projetos", "Nunca assuma o caminho"],
             ),
             (
                 "PROMPT_RULES",
                 PROMPT_RULES,
-                &["## Formato de resposta", "Nunca invente skills"],
+                &[
+                    "## O que você pode e não pode fazer",
+                    "### Pode",
+                    "### Não pode",
+                    "### Tom",
+                ],
             ),
         ];
 
@@ -505,63 +527,64 @@ mod tests {
                 assert!(
                     text.contains(marker),
                     "{label} missing distinctive marker `{marker}` — \
-                     the const body was edited away from the doc.",
+                     the const body drifted from the doc.",
                 );
                 assert!(
-                    ORCHESTRATOR_SYSTEM_PROMPT.contains(marker),
-                    "ORCHESTRATOR_SYSTEM_PROMPT missing `{marker}` from {label} — \
-                     master and const drifted; re-sync them.",
+                    composed.contains(marker),
+                    "compose_system_prompt() missing `{marker}` from {label} — \
+                     either the marker isn't in the const or compose dropped \
+                     the section unexpectedly.",
                 );
             }
         }
     }
 
-    // TODO C1d: PROMPT_USER_CONTEXT was populated in C1a and PROMPT_REASONING
-    // will be populated soon — this guard already triggered as designed.
-    // C1d replaces it with a positive test that verifies the placeholders
-    // ({{user_name}} / {{company_name}} / {{knowledge_summary}}) survive
-    // verbatim in PROMPT_USER_CONTEXT.
-    #[cfg(any())]
+    /// `PROMPT_USER_CONTEXT` ships as a *template* — the three placeholders
+    /// must reach the substitution layer untouched. If a future edit
+    /// renames or escapes them, callers that interpolate user data will
+    /// silently produce literal `{{user_name}}` in the prompt.
     #[test]
-    fn user_context_and_reasoning_are_pending_placeholders() {
-        assert!(
-            PROMPT_USER_CONTEXT.is_empty(),
-            "PROMPT_USER_CONTEXT was filled — update this test and verify \
-             ORCHESTRATOR_SYSTEM_PROMPT now contains the new text.",
-        );
-        assert!(
-            PROMPT_REASONING.is_empty(),
-            "PROMPT_REASONING was filled — update this test and verify \
-             ORCHESTRATOR_SYSTEM_PROMPT now contains the new text.",
-        );
-    }
-
-    // TODO C1d: rewrite with the doc-new markers from
-    // system-prompt-genesis.md (e.g. "Você é Genesis — o assistente",
-    // "## Como você pensa", "## Suas ferramentas", "## Projetos",
-    // "## O que você pode e não pode fazer", "## Triggers de skills").
-    // Old SKILLS/TOOLS markers below no longer appear after the doc-new
-    // content lands fully.
-    #[cfg(any())]
-    #[test]
-    fn compose_skips_empty_sections() {
-        let composed = compose_system_prompt();
-        for marker in [
-            "Você é Genesis",
-            "## REGRAS PARA SKILLS",
-            "## REGRAS PARA DEPENDÊNCIAS",
-            "## Formato de resposta",
-            "## Contexto",
-        ] {
+    fn user_context_preserves_placeholders_verbatim() {
+        for placeholder in ["{{user_name}}", "{{company_name}}", "{{knowledge_summary}}"] {
             assert!(
-                composed.contains(marker),
-                "compose_system_prompt missing `{marker}`",
+                PROMPT_USER_CONTEXT.contains(placeholder),
+                "PROMPT_USER_CONTEXT missing placeholder `{placeholder}`",
             );
         }
+    }
+
+    /// `compose_system_prompt()` deliberately omits PROMPT_USER_CONTEXT so
+    /// the user-substitution placeholders never reach GPT. Also asserts no
+    /// double-blank-line gaps from accidentally including an empty block.
+    ///
+    /// Note: `{{user_name}}` and `{{company_name}}` appear elsewhere on
+    /// purpose — `PROMPT_SKILLS` shows `author: {{user_name}}` in the
+    /// frontmatter example (verbatim from the doc), and `PROMPT_CORE` opens
+    /// with "dos funcionários da {{company_name}}". So we anchor on the
+    /// USER_CONTEXT-exclusive tokens:
+    ///   - `## Quem você está ajudando` (unique heading)
+    ///   - `Nome: {{user_name}}` (only the labelled assignment)
+    ///   - `{{knowledge_summary}}` (only mentioned in USER_CONTEXT)
+    #[test]
+    fn compose_skips_user_context_and_has_no_blank_gaps() {
+        let composed = compose_system_prompt();
+
+        for marker in [
+            "## Quem você está ajudando",
+            "Nome: {{user_name}}",
+            "{{knowledge_summary}}",
+        ] {
+            assert!(
+                !composed.contains(marker),
+                "compose_system_prompt() leaked USER_CONTEXT marker `{marker}` — \
+                 the section is being included by mistake.",
+            );
+        }
+
         assert!(
             !composed.contains("\n\n\n"),
-            "composed prompt has triple-newline gaps — empty sections \
-             not being filtered. Got:\n{composed}",
+            "compose_system_prompt() has triple-newline gaps — empty \
+             sections not being filtered. Got:\n{composed}",
         );
     }
 }
