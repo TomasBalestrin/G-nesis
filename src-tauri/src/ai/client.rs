@@ -24,6 +24,22 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 const TIMEOUT_SECS: u64 = 30;
 const MAX_RETRIES: u32 = 3;
 
+/// System prompt for `OpenAIClient::generate_knowledge_summary`. Lives here
+/// (instead of `ai::prompts`) because the spec keeps the summarizer
+/// self-contained on the client. Tweak with care — the structure (5
+/// numbered topics, terceira pessoa, sem invenção) is what downstream
+/// `build_system_prompt` flows expect.
+const KNOWLEDGE_SUMMARY_SYSTEM_PROMPT: &str = "Você vai receber documentos sobre um funcionário de uma empresa. Esses documentos descrevem quem ele é, o que faz, seus processos de trabalho, ferramentas que usa, dores e rotinas.
+
+Gere um resumo compacto (máximo 500 palavras) que cubra:
+1. Quem é essa pessoa (nome, cargo, área, responsabilidades principais)
+2. Processos que ela executa no dia a dia (listar cada um com tempo estimado se mencionado)
+3. Ferramentas e softwares que usa
+4. Onde perde mais tempo ou tem mais dificuldade (gargalos, tarefas manuais repetitivas)
+5. O que já foi automatizado ou otimizado (se mencionado)
+
+Escreva em terceira pessoa, direto ao ponto, sem introdução nem conclusão. Seja preciso. Não invente informações que não estão nos documentos.";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
@@ -229,6 +245,32 @@ impl OpenAIClient {
         }
         messages.extend_from_slice(history);
 
+        with_retry(Provider::OpenAi, || self.send_once(&messages)).await
+    }
+
+    /// Compress a concatenation of the user's knowledge-base markdown
+    /// files into a single ~500 word digest. Always uses OpenAI on this
+    /// client (Anthropic has its own path); the caller is expected to
+    /// build the input by gluing every `KnowledgeFile.content` together
+    /// (with separators). The returned text is what the system prompt
+    /// builder injects so the assistant has context about the user.
+    ///
+    /// Mirrors `chat_completion` in transport / retry / error handling —
+    /// only the prompt and call shape differ.
+    pub async fn generate_knowledge_summary(
+        &self,
+        all_content: &str,
+    ) -> Result<String, AiError> {
+        let messages = vec![
+            Message {
+                role: "system".to_string(),
+                content: KNOWLEDGE_SUMMARY_SYSTEM_PROMPT.to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: all_content.to_string(),
+            },
+        ];
         with_retry(Provider::OpenAi, || self.send_once(&messages)).await
     }
 
