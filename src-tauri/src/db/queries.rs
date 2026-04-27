@@ -4,7 +4,8 @@
 use sqlx::SqlitePool;
 
 use crate::db::models::{
-    AppState, ChatMessage, Conversation, Execution, ExecutionStep, Project,
+    AppState, ChatMessage, Conversation, Execution, ExecutionStep, KnowledgeFile,
+    KnowledgeFileMeta, KnowledgeSummary, Project,
 };
 
 fn map_err(e: sqlx::Error) -> String {
@@ -394,4 +395,172 @@ pub async fn set_state(
     get_state(pool, key)
         .await?
         .ok_or_else(|| format!("app_state row `{key}` desapareceu após upsert"))
+}
+
+/// Lightweight read of the `value` column for `key`. Differs from `get_state`
+/// in that it returns just the string payload — callers that don't care
+/// about `updated_at` use this to skip a layer of unwrapping.
+pub async fn get_app_state(pool: &SqlitePool, key: &str) -> Result<Option<String>, String> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM app_state WHERE key = ?1")
+            .bind(key)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_err)?;
+    Ok(row.map(|(v,)| v))
+}
+
+/// Companion of `get_app_state`. Same UPSERT semantics as `set_state` but
+/// fire-and-forget — drops the freshly-written row to keep the caller-side
+/// signature simple. Use `set_state` when you need the new `updated_at`.
+pub async fn set_app_state(pool: &SqlitePool, key: &str, value: &str) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+// ── knowledge_files ─────────────────────────────────────────────────────────
+
+/// Insert a freshly uploaded knowledge file. Caller generates the id (UUID
+/// v4) so the command layer can echo it back without an extra round-trip.
+/// `filename` has a UNIQUE constraint at the schema level — re-uploads with
+/// the same name surface as a sqlx error and the caller can decide whether
+/// to delete-then-insert.
+pub async fn insert_knowledge_file(
+    pool: &SqlitePool,
+    id: &str,
+    filename: &str,
+    content: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO knowledge_files (id, filename, content) VALUES (?1, ?2, ?3)",
+    )
+    .bind(id)
+    .bind(filename)
+    .bind(content)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+/// List all knowledge files without their content — sidebar / settings
+/// only need filename + uploaded_at, and the content column can run into
+/// hundreds of KB per row.
+pub async fn list_knowledge_files(
+    pool: &SqlitePool,
+) -> Result<Vec<KnowledgeFileMeta>, String> {
+    sqlx::query_as::<_, KnowledgeFileMeta>(
+        "SELECT id, filename, uploaded_at
+         FROM knowledge_files
+         ORDER BY uploaded_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Fetch a single knowledge file with its full content — used by the
+/// editor / re-upload flow when the user wants to see the original markdown.
+pub async fn get_knowledge_file(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<KnowledgeFile, String> {
+    sqlx::query_as::<_, KnowledgeFile>(
+        "SELECT id, filename, content, uploaded_at
+         FROM knowledge_files
+         WHERE id = ?1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)?
+    .ok_or_else(|| format!("knowledge_file `{id}` não encontrado"))
+}
+
+pub async fn delete_knowledge_file(pool: &SqlitePool, id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM knowledge_files WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
+/// Bulk-fetch all (filename, content) pairs ordered by upload time. Feeds
+/// the summarizer pipeline — it concatenates the contents into a single
+/// prompt for GPT and replaces the singleton summary row.
+pub async fn get_all_knowledge_contents(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, String)>, String> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT filename, content
+         FROM knowledge_files
+         ORDER BY uploaded_at ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+// ── knowledge_summary (singleton) ───────────────────────────────────────────
+
+/// UPSERT the singleton summary row. Always uses id = 'singleton' so
+/// regenerations overwrite cleanly without a delete-first dance.
+/// `generated_at` is server-computed via strftime so the timestamp matches
+/// other tables' precision.
+pub async fn upsert_knowledge_summary(
+    pool: &SqlitePool,
+    summary: &str,
+    source_count: i64,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO knowledge_summary (id, summary, source_count)
+         VALUES ('singleton', ?1, ?2)
+         ON CONFLICT(id) DO UPDATE SET
+             summary = excluded.summary,
+             source_count = excluded.source_count,
+             generated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    )
+    .bind(summary)
+    .bind(source_count)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+/// Read the current summary if any has been generated yet. `None` means
+/// the user has uploaded files but never asked for a summary, OR no files
+/// at all — the caller decides which message to show.
+pub async fn get_knowledge_summary(
+    pool: &SqlitePool,
+) -> Result<Option<KnowledgeSummary>, String> {
+    sqlx::query_as::<_, KnowledgeSummary>(
+        "SELECT id, summary, generated_at, source_count
+         FROM knowledge_summary
+         WHERE id = 'singleton'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Wipe the singleton row. Used when the last knowledge file is deleted —
+/// keeping a stale summary around would confuse the system prompt builder.
+pub async fn delete_knowledge_summary(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::query("DELETE FROM knowledge_summary WHERE id = 'singleton'")
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
+    Ok(())
 }
