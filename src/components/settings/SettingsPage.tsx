@@ -10,10 +10,12 @@ import {
   KeyRound,
   Plus,
   Save,
+  Sparkles,
   Terminal,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { KnowledgeSection } from "@/components/settings/KnowledgeSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useTauriCommand } from "@/hooks/useTauriCommand";
@@ -253,6 +255,14 @@ export function SettingsPage() {
               {saving ? "Salvando..." : "Salvar"}
             </Button>
           </div>
+
+          <Section
+            icon={<Sparkles className="h-4 w-4" />}
+            title="Base de conhecimento"
+            description="Perfil, documentos sobre seu trabalho e o resumo que vai pro system prompt."
+          >
+            <KnowledgeSection />
+          </Section>
 
           <ClaudeCliSection savedPath={savedClaudePath} />
 
