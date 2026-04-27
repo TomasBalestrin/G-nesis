@@ -641,4 +641,79 @@ mod tests {
              sections not being filtered. Got:\n{composed}",
         );
     }
+
+    /// Happy path: all three user-context fields provided. The composer
+    /// must substitute every `{{...}}` placeholder and still emit the
+    /// PROMPT_CORE preamble, so GPT receives a fully-resolved prompt.
+    #[test]
+    fn build_prompt_with_all_fields() {
+        let skills = vec![meta("legendar-videos", "Lista vídeos e gera legendas", &[])];
+        let out = build_system_prompt(
+            Some("João"),
+            Some("Bethel"),
+            Some("Editor de vídeo com 5 anos de experiência"),
+            &skills,
+        );
+
+        assert!(out.contains("João"), "expected user_name in output: {out}");
+        assert!(
+            out.contains("Bethel"),
+            "expected company_name in output: {out}",
+        );
+        assert!(
+            out.contains("Editor de vídeo"),
+            "expected knowledge_summary in output: {out}",
+        );
+        assert!(
+            out.contains("Você é Genesis — o assistente"),
+            "expected PROMPT_CORE preamble in output: {out}",
+        );
+    }
+
+    /// When user_name + company_name are absent, USER_CONTEXT is gated
+    /// off entirely. The placeholders must NOT leak as literal
+    /// `{{user_name}}` / `{{company_name}}` assignments — those are
+    /// USER_CONTEXT-exclusive tokens (see notes on
+    /// `compose_skips_user_context_and_has_no_blank_gaps` for why we
+    /// anchor on the labelled forms instead of bare `{{user_name}}`,
+    /// which appears legitimately in PROMPT_SKILLS and PROMPT_CORE).
+    #[test]
+    fn build_prompt_without_user_skips_context() {
+        let out = build_system_prompt(None, None, None, &[]);
+
+        assert!(
+            !out.contains("Nome: {{user_name}}"),
+            "USER_CONTEXT leaked: labelled `Nome: {{{{user_name}}}}` should be gated off",
+        );
+        assert!(
+            !out.contains("Empresa: {{company_name}}"),
+            "USER_CONTEXT leaked: labelled `Empresa: {{{{company_name}}}}` should be gated off",
+        );
+        assert!(
+            !out.contains("{{knowledge_summary}}"),
+            "USER_CONTEXT leaked: `{{{{knowledge_summary}}}}` only appears in that section",
+        );
+        assert!(
+            out.contains("Você é Genesis — o assistente"),
+            "expected PROMPT_CORE preamble even without user context",
+        );
+    }
+
+    /// User_name + company_name present, but no documents uploaded yet.
+    /// `build_system_prompt` must substitute `{{knowledge_summary}}`
+    /// with the canned fallback so GPT sees a coherent USER_CONTEXT
+    /// block instead of an empty value or literal placeholder.
+    #[test]
+    fn build_prompt_without_summary_uses_fallback() {
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, &[]);
+
+        assert!(
+            out.contains("Nenhum documento fornecido ainda."),
+            "expected fallback summary text in output: {out}",
+        );
+        assert!(
+            !out.contains("{{knowledge_summary}}"),
+            "fallback path should still substitute the placeholder, not leak it",
+        );
+    }
 }
