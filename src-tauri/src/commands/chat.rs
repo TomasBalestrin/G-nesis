@@ -20,7 +20,13 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::ai::client::{AiClient, ChatOutput, Message, OpenAIClient, ThinkingSink};
 use crate::ai::models::{self, ModelConfig};
-use crate::ai::prompts::{self, ORCHESTRATOR_SYSTEM_PROMPT};
+// TODO C1d: ORCHESTRATOR_SYSTEM_PROMPT was deleted in C1a; using
+// compose_system_prompt() as a stop-gap that builds the same prompt at
+// runtime (CORE + REASONING + SKILLS + TOOLS + PROJECTS + RULES + TRIGGERS,
+// without USER_CONTEXT placeholders). C1d will swap to
+// compose_system_prompt_with_user(...) once the user context is wired
+// from app_state + knowledge_summary.
+use crate::ai::prompts::{self};
 use crate::config;
 use crate::db::models::{ChatMessage, Conversation};
 use crate::db::queries;
@@ -367,7 +373,10 @@ pub async fn send_chat_message(
                 .collect();
 
             let catalog = load_skill_catalog();
-            let system_prompt = prompts::with_skill_catalog(ORCHESTRATOR_SYSTEM_PROMPT, &catalog);
+            // TODO C1d: replace with compose_system_prompt_with_user(...)
+            // once the user-context substitution path lands.
+            let base = prompts::compose_system_prompt();
+            let system_prompt = prompts::with_skill_catalog(&base, &catalog);
 
             let model = active_model(&pool).await;
             let client = ai_client_for_model(model)?;
