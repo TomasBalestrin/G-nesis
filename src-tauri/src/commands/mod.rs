@@ -6,6 +6,7 @@ pub mod config;
 pub mod conversations;
 pub mod dependencies;
 pub mod execution;
+pub mod knowledge;
 pub mod projects;
 pub mod skills;
 pub mod workflows;
