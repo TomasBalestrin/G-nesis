@@ -558,20 +558,42 @@ async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message
     let _ = queries::rename_conversation(pool, conversation_id, &title).await;
 }
 
+/// Maximum chat turns sent to the model on each completion. Older
+/// messages stay persisted in SQLite (the UI list_messages_by_conversation
+/// command still returns the full thread for hydration), but the GPT
+/// context window only sees the last N to keep token cost bounded as
+/// conversations grow.
+const HISTORY_WINDOW: usize = 20;
+
+/// Trim a chronologically-ordered history vec to its last `max` items.
+/// Pure function pulled out so the windowing logic can be unit-tested
+/// without a SQLite fixture. Preserves ordering — `history_for` returns
+/// oldest-first, the GPT messages array expects oldest-first.
+fn cap_history<T>(mut history: Vec<T>, max: usize) -> Vec<T> {
+    if history.len() > max {
+        history.drain(..history.len() - max);
+    }
+    history
+}
+
 /// Return the prior history for GPT context. Precedence: conversation_id
 /// (new multi-thread path) over execution_id (legacy scope). Messages
 /// inserted just before the call are included since list_messages_by_*
 /// reads the fresh row.
+///
+/// Caps the result at [`HISTORY_WINDOW`] entries so the GPT call doesn't
+/// scale linearly with conversation length.
 async fn history_for(
     pool: &SqlitePool,
     execution_id: Option<&str>,
     conversation_id: Option<&str>,
 ) -> Result<Vec<ChatMessage>, String> {
-    if let Some(id) = conversation_id {
-        queries::list_messages_by_conversation(pool, id).await
+    let all = if let Some(id) = conversation_id {
+        queries::list_messages_by_conversation(pool, id).await?
     } else {
-        queries::list_messages(pool, execution_id).await
-    }
+        queries::list_messages(pool, execution_id).await?
+    };
+    Ok(cap_history(all, HISTORY_WINDOW))
 }
 
 /// Low-level passthrough. Does not persist to chat history.
@@ -609,6 +631,36 @@ mod tests {
             extract_slash_command("  /criar-sistema com argumentos"),
             Some("criar-sistema"),
         );
+    }
+
+    #[test]
+    fn cap_history_keeps_last_n_when_over_window() {
+        // Oldest-first input; cap_history must keep the tail (most recent)
+        // and preserve order so the GPT messages array stays chronological.
+        let trimmed = cap_history(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 3);
+        assert_eq!(trimmed, vec![8, 9, 10]);
+    }
+
+    #[test]
+    fn cap_history_returns_input_unchanged_when_under_window() {
+        let small = vec!["a", "b"];
+        assert_eq!(cap_history(small.clone(), 5), small);
+    }
+
+    #[test]
+    fn cap_history_handles_exact_boundary_and_zero() {
+        // Boundary: len == max → no drain.
+        assert_eq!(cap_history(vec![1, 2, 3], 3), vec![1, 2, 3]);
+        // Edge: max=0 drops everything (defensive — current callers use
+        // HISTORY_WINDOW=20 so this branch isn't hit in prod).
+        assert!(cap_history(vec![1, 2, 3], 0).is_empty());
+    }
+
+    #[test]
+    fn history_window_matches_product_spec() {
+        // Spec: GPT sees the last 20 turns. If this constant changes,
+        // re-confirm the tradeoff (cost vs. context recall).
+        assert_eq!(HISTORY_WINDOW, 20);
     }
 
     #[test]
