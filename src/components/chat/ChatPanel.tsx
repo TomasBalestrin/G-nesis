@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useParams } from "react-router-dom";
 
@@ -16,6 +16,7 @@ import {
 import { useChatStore } from "@/stores/chatStore";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import type { ChatMessage } from "@/types/chat";
+import type { ChatMessageInsertedEvent } from "@/types/events";
 
 import { CommandInput } from "./CommandInput";
 import { ExecutionControlBar } from "./ExecutionControlBar";
@@ -63,12 +64,19 @@ export function ChatPanel() {
 
   // Append messages persisted by `insert_execution_status_message` /
   // `analyze_step_failure` (inline ⏳/✅/❌ entries + GPT failure
-  // analyses) without a full re-fetch. Filters by conversation_id so
-  // messages routed to other threads don't leak in. Dedupes by id —
-  // the optimistic insert in handleSend may have already added this
-  // row. Defensive try-catch + payload validation: a malformed event
-  // shouldn't kill the React tree.
-  useTauriEvent("chat:message_inserted", (event) => {
+  // analyses) without a full re-fetch. Same stability pattern as
+  // useExecution: ref body + useCallback wrapper with empty deps.
+  // Without this, the inline closure was a fresh function reference
+  // every render, which caused useTauriEvent's `[callback]` effect to
+  // re-run on every parent re-render — bare-minimum risk of cascading
+  // updates if anything in render path also touched setMessages.
+  // Filters by conversation_id (latest from closure via ref) so events
+  // routed to other threads don't leak. Dedupes by id — the
+  // optimistic insert in handleSend may have already added this row.
+  const onMessageInserted = useRef<(e: ChatMessageInsertedEvent) => void>(
+    () => {},
+  );
+  onMessageInserted.current = (event) => {
     try {
       if (!event?.message?.id || !event.message.role) {
         console.warn("[ChatPanel] message_inserted payload inválido:", event);
@@ -83,7 +91,12 @@ export function ChatPanel() {
     } catch (err) {
       console.error("[ChatPanel] message_inserted crash:", err);
     }
-  });
+  };
+  const messageInsertedHandler = useCallback(
+    (e: ChatMessageInsertedEvent) => onMessageInserted.current(e),
+    [],
+  );
+  useTauriEvent("chat:message_inserted", messageInsertedHandler);
 
   // Read user_name once for the empty-state greeting. Failures are
   // silent — the UI degrades to a generic "Olá!" if the value is missing

@@ -1,3 +1,5 @@
+import { useCallback, useRef } from "react";
+
 import {
   useTauriEvent,
 } from "./useTauriEvent";
@@ -22,6 +24,19 @@ import type {
  * `step_failed` also chains a GPT analysis call so the user sees the
  * placeholder ❌ immediately followed by a diagnosis bubble.
  *
+ * Stability contract — required to avoid React Error #185
+ * (Maximum update depth exceeded):
+ *   - Every handler body is stored in a `useRef` and reassigned in
+ *     render. Reassigning a ref does NOT trigger a render or an
+ *     effect — it just swaps the function the ref points to.
+ *   - The wrappers passed to `useTauriEvent` are wrapped in
+ *     `useCallback` with empty deps so they keep the SAME identity
+ *     across the lifetime of the parent component. This pins the
+ *     `callbackRef` update inside `useTauriEvent` to a single
+ *     mount-time effect run instead of one per parent re-render.
+ *   - Each handler validates payload + try/catches its body so a
+ *     malformed Tauri event can't bubble into the React tree.
+ *
  * The backend emits events keyed by the skill's logical `step_id`
  * ("step_1"), not the DB row UUID — so we upsert by that. On the first
  * `step_started` of a new execution_id we also seed `activeExecution`
@@ -29,16 +44,20 @@ import type {
  * the live spinner in ExecutionStatusMessage have something to read
  * even though the executor doesn't emit a dedicated "started" event.
  *
- * Defensive contract: every handler validates the event payload and
- * wraps its body in try-catch. A malformed event (missing
- * execution_id / step_id, type mismatch, etc.) gets logged and dropped
- * instead of bubbling up to React render — that path was the historical
- * source of the "skill execution = black screen" crash.
- *
  * No return value — this is a subscription side-effect hook.
  */
 export function useExecution(): void {
-  useTauriEvent("execution:step_started", (event: StepStartedEvent) => {
+  // Holds the live handler bodies. Reassigned every render below so
+  // closures capture the current props/state, but the ref ITSELF stays
+  // stable for the listener wrappers.
+  const onStepStarted = useRef<(e: StepStartedEvent) => void>(() => {});
+  const onStepCompleted = useRef<(e: StepCompletedEvent) => void>(() => {});
+  const onStepFailed = useRef<(e: StepFailedEvent) => void>(() => {});
+  const onCompleted = useRef<(e: ExecutionCompletedEvent) => void>(() => {});
+  const onLog = useRef<(e: LogEvent) => void>(() => {});
+
+  // ── handler bodies ────────────────────────────────────────────────────────
+  onStepStarted.current = (event) => {
     try {
       if (!event?.execution_id || !event?.step_id) {
         console.warn("[useExecution] step_started com dados incompletos:", event);
@@ -96,9 +115,6 @@ export function useExecution(): void {
                   execution_id: event.execution_id,
                   step_id: event.step_id,
                   step_order: baseSteps.length,
-                  // event.tool can be the executor's "unknown" fallback —
-                  // we still accept it; the type system narrows tool to a
-                  // specific union but the renderer tolerates anything.
                   tool: event.tool,
                   status: "running" as StepStatus,
                   input: "",
@@ -126,9 +142,9 @@ export function useExecution(): void {
     } catch (err) {
       console.error("[useExecution] step_started crash:", err);
     }
-  });
+  };
 
-  useTauriEvent("execution:step_completed", (event: StepCompletedEvent) => {
+  onStepCompleted.current = (event) => {
     try {
       if (!event?.execution_id || !event?.step_id) {
         console.warn("[useExecution] step_completed com dados incompletos:", event);
@@ -169,9 +185,9 @@ export function useExecution(): void {
     } catch (err) {
       console.error("[useExecution] step_completed crash:", err);
     }
-  });
+  };
 
-  useTauriEvent("execution:step_failed", (event: StepFailedEvent) => {
+  onStepFailed.current = (event) => {
     try {
       if (!event?.execution_id || !event?.step_id) {
         console.warn("[useExecution] step_failed com dados incompletos:", event);
@@ -234,9 +250,9 @@ export function useExecution(): void {
     } catch (err) {
       console.error("[useExecution] step_failed crash:", err);
     }
-  });
+  };
 
-  useTauriEvent("execution:completed", (event: ExecutionCompletedEvent) => {
+  onCompleted.current = (event) => {
     try {
       if (!event?.execution_id) {
         console.warn("[useExecution] completed com dados incompletos:", event);
@@ -286,16 +302,43 @@ export function useExecution(): void {
     } catch (err) {
       console.error("[useExecution] completed crash:", err);
     }
-  });
+  };
 
-  useTauriEvent("execution:log", (event: LogEvent) => {
+  onLog.current = (event) => {
     try {
       if (!event?.step_id || event.line == null) return;
       useExecutionStore.getState().addLog(event.step_id, event.line);
     } catch (err) {
       console.error("[useExecution] log crash:", err);
     }
-  });
+  };
+
+  // ── stable wrappers ───────────────────────────────────────────────────────
+  // Empty deps: same function identity for the lifetime of the parent.
+  // Each one delegates to its ref, so the live closure always wins.
+  const startedHandler = useCallback(
+    (e: StepStartedEvent) => onStepStarted.current(e),
+    [],
+  );
+  const completedHandler = useCallback(
+    (e: StepCompletedEvent) => onStepCompleted.current(e),
+    [],
+  );
+  const failedHandler = useCallback(
+    (e: StepFailedEvent) => onStepFailed.current(e),
+    [],
+  );
+  const completedExecHandler = useCallback(
+    (e: ExecutionCompletedEvent) => onCompleted.current(e),
+    [],
+  );
+  const logHandler = useCallback((e: LogEvent) => onLog.current(e), []);
+
+  useTauriEvent("execution:step_started", startedHandler);
+  useTauriEvent("execution:step_completed", completedHandler);
+  useTauriEvent("execution:step_failed", failedHandler);
+  useTauriEvent("execution:completed", completedExecHandler);
+  useTauriEvent("execution:log", logHandler);
 }
 
 function computeDuration(startedAt: string | null): number | null {

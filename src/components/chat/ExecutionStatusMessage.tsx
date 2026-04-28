@@ -11,6 +11,12 @@ interface ExecutionStatusMessageProps {
   message: ChatMessage;
 }
 
+/** Module-scope sentinel for "no logs" — reused as the stable
+ *  reference returned by the executionStore logs selector when the
+ *  step has no entries. See the selector site below for the full
+ *  rationale. */
+const EMPTY_LOGS: string[] = [];
+
 type StatusKind = "running" | "success" | "failed";
 
 interface ParsedStatus {
@@ -45,8 +51,15 @@ export function ExecutionStatusMessage({
 
   const activeExecution = useExecutionStore((s) => s.activeExecution);
   const stepKey = useMemo(() => extractStepKey(status.body), [status.body]);
+  // Selector returns the SAME EMPTY_LOGS array reference when the key
+  // is missing, so Zustand's Object.is equality treats it as
+  // unchanged — without this, every store update on every other key
+  // (e.g. addLog for step_2) would flip this selector's value and
+  // re-render every ExecutionStatusMessage with no log entries. The
+  // cascade across many status bubbles is what amplified the React
+  // Error #185 path during skill execution.
   const logs = useExecutionStore((s) =>
-    stepKey ? (s.logs.get(stepKey) ?? []) : [],
+    stepKey ? (s.logs.get(stepKey) ?? EMPTY_LOGS) : EMPTY_LOGS,
   );
 
   // The ⏳ should animate while the execution that produced it is still
