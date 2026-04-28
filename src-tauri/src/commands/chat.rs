@@ -305,6 +305,86 @@ fn try_slash_reply(skill_name: &str) -> String {
     }
 }
 
+// ── system-state snapshot ───────────────────────────────────────────────────
+
+/// Per-step error/output snippet cap when surfacing failed steps in the
+/// system-state block. Big stderr blobs would bloat the prompt and the
+/// model only needs the first lines to diagnose; keep it tight.
+const SYSTEM_STATE_SNIPPET_CHARS: usize = 200;
+
+/// Build the runtime payload that fills `{{INJECT:SYSTEM_STATE}}` in
+/// `PROMPT_SYSTEM_STATE`. Reads:
+///   - active project   (most recent execution → fallback last created)
+///   - skills catalog   (already passed in, no duplicate fs walk)
+///   - running execution (status='running', plus any failed steps)
+///   - last finished execution (any status, finished_at NOT NULL)
+///
+/// Db errors degrade to "nenhum"/"nenhuma" lines instead of bubbling —
+/// the chat turn must succeed even if the snapshot is partial. The model
+/// will still get PROMPT_CORE / RULES / etc. and can answer generic
+/// questions.
+async fn collect_system_state(pool: &SqlitePool, skills: &[SkillMeta]) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(6);
+
+    let active_project = queries::get_active_project(pool).await.ok().flatten();
+    lines.push(match active_project {
+        Some(p) => format!("Projeto ativo: {} ({})", p.name, p.repo_path),
+        None => "Projeto ativo: nenhum".to_string(),
+    });
+
+    if skills.is_empty() {
+        lines.push("Skills disponíveis: nenhuma".to_string());
+    } else {
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        lines.push(format!("Skills disponíveis: {}", names.join(", ")));
+    }
+
+    let running = queries::get_running_execution(pool).await.ok().flatten();
+    match running {
+        Some(exec) => {
+            lines.push(format!(
+                "Execução ativa: {} (step {}/{})",
+                exec.skill_name, exec.completed_steps, exec.total_steps,
+            ));
+            let failed = queries::list_steps_for_execution(pool, &exec.id)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s.status == "failed")
+                .collect::<Vec<_>>();
+            if !failed.is_empty() {
+                lines.push("  Falhas:".to_string());
+                for step in failed {
+                    let detail = step
+                        .error
+                        .as_deref()
+                        .or(step.output.as_deref())
+                        .unwrap_or("(sem output)")
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(SYSTEM_STATE_SNIPPET_CHARS)
+                        .collect::<String>();
+                    lines.push(format!("    - {}: {}", step.step_id, detail));
+                }
+            }
+        }
+        None => lines.push("Execução ativa: nenhuma".to_string()),
+    }
+
+    let last = queries::get_last_finished_execution(pool).await.ok().flatten();
+    lines.push(match last {
+        Some(exec) => {
+            let when = exec.finished_at.as_deref().unwrap_or("?");
+            format!("Última execução: {} — {} ({})", exec.skill_name, exec.status, when)
+        }
+        None => "Última execução: nenhuma".to_string(),
+    });
+
+    lines.join("\n")
+}
+
 // ── commands ────────────────────────────────────────────────────────────────
 
 const TITLE_GEN_MAX_CHARS: usize = 30;
@@ -385,14 +465,12 @@ pub async fn send_chat_message(
                 .ok()
                 .flatten()
                 .map(|s| s.summary);
-            // system_state stays None until D2 wires the runtime collector
-            // (active project + skills + execution snapshot). Until then
-            // the SYSTEM_STATE section is gated off in build_system_prompt.
+            let system_state = collect_system_state(&pool, &catalog).await;
             let system_prompt = prompts::build_system_prompt(
                 user_name.as_deref(),
                 company_name.as_deref(),
                 summary.as_deref(),
-                None,
+                Some(&system_state),
                 &catalog,
             );
 

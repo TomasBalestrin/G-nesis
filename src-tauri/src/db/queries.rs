@@ -59,6 +59,42 @@ pub async fn delete_project(pool: &SqlitePool, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolves the "active project" for the system-state snapshot injected
+/// into the chat prompt: the project tied to the most recent execution.
+/// When no execution exists yet (fresh install), falls back to the most
+/// recently created project. Returns `None` only when the user has no
+/// projects at all.
+///
+/// Two queries instead of one `LEFT JOIN ... GROUP BY` so the fallback
+/// path is explicit and easy to test. This runs once per chat turn, not
+/// in a hot loop, so the extra round-trip is fine.
+pub async fn get_active_project(pool: &SqlitePool) -> Result<Option<Project>, String> {
+    let by_execution = sqlx::query_as::<_, Project>(
+        "SELECT p.id, p.name, p.repo_path, p.created_at, p.updated_at
+         FROM projects p
+         JOIN executions e ON e.project_id = p.id
+         ORDER BY e.created_at DESC
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)?;
+
+    if by_execution.is_some() {
+        return Ok(by_execution);
+    }
+
+    sqlx::query_as::<_, Project>(
+        "SELECT id, name, repo_path, created_at, updated_at
+         FROM projects
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
 // ── executions ──────────────────────────────────────────────────────────────
 
 /// Count executions for `skill_name` that are still in flight (pending,
@@ -106,6 +142,45 @@ pub async fn get_execution(
          FROM executions WHERE id = ?1",
     )
     .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// In-flight execution for the system-state snapshot. Returns the most
+/// recently started execution whose status is still `running` (a single
+/// active execution at a time is the expected state, but we order by
+/// started_at DESC defensively in case of concurrent runs).
+pub async fn get_running_execution(pool: &SqlitePool) -> Result<Option<Execution>, String> {
+    sqlx::query_as::<_, Execution>(
+        "SELECT id, project_id, skill_name, status, started_at, finished_at,
+                total_steps, completed_steps, created_at
+         FROM executions
+         WHERE status = 'running'
+         ORDER BY started_at DESC
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Most recent execution that already finished (success/failure/aborted).
+/// `finished_at IS NOT NULL` is the canonical "this run is done" signal —
+/// status alone isn't enough since the schema permits intermediate
+/// values. Used by the system-state snapshot so the model can reference
+/// "the last thing we ran" without asking the user.
+pub async fn get_last_finished_execution(
+    pool: &SqlitePool,
+) -> Result<Option<Execution>, String> {
+    sqlx::query_as::<_, Execution>(
+        "SELECT id, project_id, skill_name, status, started_at, finished_at,
+                total_steps, completed_steps, created_at
+         FROM executions
+         WHERE finished_at IS NOT NULL
+         ORDER BY finished_at DESC
+         LIMIT 1",
+    )
     .fetch_optional(pool)
     .await
     .map_err(map_err)
