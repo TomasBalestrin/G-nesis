@@ -146,14 +146,14 @@ function iconFor(kind: StatusKind, isLive: boolean) {
   };
 }
 
-/** Recover the orchestrator's `step_id` (e.g. `"step_1"`) from a body
- *  like `"Step 1 — Executando..."`. Tries both the bare capture and
- *  the `step_<capture>` form so logs lookup works regardless of how
- *  the backend formats the label. Returns null when no step token
- *  is present (e.g. "Skill X concluída" rolled-up messages). */
+/** Recover the orchestrator's `step_id` (e.g. `"step_1"`,
+ *  `"extract_audio"`) from a body like `"Step step_1 — Executando..."`.
+ *  useExecution writes the step_id verbatim after the "Step " word, so
+ *  the logs store key matches the capture directly — no prefix
+ *  manipulation needed (which broke for non-numeric ids in earlier
+ *  drafts). Returns null when no step token is present (e.g. the
+ *  skill-level "Skill X concluída" rolled-up messages). */
 function extractStepKey(body: string): string | null {
   const match = body.match(/Step\s+([\w-]+)/i);
-  if (!match) return null;
-  const captured = match[1];
-  return captured.startsWith("step_") ? captured : `step_${captured}`;
+  return match ? match[1] : null;
 }

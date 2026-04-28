@@ -36,6 +36,10 @@ export interface Execution {
   total_steps: number;
   completed_steps: number;
   created_at: string;
+  /** Chat thread that triggered this run (added in F1). NULL for
+   *  executions started outside the chat — workflow-driven runs and
+   *  any future programmatic triggers. */
+  conversation_id: string | null;
 }
 
 export interface ExecutionStep {

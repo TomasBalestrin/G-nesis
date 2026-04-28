@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useExecution } from "@/hooks/useExecution";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useThinking } from "@/hooks/useThinking";
 import { useToast } from "@/hooks/useToast";
 import {
@@ -49,6 +50,21 @@ export function ChatPanel() {
   // Bridge backend `chat:thinking_*` events into the chat store. Filters by
   // route conversationId so concurrent threads don't cross-contaminate.
   useThinking(conversationId || null);
+
+  // Append messages persisted by `insert_execution_status_message` /
+  // `analyze_step_failure` (inline ⏳/✅/❌ entries + GPT failure
+  // analyses) without a full re-fetch. Filters by conversation_id so
+  // messages routed to other threads don't leak in. Dedupes by id —
+  // the optimistic insert in handleSend may have already added this
+  // row.
+  useTauriEvent("chat:message_inserted", (event) => {
+    if (event.message.conversation_id !== conversationId) return;
+    setMessages((prev) =>
+      prev.some((m) => m.id === event.message.id)
+        ? prev
+        : [...prev, event.message],
+    );
+  });
 
   // Hydrate from SQLite whenever the route conversation changes.
   useEffect(() => {
