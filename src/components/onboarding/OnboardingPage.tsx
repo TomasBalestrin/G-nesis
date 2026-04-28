@@ -3,8 +3,12 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
+  Eye,
+  EyeOff,
   FileText,
+  KeyRound,
   Loader2,
+  MessageSquare,
   Sparkles,
   Upload,
   User,
@@ -17,44 +21,55 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
 import {
+  callOpenAI,
   deleteKnowledgeFile,
   regenerateKnowledgeSummary,
+  saveConfig,
   setAppStateValue,
   uploadKnowledgeFile,
 } from "@/lib/tauri-bridge";
+import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 
 interface OnboardingPageProps {
-  /**
-   * Persisted by App.tsx after the call resolves. App also sets the
-   * `onboarding_complete` flag in app_state, so this component shouldn't
-   * write that key directly — just signal completion.
-   */
+  /** Bootstrap config read once by App. The wizard pre-fills the API
+   *  key field with whatever's already on disk so users with the key
+   *  in env or a stale config.toml don't retype, and uses
+   *  `skills_dir` as the value to pass to `saveConfig` when
+   *  persisting the verified key in step 2. */
+  initialConfig: Config;
+  /** Called only after the final step. Persists the
+   *  `onboarding_complete` flag in app_state and flips the App's
+   *  render gate. */
   onComplete: () => Promise<void> | void;
 }
 
-type Step = 1 | 2 | 3;
-const TOTAL_STEPS = 3;
+type Step = 1 | 2 | 3 | 4 | 5;
+const TOTAL_STEPS = 5;
 
 const USER_NAME_KEY = "user_name";
 const COMPANY_NAME_KEY = "company_name";
 
 /**
- * 3-step first-run wizard:
- *   1. Quem é você?      — name + company → app_state
- *   2. Documentos        — drag/drop .md, immediate upload to backend
- *   3. Resumo            — regenerateKnowledgeSummary, review, finish
+ * Unified 5-step first-run wizard:
+ *   1. Welcome      — quick logo + intent
+ *   2. API key      — paste + Test (saves verified key to config.toml)
+ *   3. Perfil       — name + company → app_state
+ *   4. Documents    — upload .md files (skippable)
+ *   5. Resumo       — generated digest review + finish
  *
- * Step 2 → 3 is conditional: clicking "Pular" jumps straight to onComplete
- * (no documents = no summary to review). Step 2 → "Continuar" enters step 3
- * which gracefully handles an empty corpus (`summary === null`).
+ * Replaces the old SetupWizard + OnboardingPage pair: users used to
+ * see "3 done → 3 more" which felt broken. Now it's a single flow
+ * with a 5-pill progress bar.
  *
- * Layout: fullscreen overlay (`fixed inset-0`), max-w-xl card, fade-in.
- * All colors via design system tokens — switches automatically with the
- * `data-theme` attribute set by `useTheme`.
+ * Skipping step 4 jumps to step 5 — `SummaryStep` reads
+ * `hasFiles={files.length > 0}` and gracefully degrades to a "Pronto!"
+ * message when the corpus is empty.
  */
-export function OnboardingPage({ onComplete }: OnboardingPageProps) {
+export function OnboardingPage({ initialConfig, onComplete }: OnboardingPageProps) {
   const [step, setStep] = useState<Step>(1);
+  const [apiKey, setApiKey] = useState(initialConfig.openai_api_key ?? "");
+  const [apiKeyVerified, setApiKeyVerified] = useState(false);
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");
   const [files, setFiles] = useState<KnowledgeFileMeta[]>([]);
@@ -66,25 +81,33 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
         <StepIndicator current={step} total={TOTAL_STEPS} />
         <div className="px-6 pb-8 pt-4 sm:px-10">
           {step === 1 ? (
+            <WelcomeStep onNext={() => setStep(2)} />
+          ) : step === 2 ? (
+            <ApiKeyStep
+              apiKey={apiKey}
+              onApiKeyChange={setApiKey}
+              verified={apiKeyVerified}
+              onVerifiedChange={setApiKeyVerified}
+              skillsDir={initialConfig.skills_dir}
+              onNext={() => setStep(3)}
+              onBack={() => setStep(1)}
+            />
+          ) : step === 3 ? (
             <PersonStep
               name={name}
               company={company}
               onNameChange={setName}
               onCompanyChange={setCompany}
-              onNext={() => setStep(2)}
+              onNext={() => setStep(4)}
+              onBack={() => setStep(2)}
             />
-          ) : step === 2 ? (
+          ) : step === 4 ? (
             <DocumentsStep
               files={files}
               onFilesChange={setFiles}
-              onContinue={() => setStep(3)}
-              onSkip={async () => {
-                if (finishing) return;
-                setFinishing(true);
-                await onComplete();
-                setFinishing(false);
-              }}
-              skipping={finishing}
+              onContinue={() => setStep(5)}
+              onSkip={() => setStep(5)}
+              onBack={() => setStep(3)}
             />
           ) : (
             <SummaryStep
@@ -96,7 +119,7 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 await onComplete();
                 setFinishing(false);
               }}
-              onBack={() => setStep(2)}
+              onBack={() => setStep(4)}
             />
           )}
         </div>
@@ -130,7 +153,172 @@ function StepIndicator({ current, total }: { current: Step; total: number }) {
   );
 }
 
-// ── step 1: person ──────────────────────────────────────────────────────────
+// ── step 1: welcome ─────────────────────────────────────────────────────────
+
+function WelcomeStep({ onNext }: { onNext: () => void }) {
+  return (
+    <div className="space-y-6 text-center">
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent-soft)]">
+        <Sparkles className="h-8 w-8 text-[var(--accent)]" />
+      </div>
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">
+          Bem-vindo ao Genesis
+        </h1>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-[var(--text-secondary)]">
+          Vamos configurar em alguns passos rápidos.
+        </p>
+      </div>
+      <Button onClick={onNext} size="lg" className="w-full">
+        Começar
+        <ArrowRight className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+// ── step 2: api key ─────────────────────────────────────────────────────────
+
+interface ApiKeyStepProps {
+  apiKey: string;
+  onApiKeyChange: (v: string) => void;
+  verified: boolean;
+  onVerifiedChange: (v: boolean) => void;
+  skillsDir: string;
+  onNext: () => void;
+  onBack: () => void;
+}
+
+function ApiKeyStep({
+  apiKey,
+  onApiKeyChange,
+  verified,
+  onVerifiedChange,
+  skillsDir,
+  onNext,
+  onBack,
+}: ApiKeyStepProps) {
+  const [show, setShow] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const { toast } = useToast();
+
+  async function handleTest() {
+    const key = apiKey.trim();
+    if (!key) {
+      toast({
+        title: "Cole a API key antes de testar",
+        variant: "destructive",
+      });
+      return;
+    }
+    setTesting(true);
+    try {
+      // Persist first — callOpenAI reads the key from the config file.
+      await saveConfig({ openaiApiKey: key, skillsDir });
+      const reply = await callOpenAI({
+        prompt: "Responda apenas com a palavra OK.",
+      });
+      if (reply.trim().length > 0) {
+        onVerifiedChange(true);
+        toast({
+          title: "API key válida",
+          description: reply.trim().slice(0, 120),
+        });
+      } else {
+        toast({ title: "Resposta vazia da OpenAI", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({
+        title: "Falha ao testar API key",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <header className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
+          <KeyRound className="h-5 w-5 text-[var(--accent)]" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">OpenAI API Key</h2>
+          <p className="text-xs text-[var(--text-secondary)]">
+            Usada pelo orquestrador GPT-4o. Fica em ~/.genesis/config.toml.
+          </p>
+        </div>
+      </header>
+
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Input
+              type={show ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => {
+                onApiKeyChange(e.target.value);
+                onVerifiedChange(false);
+              }}
+              placeholder="sk-..."
+              className="pr-10 font-mono"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => setShow((s) => !s)}
+              aria-label={show ? "Ocultar" : "Mostrar"}
+              className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+            >
+              {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleTest}
+            disabled={!apiKey.trim() || testing}
+          >
+            {testing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : verified ? (
+              <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {testing ? "Testando..." : verified ? "Válida" : "Testar"}
+          </Button>
+        </div>
+        {verified ? (
+          <p className="flex items-center gap-1.5 text-xs text-[var(--success)]">
+            <CheckCircle2 className="h-3 w-3" />
+            Key verificada. Pode avançar.
+          </p>
+        ) : (
+          <p className="text-xs text-[var(--text-tertiary)]">
+            Clique em Testar pra validar antes de avançar.
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between pt-2">
+        <Button variant="ghost" onClick={onBack} disabled={testing}>
+          Voltar
+        </Button>
+        <Button onClick={onNext} disabled={!verified}>
+          Próximo
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── step 3: person ──────────────────────────────────────────────────────────
 
 interface PersonStepProps {
   name: string;
@@ -138,6 +326,7 @@ interface PersonStepProps {
   onNameChange: (v: string) => void;
   onCompanyChange: (v: string) => void;
   onNext: () => void;
+  onBack: () => void;
 }
 
 function PersonStep({
@@ -146,6 +335,7 @@ function PersonStep({
   onNameChange,
   onCompanyChange,
   onNext,
+  onBack,
 }: PersonStepProps) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -216,15 +406,20 @@ function PersonStep({
           />
         </Field>
 
-        <Button
-          type="submit"
-          size="lg"
-          className="mt-2 w-full"
-          disabled={!valid || saving}
-        >
-          {saving ? "Salvando..." : "Continuar"}
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onBack}
+            disabled={saving}
+          >
+            Voltar
+          </Button>
+          <Button type="submit" disabled={!valid || saving}>
+            {saving ? "Salvando..." : "Continuar"}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
       </form>
     </div>
   );
@@ -250,14 +445,16 @@ function Field({
   );
 }
 
-// ── step 2: documents ───────────────────────────────────────────────────────
+// ── step 4: documents ───────────────────────────────────────────────────────
 
 interface DocumentsStepProps {
   files: KnowledgeFileMeta[];
   onFilesChange: (files: KnowledgeFileMeta[]) => void;
   onContinue: () => void;
-  onSkip: () => void | Promise<void>;
-  skipping: boolean;
+  /** Skip jumps straight to step 5; the summary step renders a "Pronto!"
+   *  state when files is empty so onComplete still happens at the end. */
+  onSkip: () => void;
+  onBack: () => void;
 }
 
 function DocumentsStep({
@@ -265,7 +462,7 @@ function DocumentsStep({
   onFilesChange,
   onContinue,
   onSkip,
-  skipping,
+  onBack,
 }: DocumentsStepProps) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
@@ -420,23 +617,24 @@ function DocumentsStep({
       ) : null}
 
       <div className="flex items-center justify-between gap-2 pt-1">
-        <Button
-          variant="ghost"
-          onClick={() => void onSkip()}
-          disabled={uploading > 0 || skipping}
-        >
-          Pular
+        <Button variant="ghost" onClick={onBack} disabled={uploading > 0}>
+          Voltar
         </Button>
-        <Button onClick={onContinue} disabled={uploading > 0 || skipping}>
-          Continuar
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={onSkip} disabled={uploading > 0}>
+            Pular
+          </Button>
+          <Button onClick={onContinue} disabled={uploading > 0}>
+            Continuar
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ── step 3: summary ─────────────────────────────────────────────────────────
+// ── step 5: summary + finish ────────────────────────────────────────────────
 
 interface SummaryStepProps {
   hasFiles: boolean;
@@ -490,57 +688,59 @@ function SummaryStep({ hasFiles, finishing, onFinish, onBack }: SummaryStepProps
         </div>
         <div>
           <h2 className="text-xl font-bold tracking-tight">
-            Resumo do seu contexto
+            {hasFiles ? "Resumo do seu contexto" : "Tudo pronto"}
           </h2>
           <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--text-secondary)]">
-            Esse texto vai pro system prompt em toda conversa. Você pode
-            regenerar a qualquer momento depois.
+            {hasFiles
+              ? "Esse texto vai pro system prompt em toda conversa. Você pode regenerar a qualquer momento depois."
+              : "Configuração salva. Você pode adicionar documentos a qualquer momento via Settings."}
           </p>
         </div>
       </header>
 
-      <div className="rounded-xl border border-[var(--border-sub)] bg-[var(--bg-primary)] p-4">
-        {!hasFiles ? (
-          <p className="text-sm text-[var(--text-secondary)]">
-            Você pulou a etapa anterior — nenhum documento foi processado.
-            Você pode adicionar mais tarde via Settings ou pelo chat.
-          </p>
-        ) : loading ? (
-          <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-            <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
-            Gerando resumo via GPT...
-          </div>
-        ) : error ? (
-          <div className="text-sm text-[var(--error)]">
-            <strong className="font-semibold">Falha:</strong> {error}
-            <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              Você ainda pode concluir — gera o resumo depois pelo Settings.
+      {hasFiles ? (
+        <div className="rounded-xl border border-[var(--border-sub)] bg-[var(--bg-primary)] p-4">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+              <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
+              Gerando resumo via GPT...
+            </div>
+          ) : error ? (
+            <div className="text-sm text-[var(--error)]">
+              <strong className="font-semibold">Falha:</strong> {error}
+              <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                Você ainda pode concluir — gera o resumo depois pelo Settings.
+              </p>
+            </div>
+          ) : summary ? (
+            <ScrollArea className="max-h-64">
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-primary)]">
+                {summary.summary}
+              </p>
+              <p className="mt-3 text-[11px] text-[var(--text-tertiary)]">
+                Baseado em {summary.source_count} documento
+                {summary.source_count !== 1 ? "s" : ""}
+              </p>
+            </ScrollArea>
+          ) : (
+            <p className="text-sm text-[var(--text-secondary)]">
+              Resumo vazio — tente regenerar pelo Settings.
             </p>
-          </div>
-        ) : summary ? (
-          <ScrollArea className="max-h-64">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-primary)]">
-              {summary.summary}
-            </p>
-            <p className="mt-3 text-[11px] text-[var(--text-tertiary)]">
-              Baseado em {summary.source_count} documento
-              {summary.source_count !== 1 ? "s" : ""}
-            </p>
-          </ScrollArea>
-        ) : (
-          <p className="text-sm text-[var(--text-secondary)]">
-            Resumo vazio — tente regenerar pelo Settings.
-          </p>
-        )}
-      </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="flex items-center justify-between gap-2 pt-1">
         <Button variant="ghost" onClick={onBack} disabled={finishing || loading}>
           Voltar
         </Button>
-        <Button onClick={() => void onFinish()} disabled={finishing || loading}>
-          {finishing ? "Concluindo..." : "Tudo certo!"}
-          <ArrowRight className="h-4 w-4" />
+        <Button
+          onClick={() => void onFinish()}
+          disabled={finishing || loading}
+          size="lg"
+        >
+          <MessageSquare className="h-4 w-4" />
+          {finishing ? "Concluindo..." : "Começar"}
         </Button>
       </div>
     </div>

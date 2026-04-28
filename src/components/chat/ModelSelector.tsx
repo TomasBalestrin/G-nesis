@@ -76,18 +76,24 @@ export function ModelSelector() {
           type="button"
           aria-label="Selecionar modelo de IA"
           className={cn(
-            "flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)]",
-            "bg-[var(--bg-secondary)] px-2.5 text-xs text-[var(--text-secondary)] transition-colors",
-            "hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]",
+            "flex items-center gap-1.5 rounded-md px-2 py-1",
+            "text-xs text-[var(--text-tertiary)] transition-colors",
+            "hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]",
           )}
         >
-          <Cpu className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+          <Cpu className="h-3.5 w-3.5 shrink-0" />
           <span className="hidden sm:inline">{active.label}</span>
           <span className="sm:hidden">Modelo</span>
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+          <ChevronDown className="h-3 w-3 shrink-0" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[240px]">
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        className="min-w-[240px]"
+      >
         <DropdownMenuLabel className="text-xs uppercase tracking-wider text-[var(--text-tertiary)]">
           Modelos
         </DropdownMenuLabel>

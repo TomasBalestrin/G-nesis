@@ -18,7 +18,10 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::ai::client::{AiClient, ChatOutput, Message, OpenAIClient, ThinkingSink};
+use crate::ai::client::{
+    AiClient, ChatOutput, FunctionDefinition, Message, OpenAIClient, ThinkingSink, ToolCall,
+    ToolDefinition,
+};
 use crate::ai::models::{self, ModelConfig};
 // System prompt now composed via prompts::build_system_prompt(...) which
 // pulls user_name + company_name from app_state and the knowledge_summary
@@ -30,6 +33,7 @@ use crate::config;
 use crate::db::models::{ChatMessage, Conversation};
 use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
+use crate::orchestrator::ExecutionRegistry;
 
 const ACTIVE_MODEL_KEY: &str = "active_model_id";
 
@@ -385,6 +389,377 @@ async fn collect_system_state(pool: &SqlitePool, skills: &[SkillMeta]) -> String
     lines.join("\n")
 }
 
+// ── tool calling ────────────────────────────────────────────────────────────
+
+/// Cap on the assistant ↔ tool ping-pong inside one chat turn. The
+/// loop terminates either when the model responds without tool_calls
+/// or after this many iterations. Hit-limit means the model got stuck
+/// in a tool loop and we surface a generic message so the user can
+/// re-prompt.
+const MAX_TOOL_ITERATIONS: u32 = 10;
+
+/// Cap on the tail of files surfaced to the model via `read_file`.
+/// The whole point is to keep tool results small enough that the
+/// loop's context window doesn't explode after a few iterations.
+const READ_FILE_MAX_BYTES: usize = 10_240;
+
+/// Tools advertised to the GPT orchestrator. JSON schemas are inline
+/// `serde_json::json!` literals so each tool's contract reads top to
+/// bottom — no per-tool DTO struct. Names match what
+/// `execute_tool` dispatches on; mismatch is the only way a tool
+/// silently fails.
+fn genesis_tools() -> Vec<ToolDefinition> {
+    vec![
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "execute_skill".to_string(),
+                description: "Executa uma skill no projeto ativo. Retorna o execution_id.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {
+                            "type": "string",
+                            "description": "Nome exato da skill (ex: 'legendar-videos')"
+                        }
+                    },
+                    "required": ["skill_name"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "list_skills".to_string(),
+                description: "Lista todas as skills disponíveis com nome e descrição.".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "read_skill".to_string(),
+                description: "Lê o conteúdo .md de uma skill específica.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {"type": "string"}
+                    },
+                    "required": ["skill_name"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "save_skill".to_string(),
+                description: "Cria ou atualiza uma skill .md. Opcionalmente salva um script .sh em ~/.genesis/scripts/.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {"type": "string"},
+                        "skill_content": {"type": "string", "description": "Conteúdo completo do .md (frontmatter + steps)"},
+                        "script_name": {"type": "string", "description": "Nome do script .sh (opcional)"},
+                        "script_content": {"type": "string", "description": "Conteúdo do script .sh (opcional)"}
+                    },
+                    "required": ["skill_name", "skill_content"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "read_file".to_string(),
+                description: "Lê um arquivo do disco. Limite de 10KB. Path absoluto.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Caminho absoluto do arquivo"}
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "list_files".to_string(),
+                description: "Lista arquivos de um diretório. Pattern simples como '*.mp4' (apenas sufixo) é aceito.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "pattern": {"type": "string", "description": "Glob simples, ex: '*.mp4'. Opcional."}
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "abort_execution".to_string(),
+                description: "Aborta a execução em andamento (status='running'). Retorna erro se não houver.".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            },
+        },
+    ]
+}
+
+/// Dispatch a single tool call. Always returns a String — errors
+/// stringify into descriptive messages that the model can read on the
+/// next turn and self-correct (e.g. "skill X não encontrada — chame
+/// list_skills primeiro"). NEVER panics; argument-parse failures and
+/// missing dependencies all produce text payloads.
+async fn execute_tool(
+    tool_call: &ToolCall,
+    pool: State<'_, SqlitePool>,
+    registry: State<'_, ExecutionRegistry>,
+    app: AppHandle,
+    conversation_id: Option<&str>,
+) -> String {
+    let name = tool_call.function.name.as_str();
+    let args = tool_call.function.arguments.as_str();
+    match name {
+        "execute_skill" => dispatch_execute_skill(args, pool, registry, app, conversation_id).await,
+        "list_skills" => dispatch_list_skills().await,
+        "read_skill" => dispatch_read_skill(args).await,
+        "save_skill" => dispatch_save_skill(args).await,
+        "read_file" => dispatch_read_file(args),
+        "list_files" => dispatch_list_files(args),
+        "abort_execution" => dispatch_abort_execution(&pool, &registry).await,
+        unknown => format!("Tool desconhecida: `{unknown}`"),
+    }
+}
+
+async fn dispatch_execute_skill(
+    raw: &str,
+    pool: State<'_, SqlitePool>,
+    registry: State<'_, ExecutionRegistry>,
+    app: AppHandle,
+    conversation_id: Option<&str>,
+) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        skill_name: String,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("execute_skill: argumentos inválidos ({e})"),
+    };
+    match crate::commands::execution::execute_skill(
+        args.skill_name.clone(),
+        None,
+        conversation_id.map(String::from),
+        pool,
+        registry,
+        app,
+    )
+    .await
+    {
+        Ok(execution_id) => format!(
+            "Skill `{}` iniciada. execution_id: {execution_id}",
+            args.skill_name
+        ),
+        Err(e) => format!("Falha ao executar `{}`: {e}", args.skill_name),
+    }
+}
+
+async fn dispatch_list_skills() -> String {
+    match crate::commands::skills::list_skills().await {
+        Ok(metas) => {
+            if metas.is_empty() {
+                return "Nenhuma skill cadastrada em ~/.genesis/skills/.".to_string();
+            }
+            let entries: Vec<serde_json::Value> = metas
+                .into_iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "name": m.name,
+                        "description": m.description,
+                    })
+                })
+                .collect();
+            serde_json::to_string(&entries).unwrap_or_else(|e| format!("falha ao serializar: {e}"))
+        }
+        Err(e) => format!("Falha ao listar skills: {e}"),
+    }
+}
+
+async fn dispatch_read_skill(raw: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        skill_name: String,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("read_skill: argumentos inválidos ({e})"),
+    };
+    match crate::commands::skills::read_skill(args.skill_name.clone()).await {
+        Ok(content) => content,
+        Err(e) => format!("Falha ao ler skill `{}`: {e}", args.skill_name),
+    }
+}
+
+async fn dispatch_save_skill(raw: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        skill_name: String,
+        skill_content: String,
+        #[serde(default)]
+        script_name: Option<String>,
+        #[serde(default)]
+        script_content: Option<String>,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("save_skill: argumentos inválidos ({e})"),
+    };
+
+    if let Err(e) =
+        crate::commands::skills::save_skill(args.skill_name.clone(), args.skill_content).await
+    {
+        return format!("Falha ao salvar skill `{}`: {e}", args.skill_name);
+    }
+
+    // Optional sidecar script. Path validation mirrors skill_path's
+    // rules: empty/dotdot/separators are rejected so the model can't
+    // smuggle a script outside ~/.genesis/scripts/.
+    if let (Some(script_name), Some(script_content)) = (args.script_name, args.script_content) {
+        if script_name.is_empty()
+            || script_name.contains("..")
+            || script_name.contains('/')
+            || script_name.contains('\\')
+        {
+            return format!(
+                "Skill `{}` salva, mas script ignorado (nome inválido: `{script_name}`).",
+                args.skill_name
+            );
+        }
+        let scripts_dir = config::config_dir().join("scripts");
+        if let Err(e) = fs::create_dir_all(&scripts_dir) {
+            return format!(
+                "Skill `{}` salva, mas falha ao criar {}: {e}",
+                args.skill_name,
+                scripts_dir.display()
+            );
+        }
+        let script_path = scripts_dir.join(&script_name);
+        if let Err(e) = fs::write(&script_path, script_content) {
+            return format!(
+                "Skill `{}` salva, mas falha ao gravar script `{script_name}`: {e}",
+                args.skill_name
+            );
+        }
+        // Best-effort chmod +x so the BashChannel can spawn the script
+        // directly. Non-Unix platforms ignore this — the loop should
+        // still work via `bash <script>` invocation.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&script_path) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(&script_path, perms);
+            }
+        }
+        return format!(
+            "Skill `{}` salva. Script `{script_name}` gravado em {}.",
+            args.skill_name,
+            script_path.display()
+        );
+    }
+
+    format!("Skill `{}` salva.", args.skill_name)
+}
+
+fn dispatch_read_file(raw: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        path: String,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("read_file: argumentos inválidos ({e})"),
+    };
+    if args.path.contains("..") {
+        return format!("read_file: path com `..` rejeitado (`{}`)", args.path);
+    }
+    match fs::read_to_string(&args.path) {
+        Ok(content) => {
+            if content.len() > READ_FILE_MAX_BYTES {
+                let truncated: String = content.chars().take(READ_FILE_MAX_BYTES).collect();
+                format!("{truncated}\n\n[truncado em {READ_FILE_MAX_BYTES} bytes]")
+            } else {
+                content
+            }
+        }
+        Err(e) => format!("Falha ao ler `{}`: {e}", args.path),
+    }
+}
+
+fn dispatch_list_files(raw: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        path: String,
+        #[serde(default)]
+        pattern: Option<String>,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("list_files: argumentos inválidos ({e})"),
+    };
+    if args.path.contains("..") {
+        return format!("list_files: path com `..` rejeitado (`{}`)", args.path);
+    }
+    // Suffix-only matching — `*.mp4` keeps the implementation tiny and
+    // matches the user-facing description ("Pattern simples"). Anything
+    // before `*` is rejected since we'd need a real glob library.
+    let suffix = match args.pattern {
+        Some(p) if p.starts_with('*') => Some(p["*".len()..].to_string()),
+        Some(p) => return format!("list_files: pattern `{p}` não suportado (use '*.ext')"),
+        None => None,
+    };
+    let entries = match fs::read_dir(&args.path) {
+        Ok(it) => it,
+        Err(e) => return format!("Falha ao listar `{}`: {e}", args.path),
+    };
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(ref sfx) = suffix {
+            if !name.ends_with(sfx) {
+                continue;
+            }
+        }
+        names.push(name);
+    }
+    names.sort();
+    if names.is_empty() {
+        format!("(vazio em `{}`)", args.path)
+    } else {
+        names.join("\n")
+    }
+}
+
+async fn dispatch_abort_execution(
+    pool: &SqlitePool,
+    registry: &ExecutionRegistry,
+) -> String {
+    let running = match queries::get_running_execution(pool).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return "Nenhuma execução em andamento.".to_string(),
+        Err(e) => return format!("Falha ao consultar execuções: {e}"),
+    };
+    match registry.abort(&running.id).await {
+        Ok(()) => format!(
+            "Execução `{}` (skill `{}`) abortada.",
+            running.id, running.skill_name
+        ),
+        Err(e) => format!("Falha ao abortar `{}`: {e}", running.id),
+    }
+}
+
 // ── commands ────────────────────────────────────────────────────────────────
 
 const TITLE_GEN_MAX_CHARS: usize = 30;
@@ -404,6 +779,7 @@ pub async fn send_chat_message(
     conversation_id: Option<String>,
     app: AppHandle,
     pool: State<'_, SqlitePool>,
+    registry: State<'_, ExecutionRegistry>,
 ) -> Result<ChatMessage, String> {
     let user_msg = ChatMessage {
         id: new_id(),
@@ -446,9 +822,14 @@ pub async fn send_chat_message(
                 history_for(&pool, execution_id.as_deref(), conversation_id.as_deref()).await?;
             let messages: Vec<Message> = history
                 .iter()
-                .map(|m| Message {
-                    role: m.role.clone(),
-                    content: m.content.clone(),
+                .map(|m| match m.role.as_str() {
+                    "user" => Message::user(m.content.clone()),
+                    "assistant" => Message::assistant(m.content.clone()),
+                    "system" => Message::system(m.content.clone()),
+                    // Tool-role rows aren't persisted (intermediate
+                    // tool_calls/results are ephemeral) — fall back to
+                    // user role so unknown role strings don't crash.
+                    _ => Message::user(m.content.clone()),
                 })
                 .collect();
 
@@ -482,15 +863,73 @@ pub async fn send_chat_message(
                 app: app.clone(),
                 conversation_id: conversation_id.clone(),
             };
-            let ChatOutput {
-                content,
-                thinking,
-                thinking_summary,
-            } = client
-                .chat_completion_with_thinking(&system_prompt, &messages, Some(&sink))
-                .await
-                .map_err(|e| e.user_message())?;
-            (content, thinking, thinking_summary)
+
+            // OpenAI runs through the function-calling loop so the model
+            // can dispatch real actions (execute_skill, list_skills,
+            // read_file, etc.) inside one logical turn. Anthropic stays
+            // on the existing thinking/streaming path — its native tool
+            // protocol differs from OpenAI's and lands in a separate
+            // task. Both branches converge on (content, thinking,
+            // thinking_summary) so the persistence below stays uniform.
+            match &client {
+                AiClient::OpenAi(openai) => {
+                    let tools = genesis_tools();
+                    let mut loop_messages: Vec<Message> = messages.clone();
+                    let mut final_content = String::new();
+                    for _ in 0..MAX_TOOL_ITERATIONS {
+                        let resp = openai
+                            .chat_completion_with_tools(&system_prompt, &loop_messages, &tools)
+                            .await
+                            .map_err(|e| e.user_message())?;
+                        if resp.tool_calls.is_empty() {
+                            final_content = resp.content;
+                            break;
+                        }
+                        // Feed the assistant turn back into the history so
+                        // the next iteration sees the tool_calls it
+                        // emitted. Content may be non-empty when the
+                        // model emits text alongside tool_calls — keep
+                        // both so the model's reasoning isn't lost.
+                        let mut assistant_turn = Message::assistant(resp.content.clone());
+                        assistant_turn.tool_calls = Some(resp.tool_calls.clone());
+                        loop_messages.push(assistant_turn);
+
+                        for tc in &resp.tool_calls {
+                            // Clone the State handles per call — they
+                            // wrap an Arc internally so the cost is a
+                            // refcount bump. State<'_, _> isn't Copy
+                            // in Tauri 2, so the loop would otherwise
+                            // refuse to move them again on iter 2+.
+                            let result = execute_tool(
+                                tc,
+                                pool.clone(),
+                                registry.clone(),
+                                app.clone(),
+                                conversation_id.as_deref(),
+                            )
+                            .await;
+                            loop_messages.push(Message::tool_result(tc.id.clone(), result));
+                        }
+                    }
+                    if final_content.is_empty() {
+                        final_content =
+                            "Limite de iterações de tools atingido sem resposta final."
+                                .to_string();
+                    }
+                    (final_content, None, None)
+                }
+                AiClient::Anthropic(_) => {
+                    let ChatOutput {
+                        content,
+                        thinking,
+                        thinking_summary,
+                    } = client
+                        .chat_completion_with_thinking(&system_prompt, &messages, Some(&sink))
+                        .await
+                        .map_err(|e| e.user_message())?;
+                    (content, thinking, thinking_summary)
+                }
+            }
         };
 
     let assistant_msg = ChatMessage {
@@ -536,10 +975,7 @@ async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message
         "Gere um título curto (máximo {TITLE_GEN_MAX_CHARS} caracteres, em português, \
          sem aspas, sem ponto final) que resuma o assunto da seguinte mensagem:\n\n{first_message}"
     );
-    let messages = vec![Message {
-        role: "user".to_string(),
-        content: prompt,
-    }];
+    let messages = vec![Message::user(prompt)];
     let Ok(raw) = client.chat_completion("", &messages).await else {
         return;
     };
@@ -602,10 +1038,7 @@ async fn history_for(
 #[tauri::command]
 pub async fn call_openai(prompt: String) -> Result<String, String> {
     let client = openai_client()?;
-    let messages = vec![Message {
-        role: "user".to_string(),
-        content: prompt,
-    }];
+    let messages = vec![Message::user(prompt)];
     client
         .chat_completion("", &messages)
         .await
@@ -713,10 +1146,7 @@ pub async fn analyze_step_failure(
     );
 
     let client = openai_client()?;
-    let messages = vec![Message {
-        role: "user".to_string(),
-        content: prompt,
-    }];
+    let messages = vec![Message::user(prompt)];
     let analysis = client
         .chat_completion(FAILURE_ANALYSIS_SYSTEM_PROMPT, &messages)
         .await
@@ -781,6 +1211,44 @@ mod tests {
         // Spec: GPT sees the last 20 turns. If this constant changes,
         // re-confirm the tradeoff (cost vs. context recall).
         assert_eq!(HISTORY_WINDOW, 20);
+    }
+
+    /// Genesis advertises 7 tools to the model. Names are the dispatch
+    /// keys in `execute_tool` — a typo or rename here silently breaks
+    /// function calling without a compiler error, so we anchor the
+    /// expected set in a test.
+    #[test]
+    fn genesis_tools_lists_all_seven_with_correct_names() {
+        let tools = genesis_tools();
+        let names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "execute_skill",
+                "list_skills",
+                "read_skill",
+                "save_skill",
+                "read_file",
+                "list_files",
+                "abort_execution",
+            ],
+            "tool list drifted from execute_tool dispatch keys",
+        );
+    }
+
+    /// Each tool must have `type: "function"` — that's the only
+    /// discriminator OpenAI accepts today, and it's serialized
+    /// verbatim into the request JSON. A wrong value silently
+    /// rejects the entire `tools` array with a 400.
+    #[test]
+    fn genesis_tools_all_have_function_type() {
+        for tool in genesis_tools() {
+            assert_eq!(
+                tool.tool_type, "function",
+                "tool `{}` has non-`function` type",
+                tool.function.name,
+            );
+        }
     }
 
     #[test]

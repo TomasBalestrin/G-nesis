@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -7,6 +8,7 @@ import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useThinking } from "@/hooks/useThinking";
 import { useToast } from "@/hooks/useToast";
 import {
+  getAppStateValue,
   listMessagesByConversation,
   safeInvoke,
   sendChatMessage,
@@ -19,6 +21,10 @@ import { CommandInput } from "./CommandInput";
 import { ExecutionControlBar } from "./ExecutionControlBar";
 import { MessageBubble } from "./MessageBubble";
 import { ThinkingBlock } from "./ThinkingBlock";
+
+const USER_NAME_KEY = "user_name";
+
+const EMPTY_STATE_PLACEHOLDER = "Como posso ajudar você hoje?";
 
 /**
  * Chat surface for a single conversation. Reads `conversationId` from the
@@ -37,6 +43,10 @@ export function ChatPanel() {
   const { conversationId = "" } = useParams<{ conversationId: string }>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  // user_name lives in app_state (set in onboarding step 3, editable in
+  // KnowledgeSection). Fetched once on mount — invariant across
+  // conversations within a session.
+  const [userName, setUserName] = useState<string | null>(null);
   const refreshConversations = useConversationsStore((s) => s.refresh);
   const startThinking = useChatStore((s) => s.startThinking);
   const clearThinking = useChatStore((s) => s.clearThinking);
@@ -65,6 +75,23 @@ export function ChatPanel() {
         : [...prev, event.message],
     );
   });
+
+  // Read user_name once for the empty-state greeting. Failures are
+  // silent — the UI degrades to a generic "Olá!" if the value is missing
+  // or the call errors out.
+  useEffect(() => {
+    let cancelled = false;
+    getAppStateValue({ key: USER_NAME_KEY })
+      .then((v) => {
+        if (!cancelled) setUserName(v ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setUserName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Hydrate from SQLite whenever the route conversation changes.
   useEffect(() => {
@@ -130,17 +157,35 @@ export function ChatPanel() {
     }
   }
 
+  // Empty-state branch: shown only on a brand-new conversation with
+  // nothing in flight. CommandInput is rendered ONCE — here, centered
+  // under the greeting. Once the user sends, `messages.length` flips
+  // to 1 (optimistic add) and the next render switches to the normal
+  // layout below; CommandInput unmounts here and remounts at the
+  // bottom. State loss is a non-issue since `submitRaw` clears the
+  // textarea before the parent re-renders.
+  if (messages.length === 0 && !sending) {
+    return (
+      <div className="flex h-full min-w-0 flex-1 flex-col items-center justify-center px-4">
+        <EmptyStateGreeting userName={userName} />
+        <div className="mt-8 w-full max-w-2xl animate-fade-in">
+          <CommandInput
+            onSubmit={handleSend}
+            disabled={!conversationId}
+            placeholder={EMPTY_STATE_PLACEHOLDER}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
       <ScrollArea className="flex-1">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-          {messages.length === 0 && !sending ? (
-            <EmptyState />
-          ) : (
-            messages.map((m) => (
-              <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
-            ))
-          )}
+          {messages.map((m) => (
+            <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
+          ))}
           {sending && isThinking ? (
             <div className="flex w-full justify-start">
               <article className="max-w-[80%] px-1 py-1">
@@ -172,10 +217,22 @@ export function ChatPanel() {
   );
 }
 
-function EmptyState() {
+/**
+ * Centered greeting shown above the input on a brand-new conversation.
+ * Sparkles in the brand color sits above the heading so the page reads
+ * as "Genesis, ready to help" without dropping a heavy logo. Heading
+ * text uses the user's name from app_state when available; otherwise
+ * the generic "Olá!" so the layout stays meaningful while user_name
+ * loads (or for users who skipped onboarding step 3).
+ */
+function EmptyStateGreeting({ userName }: { userName: string | null }) {
+  const greeting = userName ? `Olá, ${userName}` : "Olá!";
   return (
-    <div className="py-20 text-center text-sm text-[var(--text-2)]">
-      Digite um comando ou converse com o assistente.
+    <div className="flex flex-col items-center gap-4 text-center animate-fade-in">
+      <Sparkles className="h-7 w-7 text-[var(--primary)]" aria-hidden="true" />
+      <h1 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-4xl">
+        {greeting}
+      </h1>
     </div>
   );
 }

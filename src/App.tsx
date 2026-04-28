@@ -5,12 +5,10 @@ import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
-import { SetupWizard } from "@/components/onboarding/SetupWizard";
 import { NewProjectForm } from "@/components/projects/NewProjectForm";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
-import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
@@ -25,7 +23,6 @@ const ONBOARDING_FLAG_KEY = "onboarding_complete";
 
 function App() {
   const [bootstrap, setBootstrap] = useState<Config | null>(null);
-  const [showWizard, setShowWizard] = useState<boolean | null>(null);
   // null while the flag is loading from app_state — keeps the UI in the
   // loading state instead of flashing the OnboardingPage, then the app.
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
@@ -78,7 +75,6 @@ function App() {
       .then((cfg) => {
         if (cancelled) return;
         setBootstrap(cfg);
-        setShowWizard(cfg.needs_setup);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -96,14 +92,13 @@ function App() {
           claude_cli_path: null,
           needs_setup: true,
         });
-        setShowWizard(true);
       });
     return () => {
       cancelled = true;
     };
   }, [toast]);
 
-  if (bootstrap === null || showWizard === null || onboardingDone === null) {
+  if (bootstrap === null || onboardingDone === null) {
     return (
       <div className="flex h-screen items-center justify-center text-sm text-[var(--text-secondary)]">
         Carregando...
@@ -111,23 +106,17 @@ function App() {
     );
   }
 
-  if (showWizard) {
-    return (
-      <>
-        <SetupWizard
-          initialConfig={bootstrap}
-          onComplete={() => setShowWizard(false)}
-        />
-        <Toaster />
-        <FatalErrorDialog />
-      </>
-    );
-  }
-
+  // Single unified onboarding gate. The 5-step wizard handles welcome,
+  // API key (saves on disk via saveConfig), perfil, documents and
+  // summary in one flow — completeOnboarding flips the flag in
+  // app_state which gates this branch off for subsequent runs.
   if (!onboardingDone) {
     return (
       <>
-        <OnboardingPage onComplete={completeOnboarding} />
+        <OnboardingPage
+          initialConfig={bootstrap}
+          onComplete={completeOnboarding}
+        />
         <Toaster />
         <FatalErrorDialog />
       </>
@@ -161,9 +150,6 @@ function App() {
               creating and inspecting a single project. */}
           <Route path="projects/new" element={<NewProjectForm />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
-
-          {/* Embedded interactive terminal (xterm.js + portable-pty). */}
-          <Route path="terminal" element={<TerminalPanel />} />
 
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
