@@ -279,12 +279,22 @@ impl Executor {
         };
         let _ = queries::insert_step(&self.pool, &row).await;
 
+        // Defensive fallback for empty `tool` — the parser normally
+        // rejects a step without one, but a future channel/parse path
+        // could leak an empty string. Frontend renderer keys log /
+        // status messages off this; "unknown" keeps it grep-able instead
+        // of producing a render gap.
+        let tool_for_event = if step.tool.is_empty() {
+            "unknown".to_string()
+        } else {
+            step.tool.clone()
+        };
         self.emit(
             "execution:step_started",
             &StepStartedPayload {
                 execution_id: self.execution_id.clone(),
                 step_id: step.id.clone(),
-                tool: step.tool.clone(),
+                tool: tool_for_event,
             },
         );
 
@@ -339,6 +349,11 @@ impl Executor {
                     None,
                 )
                 .await;
+                // `output.stdout` is always a String (not Option), but
+                // it can legitimately be empty when the channel produced
+                // no stdout. The TS contract treats `output` as required;
+                // emit "" rather than letting the field round-trip
+                // through any null path.
                 self.emit(
                     "execution:step_completed",
                     &StepCompletedPayload {
@@ -364,6 +379,15 @@ impl Executor {
         reason: String,
         retry_count: u32,
     ) -> StepResult {
+        // Defensive fallback when a channel surfaces an empty error
+        // string — the frontend chains analyze_step_failure on this
+        // payload, and an empty `error` would produce a useless GPT
+        // prompt ("Erro: (vazio)") and a confusing ❌ bubble.
+        let error_for_event = if reason.trim().is_empty() {
+            "erro desconhecido".to_string()
+        } else {
+            reason.clone()
+        };
         let _ = queries::update_step_status(
             &self.pool,
             row_id,
@@ -377,7 +401,7 @@ impl Executor {
             &StepFailedPayload {
                 execution_id: self.execution_id.clone(),
                 step_id: step_id.to_string(),
-                error: reason.clone(),
+                error: error_for_event,
                 retry_count,
             },
         );

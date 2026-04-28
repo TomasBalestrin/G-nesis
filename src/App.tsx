@@ -14,6 +14,7 @@ import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
 import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
+import ErrorBoundary from "@/components/ui/ErrorBoundary";
 import { useToast } from "@/hooks/useToast";
 import { getAppStateValue, getConfig, setAppStateValue } from "@/lib/tauri-bridge";
 import { useAppStore } from "@/stores/appStore";
@@ -110,54 +111,63 @@ function App() {
   // API key (saves on disk via saveConfig), perfil, documents and
   // summary in one flow — completeOnboarding flips the flag in
   // app_state which gates this branch off for subsequent runs.
+  // FatalErrorDialog is intentionally mounted OUTSIDE every ErrorBoundary
+  // below — when the boundary catches and the inner tree unmounts, the
+  // dialog still needs a live React subtree to render its modal.
   if (!onboardingDone) {
     return (
       <>
-        <OnboardingPage
-          initialConfig={bootstrap}
-          onComplete={completeOnboarding}
-        />
-        <Toaster />
+        <ErrorBoundary>
+          <OnboardingPage
+            initialConfig={bootstrap}
+            onComplete={completeOnboarding}
+          />
+          <Toaster />
+        </ErrorBoundary>
         <FatalErrorDialog />
       </>
     );
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<MainLayout />}>
-          {/* Landing — redirects to last/new conversation. */}
-          <Route index element={<ChatIndexRedirect />} />
+    <>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<MainLayout />}>
+              {/* Landing — redirects to last/new conversation. */}
+              <Route index element={<ChatIndexRedirect />} />
 
-          {/* Multi-thread chat. */}
-          <Route path="chat/:conversationId" element={<ChatPanel />} />
+              {/* Multi-thread chat. */}
+              <Route path="chat/:conversationId" element={<ChatPanel />} />
 
-          {/* Skills: list in sidebar; no standalone /skills listing page.
-              Same editor handles create (/skills/new) and edit (/skills/:name). */}
-          <Route path="skills/new" element={<SkillEditor />} />
-          <Route path="skills/:name" element={<SkillEditor />} />
+              {/* Skills: list in sidebar; no standalone /skills listing page.
+                  Same editor handles create (/skills/new) and edit (/skills/:name). */}
+              <Route path="skills/new" element={<SkillEditor />} />
+              <Route path="skills/:name" element={<SkillEditor />} />
 
-          {/* Workflows: full catalog page + viewer + editor. /:name shows
-              the read-only structured view; /:name/edit opens the markdown
-              editor for changes. */}
-          <Route path="workflows" element={<WorkflowList />} />
-          <Route path="workflows/new" element={<WorkflowEditor />} />
-          <Route path="workflows/:name" element={<WorkflowViewer />} />
-          <Route path="workflows/:name/edit" element={<WorkflowEditor />} />
+              {/* Workflows: full catalog page + viewer + editor. /:name shows
+                  the read-only structured view; /:name/edit opens the markdown
+                  editor for changes. */}
+              <Route path="workflows" element={<WorkflowList />} />
+              <Route path="workflows/new" element={<WorkflowEditor />} />
+              <Route path="workflows/:name" element={<WorkflowViewer />} />
+              <Route path="workflows/:name/edit" element={<WorkflowEditor />} />
 
-          {/* Projects: list is inside Settings; these routes support
-              creating and inspecting a single project. */}
-          <Route path="projects/new" element={<NewProjectForm />} />
-          <Route path="projects/:id" element={<ProjectDetail />} />
+              {/* Projects: list is inside Settings; these routes support
+                  creating and inspecting a single project. */}
+              <Route path="projects/new" element={<NewProjectForm />} />
+              <Route path="projects/:id" element={<ProjectDetail />} />
 
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-      <Toaster />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+          <Toaster />
+        </BrowserRouter>
+      </ErrorBoundary>
       <FatalErrorDialog />
-    </BrowserRouter>
+    </>
   );
 }
 
