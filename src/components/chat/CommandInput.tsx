@@ -138,45 +138,55 @@ export function CommandInput({
       <form
         onSubmit={handleFormSubmit}
         className={cn(
-          "flex flex-wrap items-end gap-2 rounded-xl p-2 transition-colors",
-          "bg-[var(--bg-tertiary)]",
+          "rounded-2xl bg-[var(--bg-tertiary)] transition-colors",
           "focus-within:ring-2 focus-within:ring-[var(--accent-ring)]",
           isCommand && "ring-2 ring-[var(--accent)]",
         )}
       >
-        <ProjectSelector />
-        <ModelSelector />
-        {isCommand && (
-          <Slash
-            aria-hidden
-            className="mb-2 h-4 w-4 shrink-0 text-[var(--accent)]"
-          />
-        )}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          rows={1}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          disabled={disabled}
-          aria-label="Mensagem"
-          aria-autocomplete={slashOpen ? "list" : undefined}
-          aria-expanded={slashOpen}
-          className={cn(
-            "min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed",
-            "text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none",
-            isCommand && "font-mono text-[var(--accent)]",
+        {/* Top row: leading slash hint + textarea + send. The textarea
+            grows up to MAX_HEIGHT and the send button stays pinned to
+            the bottom-right via items-end. */}
+        <div className="flex items-end gap-2 px-3 pb-1 pt-2">
+          {isCommand && (
+            <Slash
+              aria-hidden
+              className="mb-2 h-4 w-4 shrink-0 text-[var(--accent)]"
+            />
           )}
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={!value.trim() || disabled}
-          aria-label="Enviar"
-        >
-          <SendHorizontal className="h-4 w-4" />
-        </Button>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            rows={1}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            disabled={disabled}
+            aria-label="Mensagem"
+            aria-autocomplete={slashOpen ? "list" : undefined}
+            aria-expanded={slashOpen}
+            className={cn(
+              "min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-relaxed",
+              "text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none",
+              isCommand && "font-mono text-[var(--accent)]",
+            )}
+          />
+          <Button
+            type="submit"
+            size="icon"
+            disabled={!value.trim() || disabled}
+            aria-label="Enviar"
+          >
+            <SendHorizontal className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Bottom row: compact project + model selectors. Both open
+            UPWARDS (side="top" set on each DropdownMenuContent) so they
+            don't push the chat scroll area on click. */}
+        <div className="flex items-center gap-1 px-2 pb-2">
+          <ProjectSelector />
+          <ModelSelector />
+        </div>
       </form>
     </div>
   );

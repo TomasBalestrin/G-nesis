@@ -73,19 +73,25 @@ export function ProjectSelector() {
           type="button"
           aria-label="Selecionar projeto ativo"
           className={cn(
-            "flex h-9 max-w-[180px] items-center gap-1.5 rounded-lg border border-[var(--border)]",
-            "bg-[var(--bg-secondary)] px-2.5 text-xs text-[var(--text-secondary)] transition-colors",
-            "hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]",
+            "flex max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1",
+            "text-xs text-[var(--text-tertiary)] transition-colors",
+            "hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]",
             "disabled:opacity-60",
           )}
           disabled={loading}
         >
-          <Folder className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+          <Folder className="h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+          <ChevronDown className="h-3 w-3 shrink-0" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[220px]">
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        className="min-w-[220px]"
+      >
         <DropdownMenuLabel className="text-xs uppercase tracking-wider text-[var(--text-tertiary)]">
           Projetos
         </DropdownMenuLabel>
