@@ -385,10 +385,14 @@ pub async fn send_chat_message(
                 .ok()
                 .flatten()
                 .map(|s| s.summary);
+            // system_state stays None until D2 wires the runtime collector
+            // (active project + skills + execution snapshot). Until then
+            // the SYSTEM_STATE section is gated off in build_system_prompt.
             let system_prompt = prompts::build_system_prompt(
                 user_name.as_deref(),
                 company_name.as_deref(),
                 summary.as_deref(),
+                None,
                 &catalog,
             );
 
