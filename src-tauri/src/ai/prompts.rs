@@ -16,6 +16,9 @@
 //!   - [`PROMPT_TOOLS`]         — bash/claude-code/api channels + deps
 //!   - [`PROMPT_PROJECTS`]      — active project disambiguation
 //!   - [`PROMPT_RULES`]         — pode/não pode/tom
+//!   - [`PROMPT_SYSTEM_STATE`]  — runtime snapshot (active project,
+//!                                skills, executions) injected via the
+//!                                `{{INJECT:SYSTEM_STATE}}` placeholder
 //!
 //! Master string is built at runtime by [`compose_system_prompt`], which
 //! skips [`PROMPT_USER_CONTEXT`] so literal placeholders never reach GPT.
@@ -301,6 +304,24 @@ pub const PROMPT_RULES: &str = r##"## O que você pode e não pode fazer
 - Quando errar, admita e corrija rápido
 - Evite jargão técnico — se precisar usar, explique"##;
 
+/// SYSTEM_STATE — runtime snapshot of the app (active project, skills
+/// available on disk, in-flight execution, last finished execution)
+/// injected by the chat command before each GPT turn. The
+/// `{{INJECT:SYSTEM_STATE}}` placeholder is substituted by
+/// [`build_system_prompt`] when the caller passes a `system_state` block;
+/// otherwise the whole section is gated off (mirrors the
+/// `PROMPT_USER_CONTEXT` pattern so callers without state never leak the
+/// literal placeholder to GPT).
+///
+/// Body text is intentionally short — the actual state payload comes
+/// from the runtime block. Don't duplicate guidance that already lives
+/// in `PROMPT_CORE` / `PROMPT_PROJECTS` / `PROMPT_SKILLS`.
+pub const PROMPT_SYSTEM_STATE: &str = r##"## Estado atual do sistema
+
+Antes de cada turno tu recebe um snapshot do que está acontecendo no app: projeto ativo, skills disponíveis, execução em andamento (se houver) e última execução finalizada. Use isso pra responder com contexto sem precisar perguntar "qual projeto?" ou "qual skill?".
+
+{{INJECT:SYSTEM_STATE}}"##;
+
 /// Composes the modular sections in canonical order, joining with double
 /// newlines. Deliberately **skips `PROMPT_USER_CONTEXT`** — that section
 /// carries `{{user_name}}` / `{{company_name}}` / `{{knowledge_summary}}`
@@ -387,34 +408,42 @@ pub fn with_skill_catalog(base: &str, skills: &[SkillMeta]) -> String {
 /// substitute. Builds the full system prompt by appending each modular
 /// section in canonical order, conditionally including
 /// [`PROMPT_USER_CONTEXT`] (only when both `user_name` and `company_name`
-/// are present), and finishing with [`with_skill_catalog`] so GPT sees
-/// the live skill list.
+/// are present) and [`PROMPT_SYSTEM_STATE`] (only when the caller passes
+/// a runtime state block), and finishing with [`with_skill_catalog`] so
+/// GPT sees the live skill list.
 ///
 /// Section order matches `system-prompt-genesis.md` § "COMPOSIÇÃO DO
-/// PROMPT":
-///   CORE → USER_CONTEXT? → REASONING → SKILLS → TOOLS → PROJECTS →
-///   RULES → "## Skills disponíveis" (via `with_skill_catalog`)
+/// PROMPT" (with SYSTEM_STATE inserted after USER_CONTEXT so the model
+/// reads identity → user → live state → reasoning):
+///   CORE → USER_CONTEXT? → SYSTEM_STATE? → REASONING → SKILLS → TOOLS →
+///   PROJECTS → RULES → "## Skills disponíveis" (via
+///   `with_skill_catalog`)
 ///
 /// Placeholder substitution:
-///   - `{{user_name}}`         → `user_name`
-///   - `{{company_name}}`      → `company_name`
-///   - `{{knowledge_summary}}` → `knowledge_summary` or
-///                                "Nenhum documento fornecido ainda."
-///                                when the caller passes `None`
+///   - `{{user_name}}`           → `user_name`
+///   - `{{company_name}}`        → `company_name`
+///   - `{{knowledge_summary}}`   → `knowledge_summary` or
+///                                  "Nenhum documento fornecido ainda."
+///                                  when the caller passes `None`
+///   - `{{INJECT:SYSTEM_STATE}}` → `system_state` (whole section gated
+///                                  off when `None`)
 ///
 /// USER_CONTEXT is gated on the pair (`user_name`, `company_name`)
 /// because both are required by the section template — including a
 /// half-resolved block ("Nome: " with empty value) would confuse GPT
 /// more than skipping it. `knowledge_summary` is allowed to be `None`
 /// in isolation since the user might have completed onboarding without
-/// uploading any docs yet.
+/// uploading any docs yet. SYSTEM_STATE is gated as a single block:
+/// callers without state (e.g. before any project/skill exists) skip it
+/// entirely instead of injecting an empty placeholder.
 pub fn build_system_prompt(
     user_name: Option<&str>,
     company_name: Option<&str>,
     knowledge_summary: Option<&str>,
+    system_state: Option<&str>,
     skills: &[SkillMeta],
 ) -> String {
-    let mut sections: Vec<String> = Vec::with_capacity(7);
+    let mut sections: Vec<String> = Vec::with_capacity(8);
 
     sections.push(PROMPT_CORE.to_string());
 
@@ -424,6 +453,11 @@ pub fn build_system_prompt(
             .replace("{{user_name}}", name)
             .replace("{{company_name}}", company)
             .replace("{{knowledge_summary}}", summary);
+        sections.push(resolved);
+    }
+
+    if let Some(state) = system_state {
+        let resolved = PROMPT_SYSTEM_STATE.replace("{{INJECT:SYSTEM_STATE}}", state);
         sections.push(resolved);
     }
 
@@ -652,6 +686,7 @@ mod tests {
             Some("João"),
             Some("Bethel"),
             Some("Editor de vídeo com 5 anos de experiência"),
+            None,
             &skills,
         );
 
@@ -679,7 +714,7 @@ mod tests {
     /// which appears legitimately in PROMPT_SKILLS and PROMPT_CORE).
     #[test]
     fn build_prompt_without_user_skips_context() {
-        let out = build_system_prompt(None, None, None, &[]);
+        let out = build_system_prompt(None, None, None, None, &[]);
 
         assert!(
             !out.contains("Nome: {{user_name}}"),
@@ -705,7 +740,7 @@ mod tests {
     /// block instead of an empty value or literal placeholder.
     #[test]
     fn build_prompt_without_summary_uses_fallback() {
-        let out = build_system_prompt(Some("João"), Some("Bethel"), None, &[]);
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, &[]);
 
         assert!(
             out.contains("Nenhum documento fornecido ainda."),
@@ -714,6 +749,49 @@ mod tests {
         assert!(
             !out.contains("{{knowledge_summary}}"),
             "fallback path should still substitute the placeholder, not leak it",
+        );
+    }
+
+    /// Happy path for SYSTEM_STATE: when the caller passes a state block,
+    /// `build_system_prompt` substitutes `{{INJECT:SYSTEM_STATE}}` and
+    /// emits the section header. The state body must reach GPT verbatim
+    /// (it's the runtime payload — projects, skills, executions).
+    #[test]
+    fn build_prompt_with_system_state_injects_block() {
+        let state = "Projeto ativo: meu-projeto (/tmp/meu-projeto)\n\
+                     Skills disponíveis: legendar-videos\n\
+                     Execução ativa: nenhuma";
+        let out = build_system_prompt(None, None, None, Some(state), &[]);
+
+        assert!(
+            out.contains("## Estado atual do sistema"),
+            "expected SYSTEM_STATE section header in output: {out}",
+        );
+        assert!(
+            out.contains("Projeto ativo: meu-projeto (/tmp/meu-projeto)"),
+            "expected runtime state body verbatim in output: {out}",
+        );
+        assert!(
+            !out.contains("{{INJECT:SYSTEM_STATE}}"),
+            "placeholder must be substituted, not leaked: {out}",
+        );
+    }
+
+    /// SYSTEM_STATE is gated as a single block — when the caller passes
+    /// `None` (e.g. before any project exists, or D2 hasn't wired the
+    /// collector yet), the section header AND the placeholder must both
+    /// be absent so GPT doesn't see a half-resolved snapshot.
+    #[test]
+    fn build_prompt_without_system_state_skips_section() {
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, &[]);
+
+        assert!(
+            !out.contains("## Estado atual do sistema"),
+            "SYSTEM_STATE section leaked when caller passed None: {out}",
+        );
+        assert!(
+            !out.contains("{{INJECT:SYSTEM_STATE}}"),
+            "SYSTEM_STATE placeholder leaked when caller passed None: {out}",
         );
     }
 }

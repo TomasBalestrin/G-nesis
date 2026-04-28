@@ -5,11 +5,18 @@ export type ChatRole = "user" | "assistant" | "system";
 
 /**
  * Discriminator used by the chat renderer to switch between regular text
- * bubbles and inline execution cards. Only set on virtual messages built
- * by ChatPanel from the execution store — DB rows are always implicitly
- * `"text"` (omitted on the wire, defaulted at the render boundary).
+ * bubbles and inline execution status entries. Persisted on the
+ * `chat_messages.kind` column (Rust struct field renamed to `type` at
+ * the JSON wire boundary) so status messages survive a conversation
+ * reload.
+ *
+ * - `"text"`              — regular bubble (default for legacy rows).
+ * - `"execution-status"`  — inline ⏳/✅/❌ progress entry inserted by
+ *                           the `useExecution` hook on each
+ *                           `execution:step_*` event. Renders smaller
+ *                           and sutil to keep the chat readable.
  */
-export type ChatMessageType = "text" | "execution";
+export type ChatMessageType = "text" | "execution-status";
 
 export interface ChatMessage {
   id: string;

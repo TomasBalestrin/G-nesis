@@ -305,6 +305,86 @@ fn try_slash_reply(skill_name: &str) -> String {
     }
 }
 
+// ── system-state snapshot ───────────────────────────────────────────────────
+
+/// Per-step error/output snippet cap when surfacing failed steps in the
+/// system-state block. Big stderr blobs would bloat the prompt and the
+/// model only needs the first lines to diagnose; keep it tight.
+const SYSTEM_STATE_SNIPPET_CHARS: usize = 200;
+
+/// Build the runtime payload that fills `{{INJECT:SYSTEM_STATE}}` in
+/// `PROMPT_SYSTEM_STATE`. Reads:
+///   - active project   (most recent execution → fallback last created)
+///   - skills catalog   (already passed in, no duplicate fs walk)
+///   - running execution (status='running', plus any failed steps)
+///   - last finished execution (any status, finished_at NOT NULL)
+///
+/// Db errors degrade to "nenhum"/"nenhuma" lines instead of bubbling —
+/// the chat turn must succeed even if the snapshot is partial. The model
+/// will still get PROMPT_CORE / RULES / etc. and can answer generic
+/// questions.
+async fn collect_system_state(pool: &SqlitePool, skills: &[SkillMeta]) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(6);
+
+    let active_project = queries::get_active_project(pool).await.ok().flatten();
+    lines.push(match active_project {
+        Some(p) => format!("Projeto ativo: {} ({})", p.name, p.repo_path),
+        None => "Projeto ativo: nenhum".to_string(),
+    });
+
+    if skills.is_empty() {
+        lines.push("Skills disponíveis: nenhuma".to_string());
+    } else {
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        lines.push(format!("Skills disponíveis: {}", names.join(", ")));
+    }
+
+    let running = queries::get_running_execution(pool).await.ok().flatten();
+    match running {
+        Some(exec) => {
+            lines.push(format!(
+                "Execução ativa: {} (step {}/{})",
+                exec.skill_name, exec.completed_steps, exec.total_steps,
+            ));
+            let failed = queries::list_steps_for_execution(pool, &exec.id)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s.status == "failed")
+                .collect::<Vec<_>>();
+            if !failed.is_empty() {
+                lines.push("  Falhas:".to_string());
+                for step in failed {
+                    let detail = step
+                        .error
+                        .as_deref()
+                        .or(step.output.as_deref())
+                        .unwrap_or("(sem output)")
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(SYSTEM_STATE_SNIPPET_CHARS)
+                        .collect::<String>();
+                    lines.push(format!("    - {}: {}", step.step_id, detail));
+                }
+            }
+        }
+        None => lines.push("Execução ativa: nenhuma".to_string()),
+    }
+
+    let last = queries::get_last_finished_execution(pool).await.ok().flatten();
+    lines.push(match last {
+        Some(exec) => {
+            let when = exec.finished_at.as_deref().unwrap_or("?");
+            format!("Última execução: {} — {} ({})", exec.skill_name, exec.status, when)
+        }
+        None => "Última execução: nenhuma".to_string(),
+    });
+
+    lines.join("\n")
+}
+
 // ── commands ────────────────────────────────────────────────────────────────
 
 const TITLE_GEN_MAX_CHARS: usize = 30;
@@ -332,6 +412,7 @@ pub async fn send_chat_message(
         role: "user".to_string(),
         content: content.clone(),
         created_at: now_iso(),
+        kind: "text".to_string(),
         thinking: None,
         thinking_summary: None,
     };
@@ -385,10 +466,12 @@ pub async fn send_chat_message(
                 .ok()
                 .flatten()
                 .map(|s| s.summary);
+            let system_state = collect_system_state(&pool, &catalog).await;
             let system_prompt = prompts::build_system_prompt(
                 user_name.as_deref(),
                 company_name.as_deref(),
                 summary.as_deref(),
+                Some(&system_state),
                 &catalog,
             );
 
@@ -417,6 +500,7 @@ pub async fn send_chat_message(
         role: "assistant".to_string(),
         content: reply_content,
         created_at: now_iso(),
+        kind: "text".to_string(),
         thinking,
         thinking_summary,
     };
@@ -476,20 +560,42 @@ async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message
     let _ = queries::rename_conversation(pool, conversation_id, &title).await;
 }
 
+/// Maximum chat turns sent to the model on each completion. Older
+/// messages stay persisted in SQLite (the UI list_messages_by_conversation
+/// command still returns the full thread for hydration), but the GPT
+/// context window only sees the last N to keep token cost bounded as
+/// conversations grow.
+const HISTORY_WINDOW: usize = 20;
+
+/// Trim a chronologically-ordered history vec to its last `max` items.
+/// Pure function pulled out so the windowing logic can be unit-tested
+/// without a SQLite fixture. Preserves ordering — `history_for` returns
+/// oldest-first, the GPT messages array expects oldest-first.
+fn cap_history<T>(mut history: Vec<T>, max: usize) -> Vec<T> {
+    if history.len() > max {
+        history.drain(..history.len() - max);
+    }
+    history
+}
+
 /// Return the prior history for GPT context. Precedence: conversation_id
 /// (new multi-thread path) over execution_id (legacy scope). Messages
 /// inserted just before the call are included since list_messages_by_*
 /// reads the fresh row.
+///
+/// Caps the result at [`HISTORY_WINDOW`] entries so the GPT call doesn't
+/// scale linearly with conversation length.
 async fn history_for(
     pool: &SqlitePool,
     execution_id: Option<&str>,
     conversation_id: Option<&str>,
 ) -> Result<Vec<ChatMessage>, String> {
-    if let Some(id) = conversation_id {
-        queries::list_messages_by_conversation(pool, id).await
+    let all = if let Some(id) = conversation_id {
+        queries::list_messages_by_conversation(pool, id).await?
     } else {
-        queries::list_messages(pool, execution_id).await
-    }
+        queries::list_messages(pool, execution_id).await?
+    };
+    Ok(cap_history(all, HISTORY_WINDOW))
 }
 
 /// Low-level passthrough. Does not persist to chat history.
@@ -516,6 +622,124 @@ pub async fn list_messages_by_conversation(
     queries::list_messages_by_conversation(&pool, &conversation_id).await
 }
 
+// ── inline execution-status flow ───────────────────────────────────────────
+
+/// Focused system prompt for the failure-analyzer call. Lives inline
+/// because `ai/prompts.rs` is locked and this prompt is one-shot
+/// (analyze-and-respond) — it doesn't reuse the modular Genesis prompt.
+const FAILURE_ANALYSIS_SYSTEM_PROMPT: &str = r#"Você analisa erros de execução de skills do Genesis.
+Receberá output e erro de um step que falhou.
+Responda em português, conciso (3-6 linhas), com:
+1. Causa provável do erro em linguagem simples
+2. Correção sugerida (comando, ajuste, dependência, etc.)
+Se o erro for vago ou desconhecido, diga isso e sugira onde pesquisar.
+Não invente causas — se faltam dados, peça os logs específicos."#;
+
+/// Persist an execution-status chat message (`⏳/✅/❌` inline entries)
+/// and emit `chat:message_inserted` so the live ChatPanel can append
+/// it without re-fetching the whole thread. Invoked from the frontend
+/// `useExecution` hook on each `execution:step_*` event.
+///
+/// `kind` is forwarded to the `chat_messages.kind` column verbatim —
+/// the frontend passes `"execution-status"` for status entries and
+/// `"text"` for regular bubbles. conversation_id is resolved from the
+/// executions row (set when `execute_skill` was called with the chat's
+/// conversationId).
+#[tauri::command]
+pub async fn insert_execution_status_message(
+    execution_id: String,
+    content: String,
+    kind: String,
+    pool: State<'_, SqlitePool>,
+    app: AppHandle,
+) -> Result<ChatMessage, String> {
+    let exec = queries::get_execution(&pool, &execution_id)
+        .await?
+        .ok_or_else(|| format!("execução `{execution_id}` não encontrada"))?;
+
+    let msg = ChatMessage {
+        id: new_id(),
+        execution_id: Some(execution_id),
+        conversation_id: exec.conversation_id.clone(),
+        role: "assistant".to_string(),
+        content,
+        created_at: now_iso(),
+        kind,
+        thinking: None,
+        thinking_summary: None,
+    };
+    queries::insert_message(&pool, &msg).await?;
+    let _ = app.emit("chat:message_inserted", &msg);
+    Ok(msg)
+}
+
+/// Send a step-failure payload to GPT for diagnosis and persist the
+/// reply as a regular assistant chat message. Returns the inserted
+/// row so the caller can also use it optimistically; emits
+/// `chat:message_inserted` for the listening ChatPanel.
+///
+/// Stays in `chat.rs` (instead of `execution.rs`) because the heavy
+/// dependency is the OpenAI client — keeping AI calls bundled with the
+/// rest of the chat surface keeps the channel/orchestrator modules
+/// AI-free. `stdout`/`stderr`/`exit_code` are all optional since the
+/// orchestrator's `step_failed` event only ships an aggregated `error`
+/// string today; richer payloads can land later without breaking this
+/// signature.
+#[tauri::command]
+pub async fn analyze_step_failure(
+    execution_id: String,
+    step_id: String,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    exit_code: Option<i64>,
+    pool: State<'_, SqlitePool>,
+    app: AppHandle,
+) -> Result<ChatMessage, String> {
+    let exec = queries::get_execution(&pool, &execution_id)
+        .await?
+        .ok_or_else(|| format!("execução `{execution_id}` não encontrada"))?;
+
+    let prompt = format!(
+        "O step **{step}** da skill **{skill}** falhou.\n\n\
+         Output (stdout):\n{stdout}\n\n\
+         Erro (stderr):\n{stderr}\n\n\
+         Exit code: {code}\n\n\
+         Analise o erro e sugira a correção.",
+        step = step_id,
+        skill = exec.skill_name,
+        stdout = stdout.as_deref().unwrap_or("(vazio)"),
+        stderr = stderr.as_deref().unwrap_or("(vazio)"),
+        code = exit_code.map_or_else(|| "?".to_string(), |c| c.to_string()),
+    );
+
+    let client = openai_client()?;
+    let messages = vec![Message {
+        role: "user".to_string(),
+        content: prompt,
+    }];
+    let analysis = client
+        .chat_completion(FAILURE_ANALYSIS_SYSTEM_PROMPT, &messages)
+        .await
+        .map_err(|e| e.user_message())?;
+
+    let msg = ChatMessage {
+        id: new_id(),
+        execution_id: Some(execution_id),
+        conversation_id: exec.conversation_id.clone(),
+        role: "assistant".to_string(),
+        content: analysis,
+        created_at: now_iso(),
+        // Analysis renders as a regular bubble (full prose, markdown),
+        // not as a status pill — keep it as `"text"`.
+        kind: "text".to_string(),
+        thinking: None,
+        thinking_summary: None,
+    };
+    queries::insert_message(&pool, &msg).await?;
+    let _ = app.emit("chat:message_inserted", &msg);
+    Ok(msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +751,36 @@ mod tests {
             extract_slash_command("  /criar-sistema com argumentos"),
             Some("criar-sistema"),
         );
+    }
+
+    #[test]
+    fn cap_history_keeps_last_n_when_over_window() {
+        // Oldest-first input; cap_history must keep the tail (most recent)
+        // and preserve order so the GPT messages array stays chronological.
+        let trimmed = cap_history(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 3);
+        assert_eq!(trimmed, vec![8, 9, 10]);
+    }
+
+    #[test]
+    fn cap_history_returns_input_unchanged_when_under_window() {
+        let small = vec!["a", "b"];
+        assert_eq!(cap_history(small.clone(), 5), small);
+    }
+
+    #[test]
+    fn cap_history_handles_exact_boundary_and_zero() {
+        // Boundary: len == max → no drain.
+        assert_eq!(cap_history(vec![1, 2, 3], 3), vec![1, 2, 3]);
+        // Edge: max=0 drops everything (defensive — current callers use
+        // HISTORY_WINDOW=20 so this branch isn't hit in prod).
+        assert!(cap_history(vec![1, 2, 3], 0).is_empty());
+    }
+
+    #[test]
+    fn history_window_matches_product_spec() {
+        // Spec: GPT sees the last 20 turns. If this constant changes,
+        // re-confirm the tradeoff (cost vs. context recall).
+        assert_eq!(HISTORY_WINDOW, 20);
     }
 
     #[test]

@@ -7,7 +7,7 @@ import {
   Save,
   XCircle,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -17,16 +17,19 @@ import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
 import {
   executeSkill,
+  insertExecutionStatusMessage,
   installDependency,
   listProjects,
   safeInvoke,
   saveSkill,
 } from "@/lib/tauri-bridge";
+import { useExecutionStore } from "@/stores/executionStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 import type { ChatMessage } from "@/types/chat";
 import type { Project } from "@/types/project";
 
 import { ThinkingBlock } from "./ThinkingBlock";
+import { ExecutionStatusMessage } from "./ExecutionStatusMessage";
 
 
 interface MessageBubbleProps {
@@ -105,6 +108,13 @@ function extractDependencyRequest(message: ChatMessage): string | null {
 }
 
 export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
+  // Inline ⏳/✅/❌ progress entries get their own component — different
+  // visual (smaller, sutil, monospace) and no skill/dependency panel
+  // detection. Short-circuit before any of the regular-bubble work.
+  if (message.type === "execution-status") {
+    return <ExecutionStatusMessage message={message} />;
+  }
+
   const isUser = message.role === "user";
   const skillToExecute = extractConfirmationSkill(message);
   const dependencyToInstall = extractDependencyRequest(message);
@@ -334,13 +344,24 @@ interface SkillExecutePanelProps {
  * Inline "▶ Executar" action for skill-preview bubbles. Fetches projects on
  * mount, lets the user pick one, and fires the execute_skill command. Once
  * triggered, the button locks to prevent double-starts — progress streams
- * into the inline ExecutionMessage rendered right in the chat stream.
+ * as inline `execution-status` messages in the chat (see useExecution hook
+ * + ExecutionStatusMessage component); pause/abort controls live in
+ * `<ExecutionControlBar>` above the input.
+ *
+ * Wires the route's conversationId into `executeSkill` so the backend
+ * routes ⏳/✅/❌ messages back to this thread, and seeds
+ * `useExecutionStore.activeExecution` with the real skill_name + project
+ * before the first `execution:step_*` event lands — otherwise the
+ * skill-completion message would render the placeholder
+ * "(execução em andamento)" label.
  */
 function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
+  const { conversationId = "" } = useParams<{ conversationId: string }>();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [starting, setStarting] = useState(false);
   const [started, setStarted] = useState(false);
+  const setActiveExecution = useExecutionStore((s) => s.setActiveExecution);
 
   useEffect(() => {
     listProjects()
@@ -357,7 +378,12 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
     if (!selectedId || started) return;
     setStarting(true);
     const executionId = await safeInvoke(
-      () => executeSkill({ skillName, projectId: selectedId }),
+      () =>
+        executeSkill({
+          skillName,
+          projectId: selectedId,
+          conversationId: conversationId || null,
+        }),
       {
         successTitle: "Execução iniciada",
         errorTitle: "Falha ao executar skill",
@@ -365,6 +391,37 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
     );
     if (executionId) {
       setStarted(true);
+
+      // Seed the live store with real metadata so subsequent step
+      // events don't fall back to "(execução em andamento)" — the
+      // skill-completion message reads skill_name from here.
+      const project = projects?.find((p) => p.id === selectedId);
+      const nowIso = new Date().toISOString();
+      setActiveExecution({
+        id: executionId,
+        project_id: selectedId,
+        skill_name: skillName,
+        status: "running",
+        started_at: nowIso,
+        finished_at: null,
+        total_steps: 0,
+        completed_steps: 0,
+        created_at: nowIso,
+        conversation_id: conversationId || null,
+      });
+
+      // Initial "⏳ Executando skill..." status message — covers the
+      // window between executeSkill returning and the first
+      // execution:step_started event landing (typically <500ms but
+      // visible). Project name falls back to id if missing from list.
+      const projectLabel = project?.name ?? selectedId;
+      insertExecutionStatusMessage({
+        executionId,
+        content: `⏳ Executando skill **${skillName}** no projeto **${projectLabel}**...`,
+        kind: "execution-status",
+      }).catch((err) =>
+        console.warn("[SkillExecutePanel] initial status msg failed:", err),
+      );
     } else {
       setStarting(false);
     }

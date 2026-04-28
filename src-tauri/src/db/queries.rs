@@ -59,7 +59,50 @@ pub async fn delete_project(pool: &SqlitePool, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolves the "active project" for the system-state snapshot injected
+/// into the chat prompt: the project tied to the most recent execution.
+/// When no execution exists yet (fresh install), falls back to the most
+/// recently created project. Returns `None` only when the user has no
+/// projects at all.
+///
+/// Two queries instead of one `LEFT JOIN ... GROUP BY` so the fallback
+/// path is explicit and easy to test. This runs once per chat turn, not
+/// in a hot loop, so the extra round-trip is fine.
+pub async fn get_active_project(pool: &SqlitePool) -> Result<Option<Project>, String> {
+    let by_execution = sqlx::query_as::<_, Project>(
+        "SELECT p.id, p.name, p.repo_path, p.created_at, p.updated_at
+         FROM projects p
+         JOIN executions e ON e.project_id = p.id
+         ORDER BY e.created_at DESC
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)?;
+
+    if by_execution.is_some() {
+        return Ok(by_execution);
+    }
+
+    sqlx::query_as::<_, Project>(
+        "SELECT id, name, repo_path, created_at, updated_at
+         FROM projects
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
 // ── executions ──────────────────────────────────────────────────────────────
+
+/// Single source of truth for the columns SELECTed into [`Execution`].
+/// Prevents drift when a column is added (FromRow rejects rows missing a
+/// field). All SELECTs in this section must format with this const.
+const EXECUTION_COLUMNS: &str =
+    "id, project_id, skill_name, status, started_at, finished_at, \
+     total_steps, completed_steps, created_at, conversation_id";
 
 /// Count executions for `skill_name` that are still in flight (pending,
 /// running or paused). Used to block destructive actions like deleting the
@@ -83,13 +126,10 @@ pub async fn list_executions_for_project(
     pool: &SqlitePool,
     project_id: &str,
 ) -> Result<Vec<Execution>, String> {
-    sqlx::query_as::<_, Execution>(
-        "SELECT id, project_id, skill_name, status, started_at, finished_at,
-                total_steps, completed_steps, created_at
-         FROM executions
-         WHERE project_id = ?1
-         ORDER BY created_at DESC",
-    )
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions \
+         WHERE project_id = ?1 ORDER BY created_at DESC"
+    ))
     .bind(project_id)
     .fetch_all(pool)
     .await
@@ -100,12 +140,41 @@ pub async fn get_execution(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<Option<Execution>, String> {
-    sqlx::query_as::<_, Execution>(
-        "SELECT id, project_id, skill_name, status, started_at, finished_at,
-                total_steps, completed_steps, created_at
-         FROM executions WHERE id = ?1",
-    )
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions WHERE id = ?1"
+    ))
     .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// In-flight execution for the system-state snapshot. Returns the most
+/// recently started execution whose status is still `running` (a single
+/// active execution at a time is the expected state, but we order by
+/// started_at DESC defensively in case of concurrent runs).
+pub async fn get_running_execution(pool: &SqlitePool) -> Result<Option<Execution>, String> {
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions \
+         WHERE status = 'running' ORDER BY started_at DESC LIMIT 1"
+    ))
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Most recent execution that already finished (success/failure/aborted).
+/// `finished_at IS NOT NULL` is the canonical "this run is done" signal —
+/// status alone isn't enough since the schema permits intermediate
+/// values. Used by the system-state snapshot so the model can reference
+/// "the last thing we ran" without asking the user.
+pub async fn get_last_finished_execution(
+    pool: &SqlitePool,
+) -> Result<Option<Execution>, String> {
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions \
+         WHERE finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1"
+    ))
     .fetch_optional(pool)
     .await
     .map_err(map_err)
@@ -115,8 +184,8 @@ pub async fn insert_execution(pool: &SqlitePool, execution: &Execution) -> Resul
     sqlx::query(
         "INSERT INTO executions
            (id, project_id, skill_name, status, started_at, finished_at,
-            total_steps, completed_steps)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            total_steps, completed_steps, conversation_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
     .bind(&execution.id)
     .bind(&execution.project_id)
@@ -126,6 +195,7 @@ pub async fn insert_execution(pool: &SqlitePool, execution: &Execution) -> Resul
     .bind(&execution.finished_at)
     .bind(execution.total_steps)
     .bind(execution.completed_steps)
+    .bind(&execution.conversation_id)
     .execute(pool)
     .await
     .map_err(map_err)?;
@@ -218,7 +288,7 @@ pub async fn update_step_status(
 // ── chat_messages ───────────────────────────────────────────────────────────
 
 const MESSAGE_COLUMNS: &str =
-    "id, execution_id, conversation_id, role, content, created_at, thinking, thinking_summary";
+    "id, execution_id, conversation_id, role, content, created_at, kind, thinking, thinking_summary";
 
 pub async fn list_messages(
     pool: &SqlitePool,
@@ -258,14 +328,15 @@ pub async fn list_messages_by_conversation(
 pub async fn insert_message(pool: &SqlitePool, message: &ChatMessage) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO chat_messages
-            (id, execution_id, conversation_id, role, content, thinking, thinking_summary)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (id, execution_id, conversation_id, role, content, kind, thinking, thinking_summary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&message.id)
     .bind(&message.execution_id)
     .bind(&message.conversation_id)
     .bind(&message.role)
     .bind(&message.content)
+    .bind(&message.kind)
     .bind(&message.thinking)
     .bind(&message.thinking_summary)
     .execute(pool)

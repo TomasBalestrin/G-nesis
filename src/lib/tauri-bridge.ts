@@ -142,12 +142,21 @@ export function getExecutionDetail(args: {
 
 // ── execution ───────────────────────────────────────────────────────────────
 
-/** Starts an execution. Resolves to the new `execution_id`. */
+/** Starts an execution. Resolves to the new `execution_id`. The
+ *  `conversationId` is forwarded to `executions.conversation_id` so
+ *  the inline status-message flow can route ⏳/✅/❌ entries back to
+ *  the chat thread that triggered the run. Pass `null` for runs
+ *  started outside the chat (manual, future cron). */
 export function executeSkill(args: {
   skillName: string;
   projectId: string;
+  conversationId?: string | null;
 }): Promise<string> {
-  return invoke("execute_skill", args);
+  return invoke("execute_skill", {
+    skillName: args.skillName,
+    projectId: args.projectId,
+    conversationId: args.conversationId ?? null,
+  });
 }
 
 export function abortExecution(args: {
@@ -200,6 +209,49 @@ export function listMessagesByConversation(args: {
   conversationId: string;
 }): Promise<ChatMessage[]> {
   return invoke("list_messages_by_conversation", args);
+}
+
+/**
+ * Persist an inline execution-status chat message and emit
+ * `chat:message_inserted` for the live ChatPanel to append. `kind` is
+ * forwarded verbatim to the `chat_messages.kind` column — pass
+ * `"execution-status"` for ⏳/✅/❌ entries (smaller, sutil styling) or
+ * `"text"` for regular bubbles. Routing to the originating conversation
+ * is resolved server-side via `executions.conversation_id`.
+ */
+export function insertExecutionStatusMessage(args: {
+  executionId: string;
+  content: string;
+  kind: ChatMessage["type"];
+}): Promise<ChatMessage> {
+  return invoke("insert_execution_status_message", {
+    executionId: args.executionId,
+    content: args.content,
+    kind: args.kind,
+  });
+}
+
+/**
+ * Send a step-failure payload (stdout/stderr/exit_code) to GPT for
+ * diagnosis and persist the analysis as a regular assistant message.
+ * Returns the inserted message and emits `chat:message_inserted`.
+ * Slow path — typical 2-5s GPT roundtrip; callers should display a
+ * placeholder ❌ status message first.
+ */
+export function analyzeStepFailure(args: {
+  executionId: string;
+  stepId: string;
+  stdout?: string | null;
+  stderr?: string | null;
+  exitCode?: number | null;
+}): Promise<ChatMessage> {
+  return invoke("analyze_step_failure", {
+    executionId: args.executionId,
+    stepId: args.stepId,
+    stdout: args.stdout ?? null,
+    stderr: args.stderr ?? null,
+    exitCode: args.exitCode ?? null,
+  });
 }
 
 // ── conversations ───────────────────────────────────────────────────────────

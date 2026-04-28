@@ -68,6 +68,8 @@ pub fn run() {
             chat::send_chat_message,
             chat::call_openai,
             chat::list_messages_by_conversation,
+            chat::insert_execution_status_message,
+            chat::analyze_step_failure,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,
