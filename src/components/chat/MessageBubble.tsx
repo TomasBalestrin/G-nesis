@@ -27,6 +27,7 @@ import type { ChatMessage } from "@/types/chat";
 import type { Project } from "@/types/project";
 
 import { ThinkingBlock } from "./ThinkingBlock";
+import { ExecutionStatusMessage } from "./ExecutionStatusMessage";
 
 
 interface MessageBubbleProps {
@@ -105,6 +106,13 @@ function extractDependencyRequest(message: ChatMessage): string | null {
 }
 
 export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
+  // Inline ⏳/✅/❌ progress entries get their own component — different
+  // visual (smaller, sutil, monospace) and no skill/dependency panel
+  // detection. Short-circuit before any of the regular-bubble work.
+  if (message.type === "execution-status") {
+    return <ExecutionStatusMessage message={message} />;
+  }
+
   const isUser = message.role === "user";
   const skillToExecute = extractConfirmationSkill(message);
   const dependencyToInstall = extractDependencyRequest(message);
