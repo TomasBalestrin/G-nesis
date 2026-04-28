@@ -66,14 +66,23 @@ export function ChatPanel() {
   // analyses) without a full re-fetch. Filters by conversation_id so
   // messages routed to other threads don't leak in. Dedupes by id —
   // the optimistic insert in handleSend may have already added this
-  // row.
+  // row. Defensive try-catch + payload validation: a malformed event
+  // shouldn't kill the React tree.
   useTauriEvent("chat:message_inserted", (event) => {
-    if (event.message.conversation_id !== conversationId) return;
-    setMessages((prev) =>
-      prev.some((m) => m.id === event.message.id)
-        ? prev
-        : [...prev, event.message],
-    );
+    try {
+      if (!event?.message?.id || !event.message.role) {
+        console.warn("[ChatPanel] message_inserted payload inválido:", event);
+        return;
+      }
+      if (event.message.conversation_id !== conversationId) return;
+      setMessages((prev) =>
+        prev.some((m) => m.id === event.message.id)
+          ? prev
+          : [...prev, event.message],
+      );
+    } catch (err) {
+      console.error("[ChatPanel] message_inserted crash:", err);
+    }
   });
 
   // Read user_name once for the empty-state greeting. Failures are
@@ -157,14 +166,24 @@ export function ChatPanel() {
     }
   }
 
+  // Defensive filter: drop rows with missing essentials before render.
+  // A corrupted DB row (legacy migration, partial write during crash,
+  // truncated event payload) would otherwise reach MessageBubble and
+  // crash the tree on the markdown layer. Filtering here is cheap and
+  // keeps the empty-state condition below honest — `messages.length`
+  // post-filter decides whether to show the greeting or the chat.
+  const renderable = messages.filter(
+    (m) => m?.id && m.content != null && m.role,
+  );
+
   // Empty-state branch: shown only on a brand-new conversation with
   // nothing in flight. CommandInput is rendered ONCE — here, centered
-  // under the greeting. Once the user sends, `messages.length` flips
+  // under the greeting. Once the user sends, `renderable.length` flips
   // to 1 (optimistic add) and the next render switches to the normal
   // layout below; CommandInput unmounts here and remounts at the
   // bottom. State loss is a non-issue since `submitRaw` clears the
   // textarea before the parent re-renders.
-  if (messages.length === 0 && !sending) {
+  if (renderable.length === 0 && !sending) {
     return (
       <div className="flex h-full min-w-0 flex-1 flex-col items-center justify-center px-4">
         <EmptyStateGreeting userName={userName} />
@@ -183,7 +202,7 @@ export function ChatPanel() {
     <div className="flex h-full min-w-0 flex-1 flex-col">
       <ScrollArea className="flex-1">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-          {messages.map((m) => (
+          {renderable.map((m) => (
             <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
           ))}
           {sending && isThinking ? (

@@ -108,11 +108,27 @@ function extractDependencyRequest(message: ChatMessage): string | null {
 }
 
 export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
+  // Defensive: ChatPanel already filters obvious garbage but a malformed
+  // chat:message_inserted payload could still arrive optimistically;
+  // bail out instead of letting markdown parsing crash the render tree.
+  if (!message?.id || message.content == null) {
+    console.warn("[MessageBubble] skipping malformed message:", message);
+    return null;
+  }
+
   // Inline ⏳/✅/❌ progress entries get their own component — different
   // visual (smaller, sutil, monospace) and no skill/dependency panel
   // detection. Short-circuit before any of the regular-bubble work.
+  // Wrap the dispatch in a try/catch so a malformed execution-status
+  // payload (no leading emoji, missing step_id token) renders as a
+  // plain text bubble instead of crashing the tree.
   if (message.type === "execution-status") {
-    return <ExecutionStatusMessage message={message} />;
+    try {
+      return <ExecutionStatusMessage message={message} />;
+    } catch (err) {
+      console.warn("[MessageBubble] execution-status fallback:", err);
+      // fall through to plain-text rendering below
+    }
   }
 
   const isUser = message.role === "user";
