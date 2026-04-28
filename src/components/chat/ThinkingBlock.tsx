@@ -30,8 +30,8 @@ const COLLAPSED_SUMMARY = "Raciocínio do modelo";
  *     Default-collapsed when streaming flips to false; user toggles after.
  *
  * Built without @radix-ui/react-accordion (not in deps) — the disclosure
- * pattern here is identical to the inline expand/collapse used elsewhere
- * (InlineStepCard, sidebar sections), keeps the bundle slim.
+ * pattern here is identical to the inline expand/collapse used in
+ * sidebar sections, keeps the bundle slim.
  */
 export function ThinkingBlock({
   thinking,

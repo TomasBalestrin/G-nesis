@@ -343,9 +343,10 @@ interface SkillExecutePanelProps {
 /**
  * Inline "▶ Executar" action for skill-preview bubbles. Fetches projects on
  * mount, lets the user pick one, and fires the execute_skill command. Once
- * triggered, the button locks to prevent double-starts — progress now
- * streams as inline `execution-status` messages in the chat (see
- * useExecution hook + ExecutionStatusMessage component).
+ * triggered, the button locks to prevent double-starts — progress streams
+ * as inline `execution-status` messages in the chat (see useExecution hook
+ * + ExecutionStatusMessage component); pause/abort controls live in
+ * `<ExecutionControlBar>` above the input.
  *
  * Wires the route's conversationId into `executeSkill` so the backend
  * routes ⏳/✅/❌ messages back to this thread, and seeds

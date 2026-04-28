@@ -15,11 +15,8 @@ export type ChatRole = "user" | "assistant" | "system";
  *                           the `useExecution` hook on each
  *                           `execution:step_*` event. Renders smaller
  *                           and sutil to keep the chat readable.
- * - `"execution"`         — legacy virtual entry kept around so
- *                           ChatPanel's union compiles during the
- *                           cutover; deleted with ExecutionMessage in F4.
  */
-export type ChatMessageType = "text" | "execution-status" | "execution";
+export type ChatMessageType = "text" | "execution-status";
 
 export interface ChatMessage {
   id: string;

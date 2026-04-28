@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,11 +13,10 @@ import {
 } from "@/lib/tauri-bridge";
 import { useChatStore } from "@/stores/chatStore";
 import { useConversationsStore } from "@/stores/conversationsStore";
-import { useExecutionStore } from "@/stores/executionStore";
 import type { ChatMessage } from "@/types/chat";
 
 import { CommandInput } from "./CommandInput";
-import { ExecutionMessage } from "./ExecutionMessage";
+import { ExecutionControlBar } from "./ExecutionControlBar";
 import { MessageBubble } from "./MessageBubble";
 import { ThinkingBlock } from "./ThinkingBlock";
 
@@ -26,17 +25,18 @@ import { ThinkingBlock } from "./ThinkingBlock";
  * route (`/chat/:conversationId`) and keeps its own message buffer since
  * messages are per-thread and loading history is cheap.
  *
- * When a skill is running, an inline `<ExecutionMessage>` renders right in
- * the message stream as a virtual chat item with `type: "execution"` —
- * steps, logs, and controls all live inside the chat (no modal, no side
- * panel).
+ * Skill execution surfaces inline now: each `execution:step_*` event
+ * gets persisted as a `kind: "execution-status"` chat message by
+ * useExecution + the backend (F1-F3), and the live ChatPanel listens
+ * to `chat:message_inserted` to append without a re-fetch. Pause/abort
+ * controls live in the thin `<ExecutionControlBar>` between the scroll
+ * area and the input — only visible while an execution is running or
+ * paused.
  */
 export function ChatPanel() {
   const { conversationId = "" } = useParams<{ conversationId: string }>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
-  const activeExecution = useExecutionStore((s) => s.activeExecution);
-  const hasActiveExecution = activeExecution !== null;
   const refreshConversations = useConversationsStore((s) => s.refresh);
   const startThinking = useChatStore((s) => s.startThinking);
   const clearThinking = useChatStore((s) => s.clearThinking);
@@ -93,7 +93,7 @@ export function ChatPanel() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, sending, hasActiveExecution]);
+  }, [messages.length, sending]);
 
   async function handleSend(content: string) {
     if (!conversationId) return;
@@ -130,38 +130,16 @@ export function ChatPanel() {
     }
   }
 
-  // Stitches the persisted text messages with an in-memory virtual entry
-  // for the active execution. Keeping the union here lets the renderer
-  // dispatch on `message.type` without scattering execution-store reads
-  // across MessageBubble.
-  const displayMessages = useMemo<ChatMessage[]>(() => {
-    if (!activeExecution) return messages;
-    const virtual: ChatMessage = {
-      id: `execution-${activeExecution.id}`,
-      execution_id: activeExecution.id,
-      conversation_id: conversationId || null,
-      role: "assistant",
-      content: "",
-      created_at: activeExecution.started_at ?? new Date().toISOString(),
-      type: "execution",
-    };
-    return [...messages, virtual];
-  }, [messages, activeExecution, conversationId]);
-
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
       <ScrollArea className="flex-1">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-          {displayMessages.length === 0 && !sending ? (
+          {messages.length === 0 && !sending ? (
             <EmptyState />
           ) : (
-            displayMessages.map((m) =>
-              m.type === "execution" ? (
-                <ExecutionMessage key={m.id} />
-              ) : (
-                <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
-              ),
-            )
+            messages.map((m) => (
+              <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
+            ))
           )}
           {sending && isThinking ? (
             <div className="flex w-full justify-start">
@@ -179,6 +157,8 @@ export function ChatPanel() {
           <div ref={endRef} />
         </div>
       </ScrollArea>
+
+      <ExecutionControlBar />
 
       <div className="border-t border-border bg-background p-4">
         <div className="mx-auto max-w-3xl">

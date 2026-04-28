@@ -16,12 +16,17 @@ import type {
 } from "@/types/events";
 
 /**
- * Subscribe to executor events and keep the execution store in sync.
+ * Subscribe to executor events and keep the execution store in sync,
+ * plus persist each event as an inline `execution-status` chat message
+ * (see commands/chat.rs::insert_execution_status_message). On
+ * `step_failed` also chains a GPT analysis call so the user sees the
+ * placeholder ❌ immediately followed by a diagnosis bubble.
  *
  * The backend emits events keyed by the skill's logical `step_id`
  * ("step_1"), not the DB row UUID — so we upsert by that. On the first
- * `step_started` of a new execution_id we also seed `activeExecution` with
- * minimal fields, so the inline ExecutionMessage has something to render
+ * `step_started` of a new execution_id we also seed `activeExecution`
+ * with minimal fields, so the ExecutionControlBar (pause/abort) and
+ * the live spinner in ExecutionStatusMessage have something to read
  * even though the executor doesn't emit a dedicated "started" event.
  *
  * No return value — this is a subscription side-effect hook.
@@ -237,8 +242,9 @@ function computeDuration(startedAt: string | null): number | null {
 }
 
 /** Compact duration label for status messages: "120ms", "2.3s",
- *  "1m12s". Mirrors the formatter in ExecutionMessage so the visual
- *  rhythm stays consistent across the surfaces during the cutover. */
+ *  "1m12s". Used in the persisted "✅ Step X — Concluído (Xs)"
+ *  entries so the chat history reads consistently regardless of how
+ *  long each step took. */
 function formatDuration(ms: number | null): string {
   if (ms === null) return "?";
   if (ms < 1000) return `${ms}ms`;
