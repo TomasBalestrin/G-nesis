@@ -10,7 +10,6 @@ import { NewProjectForm } from "@/components/projects/NewProjectForm";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
-import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
@@ -161,9 +160,6 @@ function App() {
               creating and inspecting a single project. */}
           <Route path="projects/new" element={<NewProjectForm />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
-
-          {/* Embedded interactive terminal (xterm.js + portable-pty). */}
-          <Route path="terminal" element={<TerminalPanel />} />
 
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />

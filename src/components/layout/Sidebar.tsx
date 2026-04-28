@@ -9,7 +9,6 @@ import {
   Plus,
   Settings,
   Sun,
-  Terminal as TerminalIcon,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -555,14 +554,6 @@ function Footer() {
         >
           <Settings className="h-4 w-4" />
           Settings
-        </Link>
-        <Link
-          to="/terminal"
-          aria-label="Abrir terminal embutido"
-          title="Terminal"
-          className="flex items-center gap-2 rounded-md p-2 text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
-        >
-          <TerminalIcon className="h-4 w-4" />
         </Link>
       </div>
       <button
