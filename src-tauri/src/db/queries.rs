@@ -97,6 +97,13 @@ pub async fn get_active_project(pool: &SqlitePool) -> Result<Option<Project>, St
 
 // ── executions ──────────────────────────────────────────────────────────────
 
+/// Single source of truth for the columns SELECTed into [`Execution`].
+/// Prevents drift when a column is added (FromRow rejects rows missing a
+/// field). All SELECTs in this section must format with this const.
+const EXECUTION_COLUMNS: &str =
+    "id, project_id, skill_name, status, started_at, finished_at, \
+     total_steps, completed_steps, created_at, conversation_id";
+
 /// Count executions for `skill_name` that are still in flight (pending,
 /// running or paused). Used to block destructive actions like deleting the
 /// skill .md while a job is using it.
@@ -119,13 +126,10 @@ pub async fn list_executions_for_project(
     pool: &SqlitePool,
     project_id: &str,
 ) -> Result<Vec<Execution>, String> {
-    sqlx::query_as::<_, Execution>(
-        "SELECT id, project_id, skill_name, status, started_at, finished_at,
-                total_steps, completed_steps, created_at
-         FROM executions
-         WHERE project_id = ?1
-         ORDER BY created_at DESC",
-    )
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions \
+         WHERE project_id = ?1 ORDER BY created_at DESC"
+    ))
     .bind(project_id)
     .fetch_all(pool)
     .await
@@ -136,11 +140,9 @@ pub async fn get_execution(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<Option<Execution>, String> {
-    sqlx::query_as::<_, Execution>(
-        "SELECT id, project_id, skill_name, status, started_at, finished_at,
-                total_steps, completed_steps, created_at
-         FROM executions WHERE id = ?1",
-    )
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions WHERE id = ?1"
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await
@@ -152,14 +154,10 @@ pub async fn get_execution(
 /// active execution at a time is the expected state, but we order by
 /// started_at DESC defensively in case of concurrent runs).
 pub async fn get_running_execution(pool: &SqlitePool) -> Result<Option<Execution>, String> {
-    sqlx::query_as::<_, Execution>(
-        "SELECT id, project_id, skill_name, status, started_at, finished_at,
-                total_steps, completed_steps, created_at
-         FROM executions
-         WHERE status = 'running'
-         ORDER BY started_at DESC
-         LIMIT 1",
-    )
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions \
+         WHERE status = 'running' ORDER BY started_at DESC LIMIT 1"
+    ))
     .fetch_optional(pool)
     .await
     .map_err(map_err)
@@ -173,14 +171,10 @@ pub async fn get_running_execution(pool: &SqlitePool) -> Result<Option<Execution
 pub async fn get_last_finished_execution(
     pool: &SqlitePool,
 ) -> Result<Option<Execution>, String> {
-    sqlx::query_as::<_, Execution>(
-        "SELECT id, project_id, skill_name, status, started_at, finished_at,
-                total_steps, completed_steps, created_at
-         FROM executions
-         WHERE finished_at IS NOT NULL
-         ORDER BY finished_at DESC
-         LIMIT 1",
-    )
+    sqlx::query_as::<_, Execution>(&format!(
+        "SELECT {EXECUTION_COLUMNS} FROM executions \
+         WHERE finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1"
+    ))
     .fetch_optional(pool)
     .await
     .map_err(map_err)
@@ -190,8 +184,8 @@ pub async fn insert_execution(pool: &SqlitePool, execution: &Execution) -> Resul
     sqlx::query(
         "INSERT INTO executions
            (id, project_id, skill_name, status, started_at, finished_at,
-            total_steps, completed_steps)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            total_steps, completed_steps, conversation_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
     .bind(&execution.id)
     .bind(&execution.project_id)
@@ -201,6 +195,7 @@ pub async fn insert_execution(pool: &SqlitePool, execution: &Execution) -> Resul
     .bind(&execution.finished_at)
     .bind(execution.total_steps)
     .bind(execution.completed_steps)
+    .bind(&execution.conversation_id)
     .execute(pool)
     .await
     .map_err(map_err)?;
@@ -293,7 +288,7 @@ pub async fn update_step_status(
 // ── chat_messages ───────────────────────────────────────────────────────────
 
 const MESSAGE_COLUMNS: &str =
-    "id, execution_id, conversation_id, role, content, created_at, thinking, thinking_summary";
+    "id, execution_id, conversation_id, role, content, created_at, kind, thinking, thinking_summary";
 
 pub async fn list_messages(
     pool: &SqlitePool,
@@ -333,14 +328,15 @@ pub async fn list_messages_by_conversation(
 pub async fn insert_message(pool: &SqlitePool, message: &ChatMessage) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO chat_messages
-            (id, execution_id, conversation_id, role, content, thinking, thinking_summary)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (id, execution_id, conversation_id, role, content, kind, thinking, thinking_summary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&message.id)
     .bind(&message.execution_id)
     .bind(&message.conversation_id)
     .bind(&message.role)
     .bind(&message.content)
+    .bind(&message.kind)
     .bind(&message.thinking)
     .bind(&message.thinking_summary)
     .execute(pool)

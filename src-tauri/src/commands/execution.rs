@@ -73,6 +73,7 @@ async fn resolve_project_id(
 pub async fn execute_skill(
     skill_name: String,
     project_id: Option<String>,
+    conversation_id: Option<String>,
     pool: State<'_, SqlitePool>,
     registry: State<'_, ExecutionRegistry>,
     app: AppHandle,
@@ -97,6 +98,10 @@ pub async fn execute_skill(
         total_steps: skill.steps.len() as i64,
         completed_steps: 0,
         created_at: now_iso(),
+        // Empty string from the frontend collapses to None so the row is
+        // properly NULL — keeps "no chat thread" and "started from chat
+        // X" distinct in the audit trail.
+        conversation_id: conversation_id.filter(|s| !s.is_empty()),
     };
     queries::insert_execution(&pool, &execution).await?;
 

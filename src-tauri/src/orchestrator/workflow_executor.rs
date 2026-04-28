@@ -197,6 +197,9 @@ impl WorkflowExecutor {
             total_steps: parsed.steps.len() as i64,
             completed_steps: 0,
             created_at: now_iso(),
+            // Workflow-driven runs aren't chat-triggered; the chat-message
+            // routing key stays NULL.
+            conversation_id: None,
         };
         if queries::insert_execution(&self.pool, &exec_row).await.is_err() {
             return self.emit_completed(step, StepOutcome::Failed, &skill_execution_id);

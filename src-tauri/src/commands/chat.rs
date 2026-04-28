@@ -412,6 +412,7 @@ pub async fn send_chat_message(
         role: "user".to_string(),
         content: content.clone(),
         created_at: now_iso(),
+        kind: "text".to_string(),
         thinking: None,
         thinking_summary: None,
     };
@@ -499,6 +500,7 @@ pub async fn send_chat_message(
         role: "assistant".to_string(),
         content: reply_content,
         created_at: now_iso(),
+        kind: "text".to_string(),
         thinking,
         thinking_summary,
     };
@@ -618,6 +620,124 @@ pub async fn list_messages_by_conversation(
     pool: State<'_, SqlitePool>,
 ) -> Result<Vec<ChatMessage>, String> {
     queries::list_messages_by_conversation(&pool, &conversation_id).await
+}
+
+// ── inline execution-status flow ───────────────────────────────────────────
+
+/// Focused system prompt for the failure-analyzer call. Lives inline
+/// because `ai/prompts.rs` is locked and this prompt is one-shot
+/// (analyze-and-respond) — it doesn't reuse the modular Genesis prompt.
+const FAILURE_ANALYSIS_SYSTEM_PROMPT: &str = r#"Você analisa erros de execução de skills do Genesis.
+Receberá output e erro de um step que falhou.
+Responda em português, conciso (3-6 linhas), com:
+1. Causa provável do erro em linguagem simples
+2. Correção sugerida (comando, ajuste, dependência, etc.)
+Se o erro for vago ou desconhecido, diga isso e sugira onde pesquisar.
+Não invente causas — se faltam dados, peça os logs específicos."#;
+
+/// Persist an execution-status chat message (`⏳/✅/❌` inline entries)
+/// and emit `chat:message_inserted` so the live ChatPanel can append
+/// it without re-fetching the whole thread. Invoked from the frontend
+/// `useExecution` hook on each `execution:step_*` event.
+///
+/// `kind` is forwarded to the `chat_messages.kind` column verbatim —
+/// the frontend passes `"execution-status"` for status entries and
+/// `"text"` for regular bubbles. conversation_id is resolved from the
+/// executions row (set when `execute_skill` was called with the chat's
+/// conversationId).
+#[tauri::command]
+pub async fn insert_execution_status_message(
+    execution_id: String,
+    content: String,
+    kind: String,
+    pool: State<'_, SqlitePool>,
+    app: AppHandle,
+) -> Result<ChatMessage, String> {
+    let exec = queries::get_execution(&pool, &execution_id)
+        .await?
+        .ok_or_else(|| format!("execução `{execution_id}` não encontrada"))?;
+
+    let msg = ChatMessage {
+        id: new_id(),
+        execution_id: Some(execution_id),
+        conversation_id: exec.conversation_id.clone(),
+        role: "assistant".to_string(),
+        content,
+        created_at: now_iso(),
+        kind,
+        thinking: None,
+        thinking_summary: None,
+    };
+    queries::insert_message(&pool, &msg).await?;
+    let _ = app.emit("chat:message_inserted", &msg);
+    Ok(msg)
+}
+
+/// Send a step-failure payload to GPT for diagnosis and persist the
+/// reply as a regular assistant chat message. Returns the inserted
+/// row so the caller can also use it optimistically; emits
+/// `chat:message_inserted` for the listening ChatPanel.
+///
+/// Stays in `chat.rs` (instead of `execution.rs`) because the heavy
+/// dependency is the OpenAI client — keeping AI calls bundled with the
+/// rest of the chat surface keeps the channel/orchestrator modules
+/// AI-free. `stdout`/`stderr`/`exit_code` are all optional since the
+/// orchestrator's `step_failed` event only ships an aggregated `error`
+/// string today; richer payloads can land later without breaking this
+/// signature.
+#[tauri::command]
+pub async fn analyze_step_failure(
+    execution_id: String,
+    step_id: String,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    exit_code: Option<i64>,
+    pool: State<'_, SqlitePool>,
+    app: AppHandle,
+) -> Result<ChatMessage, String> {
+    let exec = queries::get_execution(&pool, &execution_id)
+        .await?
+        .ok_or_else(|| format!("execução `{execution_id}` não encontrada"))?;
+
+    let prompt = format!(
+        "O step **{step}** da skill **{skill}** falhou.\n\n\
+         Output (stdout):\n{stdout}\n\n\
+         Erro (stderr):\n{stderr}\n\n\
+         Exit code: {code}\n\n\
+         Analise o erro e sugira a correção.",
+        step = step_id,
+        skill = exec.skill_name,
+        stdout = stdout.as_deref().unwrap_or("(vazio)"),
+        stderr = stderr.as_deref().unwrap_or("(vazio)"),
+        code = exit_code.map_or_else(|| "?".to_string(), |c| c.to_string()),
+    );
+
+    let client = openai_client()?;
+    let messages = vec![Message {
+        role: "user".to_string(),
+        content: prompt,
+    }];
+    let analysis = client
+        .chat_completion(FAILURE_ANALYSIS_SYSTEM_PROMPT, &messages)
+        .await
+        .map_err(|e| e.user_message())?;
+
+    let msg = ChatMessage {
+        id: new_id(),
+        execution_id: Some(execution_id),
+        conversation_id: exec.conversation_id.clone(),
+        role: "assistant".to_string(),
+        content: analysis,
+        created_at: now_iso(),
+        // Analysis renders as a regular bubble (full prose, markdown),
+        // not as a status pill — keep it as `"text"`.
+        kind: "text".to_string(),
+        thinking: None,
+        thinking_summary: None,
+    };
+    queries::insert_message(&pool, &msg).await?;
+    let _ = app.emit("chat:message_inserted", &msg);
+    Ok(msg)
 }
 
 #[cfg(test)]

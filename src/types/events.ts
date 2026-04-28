@@ -1,5 +1,6 @@
 // Event payloads emitted by the Rust orchestrator (docs/PRD.md §4).
 
+import type { ChatMessage } from "./chat";
 import type { ExecutionStatus, StepStatus, Tool } from "./project";
 
 export interface StepStartedEvent {
@@ -34,6 +35,18 @@ export interface LogEvent {
 }
 
 // ── chat events (extended thinking streaming, ai/client.rs::ThinkingSink) ──
+
+/**
+ * Fired by the backend after `insert_execution_status_message` or
+ * `analyze_step_failure` writes a row to `chat_messages`. Lets the live
+ * ChatPanel append the new message without re-fetching the whole
+ * thread. Not scoped by conversation_id at the event channel level —
+ * the payload itself carries it (via `message.conversation_id`) so
+ * multi-conversation panels can filter.
+ */
+export interface ChatMessageInsertedEvent {
+  message: ChatMessage;
+}
 
 export interface ThinkingDeltaEvent {
   /** Conversation that owns the in-flight assistant turn. May be null when
@@ -72,6 +85,7 @@ export interface TauriEventMap {
   "execution:log": LogEvent;
   "chat:thinking_delta": ThinkingDeltaEvent;
   "chat:thinking_complete": ThinkingCompleteEvent;
+  "chat:message_inserted": ChatMessageInsertedEvent;
   "terminal:data": TerminalDataEvent;
   "terminal:exit": TerminalExitEvent;
 }

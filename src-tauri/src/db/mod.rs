@@ -95,6 +95,15 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
         .await
         .map_err(|e| format!("migration 006 failed: {e}"))?;
 
+    // 007 — inline execution-status flow: chat_messages.kind discriminates
+    // regular text bubbles from execution status entries; executions.
+    // conversation_id pins the audit trail to the chat thread that
+    // started the run so status messages route back to the right
+    // conversation. Both are inline ALTER TABLE — same guard pattern as
+    // the thinking columns above.
+    ensure_chat_messages_kind(pool).await?;
+    ensure_executions_conversation_id(pool).await?;
+
     Ok(())
 }
 
@@ -154,5 +163,58 @@ async fn ensure_chat_messages_thinking(pool: &DbPool) -> Result<(), String> {
             .map_err(|e| format!("failed to add thinking_summary column: {e}"))?;
     }
 
+    Ok(())
+}
+
+/// Adds `chat_messages.kind` (default `'text'`) so the renderer can
+/// branch between regular text bubbles and inline execution status
+/// entries (`'execution-status'`). Default backfills existing rows so
+/// FromRow always sees a populated column.
+async fn ensure_chat_messages_kind(pool: &DbPool) -> Result<(), String> {
+    let rows = sqlx::query("SELECT name FROM pragma_table_info('chat_messages')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("pragma table_info failed: {e}"))?;
+
+    let has_column = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .any(|name| name == "kind");
+
+    if has_column {
+        return Ok(());
+    }
+
+    sqlx::query("ALTER TABLE chat_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("failed to add kind column: {e}"))?;
+    Ok(())
+}
+
+/// Adds `executions.conversation_id` so a skill run started from a chat
+/// can route its status messages back to the originating thread.
+/// Nullable + no FK — executions started outside the chat (cron,
+/// manual, future programmatic triggers) leave it NULL, and the audit
+/// row outlives the conversation if the user deletes the thread.
+async fn ensure_executions_conversation_id(pool: &DbPool) -> Result<(), String> {
+    let rows = sqlx::query("SELECT name FROM pragma_table_info('executions')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("pragma table_info failed: {e}"))?;
+
+    let has_column = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .any(|name| name == "conversation_id");
+
+    if has_column {
+        return Ok(());
+    }
+
+    sqlx::query("ALTER TABLE executions ADD COLUMN conversation_id TEXT")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("failed to add executions.conversation_id: {e}"))?;
     Ok(())
 }
