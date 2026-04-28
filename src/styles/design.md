@@ -35,8 +35,8 @@ O sistema usa exclusivamente **CSS Custom Properties** (variáveis CSS), o que p
 O tema é definido pelo atributo `data-theme` no elemento raiz:
 
 ```html
-<html data-theme="blue-light">
-<html data-theme="blue-dark">
+<html data-theme="gold-light">
+<html data-theme="gold-dark">
 <html data-theme="orange-light">
 <html data-theme="orange-dark">
 ```
@@ -51,8 +51,8 @@ document.documentElement.setAttribute('data-theme', 'orange-dark');
 
 | Tema | Classe | Primário | Fundo | Modo |
 |------|--------|----------|-------|------|
-| Azul Claro | `blue-light` | `#1A5CE6` | `#faf9f5` Cream | ☀️ Light |
-| Azul Escuro | `blue-dark` | `#4A76EA` | `#1a1815` Warm Dark | 🌙 Dark |
+| Dourado Claro | `gold-light` | `#C8943E` | `#faf9f5` Cream | ☀️ Light |
+| Dourado Escuro | `gold-dark` | `#D4A04A` | `#1a1815` Warm Dark | 🌙 Dark |
 | Laranja Claro | `orange-light` | `#F2762E` | `#faf9f5` Cream | ☀️ Light |
 | Laranja Escuro | `orange-dark` | `#F48B48` | `#1a1815` Warm Dark | 🌙 Dark |
 
@@ -62,23 +62,34 @@ document.documentElement.setAttribute('data-theme', 'orange-dark');
 
 ## Paleta de Cores
 
-### Azul `#1A5CE6`
+### Dourado `#C8943E`
 
-Usada como primária nos temas `blue-light` e `blue-dark`.
+Paleta primária ativa nos temas `gold-light` e `gold-dark`.
 
 | Token | Hex | Uso |
 |-------|-----|-----|
-| `--blue-50` | `#EEF3FD` | Background hover sutil |
-| `--blue-100` | `#D4E2FB` | Background de badges e tags |
-| `--blue-200` | `#AABFF6` | Borda de elementos com accent |
-| `--blue-300` | `#7898EF` | Focus ring, dark mode hover |
-| `--blue-400` | `#4A76EA` | **Primário dark mode** |
-| `--blue-500` | `#1A5CE6` | **Primário light mode** ★ |
-| `--blue-600` | `#1449B8` | Hover no light mode |
-| `--blue-700` | `#0F368A` | Active / texto sobre bg claro |
-| `--blue-800` | `#0A245C` | Texto escuro |
-| `--blue-900` | `#06142E` | — |
-| `--blue-950` | `#030A17` | — |
+| `--gold-50` | `#FDF8F0` | Background hover sutil |
+| `--gold-100` | `#F9EDD8` | Background de badges e tags |
+| `--gold-200` | `#F0D5A8` | Borda de elementos com accent |
+| `--gold-300` | `#E4B870` | Focus ring, dark mode hover |
+| `--gold-400` | `#D4A04A` | **Primário dark mode** |
+| `--gold-500` | `#C8943E` | **Primário light mode** ★ |
+| `--gold-600` | `#A87830` | Hover no light mode |
+| `--gold-700` | `#845C24` | Active / texto sobre bg claro |
+| `--gold-800` | `#604218` | Texto sobre bg claro intenso |
+| `--gold-900` | `#3C2A0E` | — |
+| `--gold-950` | `#1E1507` | — |
+
+### Azul `#1A5CE6` *(backup, não aplicada nos temas ativos)*
+
+Mantida em `:root` como fallback. Para reativar, troque os temas
+`gold-*` por blocos `blue-*` conforme `design.css` antes de v2.1.0.
+
+| Token | Hex |
+|-------|-----|
+| `--blue-500` | `#1A5CE6` (cor base original) |
+| `--blue-400` | `#4A76EA` |
+| `--blue-700` | `#0F368A` |
 
 ### Laranja `#F2762E`
 
@@ -501,7 +512,7 @@ import './design.css';
 ### 2. Configurar o tema inicial
 
 ```html
-<html lang="pt-BR" data-theme="blue-light">
+<html lang="pt-BR" data-theme="gold-light">
 ```
 
 ### 3. Trocar tema dinamicamente
@@ -514,7 +525,7 @@ function setTheme(theme) {
 }
 
 // Restaurar tema salvo
-const saved = localStorage.getItem('theme') || 'blue-light';
+const saved = localStorage.getItem('theme') || 'gold-light';
 setTheme(saved);
 ```
 
@@ -576,11 +587,11 @@ design-system/
 ## Referência rápida de temas
 
 ```css
-/* Azul Claro */
-[data-theme="blue-light"]   { --primary: #1A5CE6; --bg: #faf9f5; }
+/* Dourado Claro */
+[data-theme="gold-light"]   { --primary: #C8943E; --bg: #faf9f5; }
 
-/* Azul Escuro */
-[data-theme="blue-dark"]    { --primary: #4A76EA; --bg: #1a1815; }
+/* Dourado Escuro */
+[data-theme="gold-dark"]    { --primary: #D4A04A; --bg: #1a1815; }
 
 /* Laranja Claro */
 [data-theme="orange-light"] { --primary: #F2762E; --bg: #faf9f5; }

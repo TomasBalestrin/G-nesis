@@ -1,12 +1,12 @@
 /* =============================================================================
    CLAUDE DESIGN SYSTEM — design.css
-   4 Temas: Azul Light · Azul Dark · Laranja Light · Laranja Dark
-   Versão 2.0.0
-   
+   4 Temas: Gold Light · Gold Dark · Laranja Light · Laranja Dark
+   Versão 2.1.0
+
    Índice:
    01. Paleta Base (cores brutas)
-   02. Tema 1 — Azul Light    [data-theme="blue-light"]
-   03. Tema 2 — Azul Dark     [data-theme="blue-dark"]
+   02. Tema 1 — Gold Light    [data-theme="gold-light"]
+   03. Tema 2 — Gold Dark     [data-theme="gold-dark"]
    04. Tema 3 — Laranja Light [data-theme="orange-light"]
    05. Tema 4 — Laranja Dark  [data-theme="orange-dark"]
    06. Tipografia
@@ -28,7 +28,7 @@
 
 :root {
 
-  /* ── Azul #1A5CE6 ── */
+  /* ── Azul #1A5CE6 ── (mantida como backup; substituída por gold nos temas) */
   --blue-50:  #EEF3FD;
   --blue-100: #D4E2FB;
   --blue-200: #AABFF6;
@@ -40,6 +40,19 @@
   --blue-800: #0A245C;
   --blue-900: #06142E;
   --blue-950: #030A17;
+
+  /* ── Dourado #C8943E ── (paleta primária ativa nos temas gold-light/dark) */
+  --gold-50:  #FDF8F0;
+  --gold-100: #F9EDD8;
+  --gold-200: #F0D5A8;
+  --gold-300: #E4B870;
+  --gold-400: #D4A04A;
+  --gold-500: #C8943E;   /* ← cor base — dourado queimado */
+  --gold-600: #A87830;
+  --gold-700: #845C24;
+  --gold-800: #604218;
+  --gold-900: #3C2A0E;
+  --gold-950: #1E1507;
 
   /* ── Laranja #F2762E ── */
   --orange-50:  #FEF3EB;
@@ -92,12 +105,12 @@
 
 
 /* =============================================================================
-   02. TEMA 1 — AZUL LIGHT
-   Fundo: Cream/Pampas · Primário: #1A5CE6
+   02. TEMA 1 — GOLD LIGHT
+   Fundo: Cream/Pampas · Primário: #C8943E (dourado queimado)
 ============================================================================= */
 
-[data-theme="blue-light"],
-.theme-blue-light {
+[data-theme="gold-light"],
+.theme-gold-light {
 
   /* Backgrounds */
   --bg:           #faf9f5;
@@ -120,26 +133,26 @@
   --text-dis:     #b1ada1;
 
   /* Primário */
-  --primary:      #1A5CE6;
-  --primary-h:    #1449B8;
-  --primary-a:    #0F368A;
-  --primary-bg:   #EEF3FD;
-  --primary-mu:   #D4E2FB;
-  --primary-tx:   #0F368A;
-  --primary-bd:   #AABFF6;
+  --primary:      #C8943E;
+  --primary-h:    #A87830;
+  --primary-a:    #845C24;
+  --primary-bg:   #FDF8F0;
+  --primary-mu:   #F9EDD8;
+  --primary-tx:   #845C24;
+  --primary-bd:   #F0D5A8;
 
   /* Input */
   --input-bg:     #ffffff;
   --input-bd:     #d1ccc4;
-  --input-focus:  #1A5CE6;
+  --input-focus:  #C8943E;
 
   /* Sidebar */
   --sb-bg:        #f4f3ee;
   --sb-bd:        #e4e0db;
   --sb-hover:     #ece9e0;
-  --sb-active:    #EEF3FD;
+  --sb-active:    #FDF8F0;
   --sb-text:      #57534d;
-  --sb-text-a:    #0F368A;
+  --sb-text-a:    #845C24;
 
   /* Código */
   --code-bg:      #f0eeec;
@@ -150,24 +163,24 @@
   --shadow-md:    0 4px 8px rgba(26,24,21,0.08), 0 2px 4px rgba(26,24,21,0.05);
   --shadow-lg:    0 12px 24px rgba(26,24,21,0.10), 0 4px 8px rgba(26,24,21,0.05);
   --shadow-xl:    0 24px 48px rgba(26,24,21,0.12), 0 8px 16px rgba(26,24,21,0.06);
-  --shadow-acc:   0 4px 16px rgba(26,92,230,0.25), 0 1px 4px rgba(26,92,230,0.12);
+  --shadow-acc:   0 4px 16px rgba(200,148,62,0.25), 0 1px 4px rgba(200,148,62,0.12);
 
   /* Focus */
-  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #7898EF;
+  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #E4B870;
 
   /* Seleção */
-  --sel-bg:       #D4E2FB;
-  --sel-tx:       #0A245C;
+  --sel-bg:       #F9EDD8;
+  --sel-tx:       #604218;
 }
 
 
 /* =============================================================================
-   03. TEMA 2 — AZUL DARK
-   Fundo: Cinza quente Claude · Primário: #4A76EA (mais brilhante no escuro)
+   03. TEMA 2 — GOLD DARK
+   Fundo: Cinza quente Claude · Primário: #D4A04A (gold-400, mais brilhante no escuro)
 ============================================================================= */
 
-[data-theme="blue-dark"],
-.theme-blue-dark {
+[data-theme="gold-dark"],
+.theme-gold-dark {
 
   /* Backgrounds */
   --bg:           #1a1815;
@@ -190,26 +203,26 @@
   --text-dis:     #726e67;
 
   /* Primário */
-  --primary:      #4A76EA;
-  --primary-h:    #7898EF;
-  --primary-a:    #AABFF6;
-  --primary-bg:   rgba(26, 92, 230, 0.14);
-  --primary-mu:   rgba(26, 92, 230, 0.22);
-  --primary-tx:   #7898EF;
-  --primary-bd:   rgba(26, 92, 230, 0.35);
+  --primary:      #D4A04A;
+  --primary-h:    #E4B870;
+  --primary-a:    #F0D5A8;
+  --primary-bg:   rgba(212, 160, 74, 0.14);
+  --primary-mu:   rgba(212, 160, 74, 0.22);
+  --primary-tx:   #E4B870;
+  --primary-bd:   rgba(212, 160, 74, 0.35);
 
   /* Input */
   --input-bg:     #1f1d1a;
   --input-bd:     #3d3a35;
-  --input-focus:  #4A76EA;
+  --input-focus:  #D4A04A;
 
   /* Sidebar */
   --sb-bg:        #1a1815;
   --sb-bd:        #2a2723;
   --sb-hover:     #2a2723;
-  --sb-active:    rgba(26, 92, 230, 0.14);
+  --sb-active:    rgba(212, 160, 74, 0.14);
   --sb-text:      #b1ada1;
-  --sb-text-a:    #7898EF;
+  --sb-text-a:    #E4B870;
 
   /* Código */
   --code-bg:      #1a1815;
@@ -220,14 +233,14 @@
   --shadow-md:    0 4px 8px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
   --shadow-lg:    0 12px 24px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.30);
   --shadow-xl:    0 24px 48px rgba(0,0,0,0.55), 0 8px 16px rgba(0,0,0,0.35);
-  --shadow-acc:   0 4px 16px rgba(74,118,234,0.30), 0 1px 4px rgba(74,118,234,0.15);
+  --shadow-acc:   0 4px 16px rgba(212,160,74,0.30), 0 1px 4px rgba(212,160,74,0.15);
 
   /* Focus */
-  --focus-ring:   0 0 0 2px #1a1815, 0 0 0 4px #4A76EA;
+  --focus-ring:   0 0 0 2px #1a1815, 0 0 0 4px #D4A04A;
 
   /* Seleção */
-  --sel-bg:       rgba(26, 92, 230, 0.28);
-  --sel-tx:       #AABFF6;
+  --sel-bg:       rgba(212, 160, 74, 0.28);
+  --sel-tx:       #F0D5A8;
 }
 
 
@@ -701,20 +714,21 @@ body {
       @import './design.css';
    
    2. Aplique o tema no elemento <html> (ou qualquer ancestral):
-      <html data-theme="blue-light">   <!-- Azul claro  -->
-      <html data-theme="blue-dark">    <!-- Azul escuro -->
+      <html data-theme="gold-light">   <!-- Dourado claro -->
+      <html data-theme="gold-dark">    <!-- Dourado escuro -->
       <html data-theme="orange-light"> <!-- Laranja claro -->
       <html data-theme="orange-dark">  <!-- Laranja escuro -->
-   
+
    3. Ou via JavaScript:
-      document.documentElement.setAttribute('data-theme', 'orange-dark');
-   
+      document.documentElement.setAttribute('data-theme', 'gold-dark');
+
    4. Referencie os tokens no seu CSS:
       .btn { background: var(--primary); box-shadow: var(--shadow-acc); }
       .card { background: var(--surface); border: 1px solid var(--border); }
-   
+
    5. Cores brutas disponíveis:
-      Azul:    --blue-500  → #1A5CE6
+      Gold:    --gold-500  → #C8943E
+      Azul:    --blue-500  → #1A5CE6 (backup, não usado nos temas ativos)
       Laranja: --orange-500 → #F2762E
       Pampas:  --cream-300  → #f4f3ee (bg sidebar light)
       Cloudy:  --warm-400   → #b1ada1
