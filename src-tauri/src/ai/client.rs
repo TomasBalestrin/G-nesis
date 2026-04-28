@@ -44,6 +44,138 @@ Escreva em terceira pessoa, direto ao ponto, sem introdução nem conclusão. Se
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// Tool calls emitted by an assistant turn — present when the model
+    /// chose to invoke tools instead of (or alongside) plain text. Set
+    /// only on assistant messages; serialized only when non-empty so
+    /// existing single-turn calls round-trip unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// Set on `role: "tool"` messages — links the result back to the
+    /// `tool_calls[i].id` from the assistant turn that requested it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Optional name field used by OpenAI for tool messages (mirrors the
+    /// function name). Kept Option so it round-trips cleanly when
+    /// absent — most assistant/user/system messages don't set it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl Message {
+    /// Helper for `role: "user"` messages — the workhorse of every
+    /// caller that builds a one-off request from a string. Other
+    /// fields default to None so existing call sites stay terse.
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    /// Helper for `role: "system"` messages.
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    /// Helper for `role: "assistant"` plain-text messages (no tool
+    /// calls). Use [`Message::assistant_with_tool_calls`] when the
+    /// assistant turn invoked tools.
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    /// Helper for tool result messages. `tool_call_id` must match the
+    /// id from the preceding assistant `tool_calls[i].id` — OpenAI
+    /// rejects orphan tool results with a 400.
+    pub fn tool_result(tool_call_id: String, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id),
+            name: None,
+        }
+    }
+
+    /// Helper for the assistant turn that requests tool execution. The
+    /// content stays empty — OpenAI permits empty content when the
+    /// turn carries tool_calls. The orchestrator loop then runs each
+    /// call and feeds back tool_result messages.
+    pub fn assistant_with_tool_calls(tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            name: None,
+        }
+    }
+}
+
+// ── tool definitions + responses ────────────────────────────────────────────
+
+/// OpenAI function-calling tool definition. `tool_type` is always
+/// `"function"` today — the `type` discriminator exists at the API
+/// level for forward compatibility with future tool kinds.
+#[derive(Serialize, Clone, Debug)]
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: FunctionDefinition,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema describing the function's parameters. Built with
+    /// `serde_json::json!` at the call site so each tool can declare
+    /// its own shape inline — no per-tool struct required.
+    pub parameters: serde_json::Value,
+}
+
+/// Single tool invocation requested by the assistant. `id` is opaque
+/// (OpenAI-generated) and must round-trip back as
+/// `tool_call_id` on the resulting `Message::tool_result(...)`.
+#[derive(Deserialize, Debug, Clone, Serialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: FunctionCall,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+pub struct FunctionCall {
+    pub name: String,
+    /// JSON-stringified arguments — OpenAI doesn't pre-parse, so the
+    /// dispatcher uses `serde_json::from_str` against a per-tool DTO.
+    pub arguments: String,
+}
+
+/// Output of a single tool-aware completion turn. The loop in
+/// `chat.rs::send_chat_message` reads `tool_calls` to decide whether
+/// to dispatch tools and re-prompt, or to surface `content` to the
+/// user as the final assistant turn.
+#[derive(Debug, Clone, Default)]
+pub struct ChatWithToolsOutput {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
 }
 
 // ── unified error ───────────────────────────────────────────────────────────
@@ -238,14 +370,33 @@ impl OpenAIClient {
     ) -> Result<String, AiError> {
         let mut messages: Vec<Message> = Vec::with_capacity(history.len() + 1);
         if !system.is_empty() {
-            messages.push(Message {
-                role: "system".to_string(),
-                content: system.to_string(),
-            });
+            messages.push(Message::system(system));
         }
         messages.extend_from_slice(history);
 
         with_retry(Provider::OpenAi, || self.send_once(&messages)).await
+    }
+
+    /// Tool-aware completion. Sends `tools` to OpenAI and returns
+    /// either the text reply (when the model finished) or the list of
+    /// `tool_calls` to dispatch (when the model wants to invoke
+    /// functions). Caller drives the loop — see
+    /// `chat.rs::send_chat_message`. No retry/backoff at this layer
+    /// since the loop itself is the retry surface and tool-call IDs
+    /// are not safely replayable.
+    pub async fn chat_completion_with_tools(
+        &self,
+        system: &str,
+        history: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<ChatWithToolsOutput, AiError> {
+        let mut messages: Vec<Message> = Vec::with_capacity(history.len() + 1);
+        if !system.is_empty() {
+            messages.push(Message::system(system));
+        }
+        messages.extend_from_slice(history);
+
+        self.send_once_with_tools(&messages, Some(tools)).await
     }
 
     /// Compress a concatenation of the user's knowledge-base markdown
@@ -262,22 +413,41 @@ impl OpenAIClient {
         all_content: &str,
     ) -> Result<String, AiError> {
         let messages = vec![
-            Message {
-                role: "system".to_string(),
-                content: KNOWLEDGE_SUMMARY_SYSTEM_PROMPT.to_string(),
-            },
-            Message {
-                role: "user".to_string(),
-                content: all_content.to_string(),
-            },
+            Message::system(KNOWLEDGE_SUMMARY_SYSTEM_PROMPT),
+            Message::user(all_content),
         ];
         with_retry(Provider::OpenAi, || self.send_once(&messages)).await
     }
 
+    /// Plain (no-tools) call — wrapper around the unified
+    /// `send_once_with_tools` that drops `tool_calls` and returns just
+    /// the text. Existing call sites (`chat_completion`,
+    /// `generate_knowledge_summary`) keep their `Result<String, _>`
+    /// signature untouched.
     async fn send_once(&self, messages: &[Message]) -> Result<String, AiError> {
+        let out = self.send_once_with_tools(messages, None).await?;
+        if out.content.trim().is_empty() {
+            return Err(AiError::EmptyResponse {
+                provider: Provider::OpenAi,
+            });
+        }
+        Ok(out.content)
+    }
+
+    /// Single-shot completion that surfaces both the text content and
+    /// any tool_calls. When `tools` is `None`, behaves exactly like a
+    /// classic chat call (omits the `tools` field from the JSON so the
+    /// API doesn't surprise older models).
+    async fn send_once_with_tools(
+        &self,
+        messages: &[Message],
+        tools: Option<&[ToolDefinition]>,
+    ) -> Result<ChatWithToolsOutput, AiError> {
         let body = OpenAiChatRequest {
             model: &self.model,
             messages,
+            tools,
+            tool_choice: None,
         };
 
         let resp = self
@@ -304,7 +474,7 @@ impl OpenAIClient {
     }
 }
 
-async fn decode_openai(resp: reqwest::Response) -> Result<String, AiError> {
+async fn decode_openai(resp: reqwest::Response) -> Result<ChatWithToolsOutput, AiError> {
     let status = resp.status();
     let provider = Provider::OpenAi;
     match status {
@@ -314,13 +484,24 @@ async fn decode_openai(resp: reqwest::Response) -> Result<String, AiError> {
                     provider,
                     message: e.to_string(),
                 })?;
-            parsed
+            let choice = parsed
                 .choices
                 .into_iter()
                 .next()
-                .map(|c| c.message.content)
-                .filter(|s| !s.trim().is_empty())
-                .ok_or(AiError::EmptyResponse { provider })
+                .ok_or(AiError::EmptyResponse { provider })?;
+            let content = choice.message.content.unwrap_or_default();
+            let tool_calls = choice.message.tool_calls;
+            // Empty body AND no tool calls means the model returned
+            // nothing usable — surface as EmptyResponse so callers can
+            // retry. Tool-only responses are valid (content stays
+            // empty by design when the model invokes functions).
+            if content.trim().is_empty() && tool_calls.is_empty() {
+                return Err(AiError::EmptyResponse { provider });
+            }
+            Ok(ChatWithToolsOutput {
+                content,
+                tool_calls,
+            })
         }
         StatusCode::UNAUTHORIZED => Err(AiError::Unauthorized { provider }),
         StatusCode::TOO_MANY_REQUESTS => Err(AiError::RateLimited { provider }),
@@ -349,6 +530,16 @@ async fn decode_openai(resp: reqwest::Response) -> Result<String, AiError> {
 struct OpenAiChatRequest<'a> {
     model: &'a str,
     messages: &'a [Message],
+    /// Tool definitions when the caller is using function calling. Skipped
+    /// from the JSON when None so plain chat requests look identical to
+    /// the pre-tools shape — the API tolerates the field but older
+    /// model snapshots do not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<&'a [ToolDefinition]>,
+    /// `"auto"` (default), `"required"`, or a specific function spec.
+    /// Left unset for now — `auto` is what every caller wants.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -363,7 +554,13 @@ struct OpenAiChoice {
 
 #[derive(Deserialize)]
 struct OpenAiResponseMessage {
-    content: String,
+    /// Optional because tool-only assistant turns omit `content`. The
+    /// caller treats `None`/empty as "no text body" and falls through
+    /// to checking `tool_calls`.
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCall>,
 }
 
 // ── Anthropic ───────────────────────────────────────────────────────────────
@@ -1031,26 +1228,108 @@ mod tests {
     #[test]
     fn normalize_for_anthropic_strips_system_and_empty() {
         let history = vec![
-            Message {
-                role: "system".into(),
-                content: "ignore".into(),
-            },
-            Message {
-                role: "user".into(),
-                content: "oi".into(),
-            },
-            Message {
-                role: "assistant".into(),
-                content: "  ".into(),
-            },
-            Message {
-                role: "assistant".into(),
-                content: "olá".into(),
-            },
+            Message::system("ignore"),
+            Message::user("oi"),
+            Message::assistant("  "),
+            Message::assistant("olá"),
         ];
         let out = normalize_for_anthropic(&history);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].role, "user");
         assert_eq!(out[1].content, "olá");
+    }
+
+    /// `OpenAiChatRequest` must serialize the `tools` field when
+    /// present and skip it when None — older model snapshots reject
+    /// the field even with an empty array.
+    #[test]
+    fn chat_request_serializes_tools_only_when_present() {
+        let messages = [Message::user("oi")];
+        let tools = [ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "noop".to_string(),
+                description: "".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        }];
+
+        let with_tools = OpenAiChatRequest {
+            model: "gpt-4o",
+            messages: &messages,
+            tools: Some(&tools),
+            tool_choice: None,
+        };
+        let json = serde_json::to_string(&with_tools).unwrap();
+        assert!(json.contains("\"tools\":["), "expected tools array: {json}");
+        assert!(json.contains("\"name\":\"noop\""));
+        assert!(!json.contains("tool_choice"));
+
+        let without = OpenAiChatRequest {
+            model: "gpt-4o",
+            messages: &messages,
+            tools: None,
+            tool_choice: None,
+        };
+        let json = serde_json::to_string(&without).unwrap();
+        assert!(!json.contains("tools"), "tools must be skipped: {json}");
+    }
+
+    /// Response with tool_calls (no content) must decode and surface
+    /// the calls so the dispatcher can run them. Mirrors the OpenAI
+    /// 2024 response shape.
+    #[test]
+    fn response_with_tool_calls_deserializes() {
+        let raw = r#"{
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {
+                            "name": "list_skills",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }"#;
+        let parsed: OpenAiChatResponse = serde_json::from_str(raw).unwrap();
+        let msg = &parsed.choices[0].message;
+        assert!(
+            msg.content.as_deref().unwrap_or("").is_empty(),
+            "tool-only turns omit content"
+        );
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(msg.tool_calls[0].id, "call_abc");
+        assert_eq!(msg.tool_calls[0].function.name, "list_skills");
+    }
+
+    /// Plain text response without tool_calls is the existing happy
+    /// path — must still decode cleanly with the new struct shape.
+    #[test]
+    fn response_without_tool_calls_deserializes() {
+        let raw = r#"{
+            "choices": [{
+                "message": {
+                    "content": "olá"
+                }
+            }]
+        }"#;
+        let parsed: OpenAiChatResponse = serde_json::from_str(raw).unwrap();
+        let msg = &parsed.choices[0].message;
+        assert_eq!(msg.content.as_deref(), Some("olá"));
+        assert!(msg.tool_calls.is_empty());
+    }
+
+    /// `Message::tool_result` must produce role="tool" and embed the
+    /// id — OpenAI 400s on tool messages without a matching id.
+    #[test]
+    fn tool_result_helper_sets_role_and_id() {
+        let m = Message::tool_result("call_xyz".into(), "ok");
+        assert_eq!(m.role, "tool");
+        assert_eq!(m.tool_call_id.as_deref(), Some("call_xyz"));
+        assert_eq!(m.content, "ok");
+        assert!(m.tool_calls.is_none());
     }
 }
