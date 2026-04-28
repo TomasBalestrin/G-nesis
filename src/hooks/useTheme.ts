@@ -14,8 +14,8 @@ function readInitialTheme(): Theme {
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
-  // Tema padrão (sem atributo) já é Azul Dark via :root no design-system.css.
-  // [data-theme="light"] sobrescreve para Azul Light. Removemos o atributo
+  // Tema padrão (sem atributo) já é Gold Dark via :root no design-system.css.
+  // [data-theme="light"] sobrescreve para Gold Light. Removemos o atributo
   // ao voltar pra dark pra cair no fallback do :root.
   if (theme === "light") {
     root.setAttribute("data-theme", "light");
