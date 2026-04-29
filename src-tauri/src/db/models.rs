@@ -15,6 +15,15 @@ pub struct Project {
     pub updated_at: String,
 }
 
+/// User-facing alias for [`Project`]. The product is migrating its
+/// surface vocabulary from "project" to "caminho" (Portuguese for
+/// "path") since users mostly think of these as folder bookmarks
+/// rather than software projects. Schema + queries stay on `Project`;
+/// `Caminho` is just a rename at the API boundary so handlers in
+/// `commands/caminhos.rs` can read naturally without duplicating the
+/// row struct.
+pub type Caminho = Project;
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Execution {
     pub id: String,

@@ -10,8 +10,8 @@ pub mod orchestrator;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
-    app_state, capabilities, chat, config as config_cmd, conversations, dependencies, execution,
-    knowledge, projects, skills, workflows,
+    app_state, caminhos, capabilities, chat, config as config_cmd, conversations, dependencies,
+    execution, knowledge, projects, skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -57,6 +57,11 @@ pub fn run() {
             projects::list_projects,
             projects::create_project,
             projects::delete_project,
+            // caminhos (renamed projects surface — legacy projects::*
+            // commands kept above for backward compat during migration)
+            caminhos::list_caminhos,
+            caminhos::create_caminho,
+            caminhos::delete_caminho,
             projects::get_execution_history,
             projects::get_execution_detail,
             // execution
