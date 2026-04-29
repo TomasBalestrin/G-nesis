@@ -14,6 +14,7 @@ import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
+import { SettingsConfigSection } from "@/components/settings/SettingsConfigSection";
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
@@ -213,7 +214,7 @@ function App() {
                 <Route path="skills" element={<SettingsPage />} />
                 <Route path="caminhos" element={<SettingsPage />} />
                 <Route path="workflows" element={<SettingsPage />} />
-                <Route path="config" element={<SettingsPage />} />
+                <Route path="config" element={<SettingsConfigSection />} />
               </Route>
               <Route path="*" element={<NotFoundPage />} />
             </Route>
