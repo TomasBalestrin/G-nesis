@@ -185,26 +185,10 @@ function App() {
 
               {/* Caminhos: renamed projects surface. CaminhoList is the
                   full catalog; new + :id forms mirror the legacy project
-                  routes. The /projects/* routes below redirect here so
-                  bookmarks / linked toasts keep working during the
-                  migration. */}
+                  routes. */}
               <Route path="caminhos" element={<CaminhoList />} />
               <Route path="caminhos/new" element={<NewCaminhoForm />} />
               <Route path="caminhos/:id" element={<CaminhoDetail />} />
-
-              {/* Legacy /projects/* — redirect to /caminhos/*. The
-                  underlying Tauri commands stay registered (C1 kept the
-                  legacy projects::*) so any non-route caller still
-                  works while the surface migrates. */}
-              <Route
-                path="projects/new"
-                element={<Navigate to="/caminhos/new" replace />}
-              />
-              <Route path="projects/:id" element={<ProjectIdRedirect />} />
-              <Route
-                path="projects"
-                element={<Navigate to="/caminhos" replace />}
-              />
 
               {/* Settings: SettingsLayout shell wraps a sub-sidebar +
                   <Outlet />. Index redirects to /settings/knowledge.
@@ -239,15 +223,6 @@ function NotFoundPage() {
       <p className="text-sm text-[var(--text-secondary)]">Rota não encontrada.</p>
     </div>
   );
-}
-
-/** /projects/:id → /caminhos/:id with the param preserved. Navigate's
- *  `to` doesn't interpolate route params, so the redirect lives in a
- *  small component that reads `useParams` and builds the destination
- *  string. */
-function ProjectIdRedirect() {
-  const { id = "" } = useParams<{ id: string }>();
-  return <Navigate to={`/caminhos/${id}`} replace />;
 }
 
 /** /skills/:name dispatcher: probes list_skills for the matching meta
