@@ -134,6 +134,140 @@ fn extract_slash_command(content: &str) -> Option<&str> {
     }
 }
 
+// ── @ and # mention extraction ──────────────────────────────────────────────
+
+use std::sync::OnceLock;
+
+/// Lazy compile and cache the @-mention regex. Pattern: a word boundary
+/// (start of string OR a whitespace) followed by `@` and a name made
+/// of `[a-z0-9-]+`. The boundary check stops false positives like
+/// `email@host` from matching as `@host`. Match group 1 captures the
+/// name. Rust's `regex` crate has no lookbehind, so we anchor on the
+/// boundary char inside the same pattern.
+fn at_mention_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?:^|\s)@([a-z0-9-]+)").unwrap())
+}
+
+fn hash_mention_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?:^|\s)#([a-z0-9-]+)").unwrap())
+}
+
+/// Pull every `@name` token from the user's message. Order is
+/// preserved (left-to-right), duplicates removed — re-mentioning the
+/// same capability shouldn't inject its doc twice.
+pub fn extract_at_mentions(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cap in at_mention_re().captures_iter(content) {
+        if let Some(m) = cap.get(1) {
+            let name = m.as_str().to_string();
+            if seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Pull every `#name` token from the user's message. Same dedup +
+/// ordering rules as [`extract_at_mentions`].
+pub fn extract_hash_mentions(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cap in hash_mention_re().captures_iter(content) {
+        if let Some(m) = cap.get(1) {
+            let name = m.as_str().to_string();
+            if seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Resolve `@name` mentions against the capabilities table. Skips
+/// rows that don't exist or are disabled (`enabled = 0`) — the model
+/// shouldn't see docs for capabilities the user can't actually
+/// invoke. Returns `(name, doc_ai)` pairs in mention order.
+async fn resolve_at_mentions(
+    pool: &SqlitePool,
+    names: &[String],
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::with_capacity(names.len());
+    for name in names {
+        match queries::get_capability_by_name(pool, name).await {
+            Ok(Some(cap)) if cap.enabled == 1 => {
+                out.push((cap.name, cap.doc_ai));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Resolve `#name` mentions against the projects/caminhos table.
+/// Fetches the full project list once and filters in-memory — cheap
+/// for the typical handful of projects a user keeps. Returns
+/// `(name, repo_path)` pairs in mention order; unknown names drop
+/// silently so the model doesn't get confused by half-resolved data.
+async fn resolve_hash_mentions(
+    pool: &SqlitePool,
+    names: &[String],
+) -> Vec<(String, String)> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let projects = queries::list_projects(pool).await.unwrap_or_default();
+    let mut out: Vec<(String, String)> = Vec::with_capacity(names.len());
+    for name in names {
+        if let Some(p) = projects.iter().find(|p| p.name.as_str() == name.as_str()) {
+            out.push((p.name.clone(), p.repo_path.clone()));
+        }
+    }
+    out
+}
+
+/// Format the resolved mentions as a markdown block to append after
+/// the system prompt. Empty when neither list has matches — caller
+/// should skip the join in that case.
+fn format_mentions_block(
+    capabilities: &[(String, String)],
+    caminhos: &[(String, String)],
+) -> String {
+    if capabilities.is_empty() && caminhos.is_empty() {
+        return String::new();
+    }
+    let mut s = String::new();
+    if !capabilities.is_empty() {
+        s.push_str("## Capabilities mencionadas nesta mensagem\n\n");
+        s.push_str(
+            "O usuário invocou as capabilities abaixo. \
+             Use as instruções de cada uma como referência principal \
+             pra escolher como executar o pedido.\n\n",
+        );
+        for (name, doc) in capabilities {
+            s.push_str(&format!("### @{name}\n\n{doc}\n\n"));
+        }
+    }
+    if !caminhos.is_empty() {
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s.push_str("## Caminhos mencionados nesta mensagem\n\n");
+        s.push_str(
+            "O usuário referenciou as pastas locais abaixo. \
+             Use o `repo_path` como `cwd` quando rodar comandos \
+             relacionados a cada uma.\n\n",
+        );
+        for (name, path) in caminhos {
+            s.push_str(&format!("### #{name}\n- Path: `{path}`\n\n"));
+        }
+    }
+    s.trim_end().to_string()
+}
+
 fn skills_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(config::load_config()?.skills_dir))
 }
@@ -848,13 +982,29 @@ pub async fn send_chat_message(
                 .flatten()
                 .map(|s| s.summary);
             let system_state = collect_system_state(&pool, &catalog).await;
-            let system_prompt = prompts::build_system_prompt(
+            let mut system_prompt = prompts::build_system_prompt(
                 user_name.as_deref(),
                 company_name.as_deref(),
                 summary.as_deref(),
                 Some(&system_state),
                 &catalog,
             );
+
+            // Pull @ and # mentions from the latest user message and
+            // append the resolved doc_ai / repo_path snippets to the
+            // system prompt. Slash commands are gated upstream
+            // (`needs_ai` branch); this only runs for AI-routed turns.
+            // Empty mentions = no append, no extra cost.
+            let at_names = extract_at_mentions(&content);
+            let hash_names = extract_hash_mentions(&content);
+            let resolved_caps = resolve_at_mentions(&pool, &at_names).await;
+            let resolved_caminhos = resolve_hash_mentions(&pool, &hash_names).await;
+            let mentions_block =
+                format_mentions_block(&resolved_caps, &resolved_caminhos);
+            if !mentions_block.is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&mentions_block);
+            }
 
             let model = active_model(&pool).await;
             let client = ai_client_for_model(model)?;
@@ -1263,6 +1413,68 @@ mod tests {
     fn extract_slash_command_rejects_empty_name() {
         assert_eq!(extract_slash_command("/"), None);
         assert_eq!(extract_slash_command("/   "), None);
+    }
+
+    #[test]
+    fn extract_at_mentions_finds_word_boundary_only() {
+        // Standalone + start-of-string both match.
+        assert_eq!(extract_at_mentions("@terminal"), vec!["terminal"]);
+        assert_eq!(
+            extract_at_mentions("rode @terminal e @code"),
+            vec!["terminal".to_string(), "code".to_string()],
+        );
+        // Embedded @ (e.g. email) must NOT match.
+        assert_eq!(extract_at_mentions("contato@empresa.com"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn extract_at_mentions_dedupes_in_order() {
+        assert_eq!(
+            extract_at_mentions("@terminal abre, depois @terminal fecha"),
+            vec!["terminal".to_string()],
+        );
+    }
+
+    #[test]
+    fn extract_at_mentions_pattern_constraints() {
+        // Allowed: lowercase + digits + hyphens.
+        assert_eq!(extract_at_mentions("@step-1"), vec!["step-1"]);
+        // Uppercase right after @ kills the whole match — no capture.
+        assert_eq!(extract_at_mentions("@Terminal"), Vec::<String>::new());
+        // Underscore truncates the greedy `[a-z0-9-]+` mid-word; the
+        // captured prefix still counts as a mention. This is the
+        // documented behavior — `_` not in the spec's char class.
+        assert_eq!(extract_at_mentions("@my_tool"), vec!["my".to_string()]);
+    }
+
+    #[test]
+    fn extract_hash_mentions_mirrors_at_logic() {
+        assert_eq!(extract_hash_mentions("#meu-projeto"), vec!["meu-projeto"]);
+        assert_eq!(
+            extract_hash_mentions("rode em #a e em #b"),
+            vec!["a".to_string(), "b".to_string()],
+        );
+        // Hashtag-style mid-word doesn't match (no boundary).
+        assert_eq!(extract_hash_mentions("issue#123"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn format_mentions_block_returns_empty_when_nothing_resolved() {
+        let s = format_mentions_block(&[], &[]);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn format_mentions_block_emits_both_sections() {
+        let caps = vec![("terminal".into(), "Roda comandos shell.".into())];
+        let cams = vec![("meu".into(), "/home/user/meu".into())];
+        let s = format_mentions_block(&caps, &cams);
+        assert!(s.contains("## Capabilities mencionadas"));
+        assert!(s.contains("### @terminal"));
+        assert!(s.contains("Roda comandos shell."));
+        assert!(s.contains("## Caminhos mencionados"));
+        assert!(s.contains("### #meu"));
+        assert!(s.contains("/home/user/meu"));
     }
 
     #[test]
