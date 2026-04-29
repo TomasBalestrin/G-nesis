@@ -32,9 +32,7 @@ fn normalize_title(raw: Option<String>) -> String {
 }
 
 #[tauri::command]
-pub async fn list_conversations(
-    pool: State<'_, SqlitePool>,
-) -> Result<Vec<Conversation>, String> {
+pub async fn list_conversations(pool: State<'_, SqlitePool>) -> Result<Vec<Conversation>, String> {
     queries::list_conversations(&pool).await
 }
 
@@ -55,10 +53,7 @@ pub async fn create_conversation(
 }
 
 #[tauri::command]
-pub async fn delete_conversation(
-    id: String,
-    pool: State<'_, SqlitePool>,
-) -> Result<(), String> {
+pub async fn delete_conversation(id: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     queries::delete_conversation(&pool, &id).await
 }
 

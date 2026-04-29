@@ -83,15 +83,11 @@ pub async fn list_workflows() -> Result<Vec<WorkflowSummary>, String> {
             match fs::read_to_string(&path) {
                 Ok(content) => match workflow_parser::parse_workflow(&content) {
                     Ok(wf) => summaries.push(wf.meta.into()),
-                    Err(err) => eprintln!(
-                        "[workflows] pulando {} ao listar: {err}",
-                        path.display()
-                    ),
+                    Err(err) => {
+                        eprintln!("[workflows] pulando {} ao listar: {err}", path.display())
+                    }
                 },
-                Err(err) => eprintln!(
-                    "[workflows] falha ao ler {}: {err}",
-                    path.display()
-                ),
+                Err(err) => eprintln!("[workflows] falha ao ler {}: {err}", path.display()),
             }
         }
     }
@@ -113,13 +109,10 @@ pub async fn save_workflow(name: String, content: String) -> Result<(), String> 
 
     // Reject malformed files at the boundary — broken workflows shouldn't
     // hit disk. Same policy `save_skill` follows.
-    workflow_parser::parse_workflow(&content)
-        .map_err(|e| format!("workflow inválido: {e}"))?;
+    workflow_parser::parse_workflow(&content).map_err(|e| format!("workflow inválido: {e}"))?;
 
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
-    fs::write(&path, content)
-        .map_err(|e| format!("falha ao salvar workflow `{name}`: {e}"))
+    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
+    fs::write(&path, content).map_err(|e| format!("falha ao salvar workflow `{name}`: {e}"))
 }
 
 #[tauri::command]
@@ -136,8 +129,8 @@ pub async fn delete_workflow(name: String) -> Result<(), String> {
 pub async fn parse_workflow(name: String) -> Result<ParsedWorkflow, String> {
     let dir = workflows_dir()?;
     let path = workflow_path(&dir, &name)?;
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("falha ao ler workflow `{name}`: {e}"))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("falha ao ler workflow `{name}`: {e}"))?;
     workflow_parser::parse_workflow(&content)
 }
 
@@ -213,10 +206,7 @@ pub async fn abort_workflow(
 
 const ACTIVE_PROJECT_KEY: &str = "active_project_id";
 
-async fn resolve_project_id(
-    pool: &SqlitePool,
-    explicit: Option<String>,
-) -> Result<String, String> {
+async fn resolve_project_id(pool: &SqlitePool, explicit: Option<String>) -> Result<String, String> {
     if let Some(id) = explicit.filter(|s| !s.is_empty()) {
         return Ok(id);
     }

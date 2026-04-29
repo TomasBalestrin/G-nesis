@@ -597,7 +597,10 @@ Output: result
         let wf = parse_workflow(content).expect("parses");
         let s = &wf.steps[0];
         assert_eq!(s.skill, "foo");
-        assert_eq!(s.inputs.get("briefing"), Some(&"{{briefing_path}}".to_string()));
+        assert_eq!(
+            s.inputs.get("briefing"),
+            Some(&"{{briefing_path}}".to_string())
+        );
         assert_eq!(s.inputs.get("repo"), Some(&"{{repo_path}}".to_string()));
         assert_eq!(s.output.as_deref(), Some("result"));
         // singular `input` stays None when only the block form was used

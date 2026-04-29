@@ -157,6 +157,63 @@ fn channel_for(tool: &str) -> Option<Box<dyn Channel>> {
     }
 }
 
+/// Resolve the channel for a step. Order:
+///   1. Capability lookup — `tool` matches a `capabilities` row by
+///      name AND the row is enabled. The row's `channel` column
+///      points at the underlying executor backend (`bash`,
+///      `claude-code`, `api`). v2 skills declare the user-facing
+///      capability name in `tool` and we hop one indirection here.
+///   2. Direct fallback — `channel_for(tool)`. Preserves v1 skills
+///      that already encode the channel name directly.
+///
+/// `None` only when neither path resolves — caller surfaces a
+/// "tool desconhecido" failure.
+async fn resolve_channel_for_step(pool: &SqlitePool, tool: &str) -> Option<Box<dyn Channel>> {
+    if let Ok(Some(cap)) = queries::get_capability_by_name(pool, tool).await {
+        if cap.enabled == 1 {
+            if let Some(channel_name) = cap.channel.as_deref() {
+                if let Some(ch) = channel_for(channel_name) {
+                    return Some(ch);
+                }
+            }
+        }
+    }
+    channel_for(tool)
+}
+
+/// Pull the first `#caminho` mention from a step's resolved command
+/// text and return the matching project's `repo_path`. When no
+/// mention is found, or the name doesn't resolve, returns `default`
+/// (typically the active project's cwd seeded by `Executor::new`).
+///
+/// Pattern mirrors the @/# extractors in `commands/chat.rs`:
+/// `(?:^|\s)#([a-z0-9-]+)` with the boundary check so embedded `#`s
+/// (issue trackers, comments) don't trigger.
+async fn resolve_cwd_for_step(
+    pool: &SqlitePool,
+    command: &str,
+    default: Option<String>,
+) -> Option<String> {
+    let Some(name) = extract_first_caminho_mention(command) else {
+        return default;
+    };
+    let projects = queries::list_projects(pool).await.unwrap_or_default();
+    if let Some(p) = projects.into_iter().find(|p| p.name == name) {
+        return Some(p.repo_path);
+    }
+    default
+}
+
+fn extract_first_caminho_mention(text: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?:^|\s)#([a-z0-9-]+)").expect("static regex compiles")
+    });
+    re.captures(text)
+        .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+}
+
 /// Environment variables forwarded to every step's child process. Today this
 /// is just `OPENAI_API_KEY` so bash scripts can call the API without the user
 /// having to `export` it in their shell. Best-effort: if config load fails or
@@ -192,12 +249,21 @@ impl Executor {
         execution_id: String,
         cwd: Option<String>,
     ) -> Self {
-        Self { app, pool, handle, execution_id, cwd }
+        Self {
+            app,
+            pool,
+            handle,
+            execution_id,
+            cwd,
+        }
     }
 
     pub async fn run(&self, skill: ParsedSkill, mut ctx: ResolveContext) -> ExecutionState {
         if skill.step_loop.is_some() {
-            self.log("", "aviso: step_loop ainda não implementado — steps rodam uma vez".into());
+            self.log(
+                "",
+                "aviso: step_loop ainda não implementado — steps rodam uma vez".into(),
+            );
         }
 
         for (order, step) in skill.steps.iter().enumerate() {
@@ -300,17 +366,27 @@ impl Executor {
 
         let resolved = match variable_resolver::resolve(&raw_payload, ctx) {
             Ok(s) => s,
-            Err(e) => return self.fail_step(&row_id, &step.id, e.to_string(), retry_count).await,
+            Err(e) => {
+                return self
+                    .fail_step(&row_id, &step.id, e.to_string(), retry_count)
+                    .await
+            }
         };
 
-        let Some(channel) = channel_for(&step.tool) else {
+        let Some(channel) = resolve_channel_for_step(&self.pool, &step.tool).await else {
             let msg = format!("tool desconhecido: {}", step.tool);
             return self.fail_step(&row_id, &step.id, msg, retry_count).await;
         };
 
+        // Step-level cwd override via `#caminho` mention in the
+        // resolved command text. Falls back to the executor's
+        // project-level cwd when nothing resolves — preserves v1
+        // behavior where the active project anchors every step.
+        let step_cwd = resolve_cwd_for_step(&self.pool, &resolved, self.cwd.clone()).await;
+
         let input = ChannelInput {
             command: resolved,
-            cwd: self.cwd.clone(),
+            cwd: step_cwd,
             // Injeta a OpenAI key no env da subshell bash pra que scripts
             // como legendar.sh encontrem $OPENAI_API_KEY sem o usuário
             // precisar exportar no terminal. A leitura do config
@@ -321,7 +397,11 @@ impl Executor {
 
         let output = match channel.execute(input).await {
             Ok(o) => o,
-            Err(e) => return self.fail_step(&row_id, &step.id, e.to_string(), retry_count).await,
+            Err(e) => {
+                return self
+                    .fail_step(&row_id, &step.id, e.to_string(), retry_count)
+                    .await
+            }
         };
 
         for line in output.stdout.lines() {
@@ -388,14 +468,8 @@ impl Executor {
         } else {
             reason.clone()
         };
-        let _ = queries::update_step_status(
-            &self.pool,
-            row_id,
-            "failed",
-            None,
-            Some(&reason),
-        )
-        .await;
+        let _ =
+            queries::update_step_status(&self.pool, row_id, "failed", None, Some(&reason)).await;
         self.emit(
             "execution:step_failed",
             &StepFailedPayload {
@@ -449,5 +523,59 @@ impl Executor {
             },
         );
         state
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_for_legacy_names_still_resolves() {
+        // v1 fallback path — tool == channel name. Required so skills
+        // ainda escritas com `tool: bash` continuam executando sem o
+        // hop pelo capabilities.
+        assert!(channel_for("bash").is_some());
+        assert!(channel_for("claude-code").is_some());
+        assert!(channel_for("api").is_some());
+        assert!(channel_for("desconhecido").is_none());
+    }
+
+    #[test]
+    fn extract_first_caminho_picks_only_at_word_boundary() {
+        // Standalone + start-of-string ambos disparam.
+        assert_eq!(
+            extract_first_caminho_mention("#meu-projeto"),
+            Some("meu-projeto".to_string()),
+        );
+        assert_eq!(
+            extract_first_caminho_mention("rode em #frontend agora"),
+            Some("frontend".to_string()),
+        );
+        // Embedded `#` (issue tracker, comment) NÃO deve disparar —
+        // o boundary check protege o caller de override surpresa do
+        // cwd quando o command tem `issue#123` no meio.
+        assert_eq!(extract_first_caminho_mention("issue#123"), None);
+    }
+
+    #[test]
+    fn extract_first_caminho_returns_first_match_only() {
+        // Quando a etapa cita múltiplos caminhos, só o primeiro
+        // serve de cwd — caller decide o resto via tool calls
+        // específicos. Manter comportamento simples.
+        let out = extract_first_caminho_mention("compara #a e #b");
+        assert_eq!(out, Some("a".to_string()));
+    }
+
+    #[test]
+    fn extract_first_caminho_pattern_constraints() {
+        // Lowercase + dígitos + hífens permitidos.
+        assert_eq!(
+            extract_first_caminho_mention("vai pra #step-1"),
+            Some("step-1".to_string()),
+        );
+        // Uppercase quebra desde o primeiro char (regex `[a-z0-9-]+`
+        // exige pelo menos um match).
+        assert_eq!(extract_first_caminho_mention("#Project"), None);
     }
 }

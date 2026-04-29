@@ -15,9 +15,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use reqwest::{Client, Method};
 
-use crate::channels::{
-    Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS,
-};
+use crate::channels::{Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS};
 
 pub struct ApiChannel;
 
@@ -55,9 +53,7 @@ impl Channel for ApiChannel {
 
         let method = Self::parse_method(input.http_method.as_deref())?;
 
-        let timeout = Duration::from_secs(
-            input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS),
-        );
+        let timeout = Duration::from_secs(input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
         let client = Client::builder()
             .timeout(timeout)
             .build()
@@ -117,9 +113,7 @@ mod tests {
             .execute(ChannelInput::default())
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, ChannelError::Spawn(msg) if msg.contains("URL vazia")),
-        );
+        assert!(matches!(err, ChannelError::Spawn(msg) if msg.contains("URL vazia")),);
     }
 
     #[tokio::test]
@@ -132,9 +126,7 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, ChannelError::Spawn(msg) if msg.to_lowercase().contains("método")),
-        );
+        assert!(matches!(err, ChannelError::Spawn(msg) if msg.to_lowercase().contains("método")),);
     }
 
     #[test]
@@ -145,8 +137,17 @@ mod tests {
 
     #[test]
     fn method_case_insensitive() {
-        assert_eq!(ApiChannel::parse_method(Some("post")).unwrap(), Method::POST);
-        assert_eq!(ApiChannel::parse_method(Some("DELETE")).unwrap(), Method::DELETE);
-        assert_eq!(ApiChannel::parse_method(Some(" patch ")).unwrap(), Method::PATCH);
+        assert_eq!(
+            ApiChannel::parse_method(Some("post")).unwrap(),
+            Method::POST
+        );
+        assert_eq!(
+            ApiChannel::parse_method(Some("DELETE")).unwrap(),
+            Method::DELETE
+        );
+        assert_eq!(
+            ApiChannel::parse_method(Some(" patch ")).unwrap(),
+            Method::PATCH
+        );
     }
 }

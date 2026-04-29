@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Folder, FolderPlus } from "lucide-react";
+import { ChevronDown, Route as RouteIcon, FolderPlus } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
 import {
@@ -10,35 +10,38 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { listProjects } from "@/lib/tauri-bridge";
+import { listCaminhos } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
-import type { Project } from "@/types/project";
+import type { Caminho } from "@/types/caminho";
 
 /**
- * Compact dropdown for picking the active project. Sits to the left of the
- * chat input. Selection is persisted via app_state so it survives reloads.
+ * Compact dropdown for picking the active caminho (renamed from
+ * project surface). Sits to the left of the chat input next to
+ * ModelSelector. Selection persists via `app_state.activeProjectId`
+ * — store key is unchanged from when caminhos were called projects;
+ * only the user-facing copy migrated.
  *
- * Empty catalog → trigger shows "Sem projeto" and the only menu item is a
- * deeplink to /projects/new (the same form used from Settings).
+ * Empty catalog → trigger shows "Sem caminho" and the only menu
+ * item is a deeplink to `/caminhos/new`.
  */
-export function ProjectSelector() {
+export function CaminhoSelector() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const setActiveProjectId = useAppStore((s) => s.setActiveProjectId);
   const navigate = useNavigate();
 
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [caminhos, setCaminhos] = useState<Caminho[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    listProjects()
+    listCaminhos()
       .then((items) => {
-        if (!cancelled) setProjects(items);
+        if (!cancelled) setCaminhos(items);
       })
       .catch(() => {
-        if (!cancelled) setProjects([]);
+        if (!cancelled) setCaminhos([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -48,30 +51,30 @@ export function ProjectSelector() {
     };
   }, []);
 
-  // Drop a stale selection if the project was deleted elsewhere — avoids
-  // dispatching skill executions against a missing repo_path.
+  // Drop a stale selection if the caminho was removed elsewhere —
+  // avoids dispatching skill executions against a missing repo_path.
   useEffect(() => {
     if (loading || !activeProjectId) return;
-    if (!projects.some((p) => p.id === activeProjectId)) {
+    if (!caminhos.some((c) => c.id === activeProjectId)) {
       void setActiveProjectId("");
     }
-  }, [loading, activeProjectId, projects, setActiveProjectId]);
+  }, [loading, activeProjectId, caminhos, setActiveProjectId]);
 
-  const active = projects.find((p) => p.id === activeProjectId) ?? null;
+  const active = caminhos.find((c) => c.id === activeProjectId) ?? null;
   const label = loading
     ? "Carregando..."
     : active
       ? active.name
-      : projects.length === 0
-        ? "Sem projeto"
-        : "Selecionar projeto";
+      : caminhos.length === 0
+        ? "Sem caminho"
+        : "Selecionar caminho";
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="Selecionar projeto ativo"
+          aria-label="Selecionar caminho ativo"
           className={cn(
             "flex max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1",
             "text-xs text-[var(--text-tertiary)] transition-colors",
@@ -81,7 +84,7 @@ export function ProjectSelector() {
           )}
           disabled={loading}
         >
-          <Folder className="h-3.5 w-3.5 shrink-0" />
+          <RouteIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           <ChevronDown className="h-3 w-3 shrink-0" />
         </button>
@@ -93,40 +96,40 @@ export function ProjectSelector() {
         className="min-w-[220px]"
       >
         <DropdownMenuLabel className="text-xs uppercase tracking-wider text-[var(--text-tertiary)]">
-          Projetos
+          Caminhos
         </DropdownMenuLabel>
-        {projects.length === 0 ? (
+        {caminhos.length === 0 ? (
           <DropdownMenuItem disabled className="text-xs">
-            Nenhum projeto cadastrado
+            Nenhum caminho cadastrado
           </DropdownMenuItem>
         ) : (
-          projects.map((p) => (
+          caminhos.map((c) => (
             <DropdownMenuItem
-              key={p.id}
-              onSelect={() => void setActiveProjectId(p.id)}
+              key={c.id}
+              onSelect={() => void setActiveProjectId(c.id)}
               className={cn(
                 "flex flex-col items-start gap-0.5 text-xs",
-                p.id === activeProjectId && "bg-[var(--accent-soft)]",
+                c.id === activeProjectId && "bg-[var(--accent-soft)]",
               )}
             >
               <span className="font-medium text-[var(--text-primary)]">
-                {p.name}
+                {c.name}
               </span>
               <span className="truncate text-[10px] text-[var(--text-tertiary)]">
-                {p.repo_path}
+                {c.repo_path}
               </span>
             </DropdownMenuItem>
           ))
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onSelect={() => navigate("/projects/new")}
+          onSelect={() => navigate("/caminhos/new")}
           className="text-xs"
           asChild
         >
-          <Link to="/projects/new" className="flex items-center gap-2">
+          <Link to="/caminhos/new" className="flex items-center gap-2">
             <FolderPlus className="h-3.5 w-3.5" />
-            Novo projeto
+            Novo caminho
           </Link>
         </DropdownMenuItem>
       </DropdownMenuContent>

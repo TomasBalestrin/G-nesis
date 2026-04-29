@@ -1,14 +1,24 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from "react-router-dom";
 
+import { CaminhoDetail } from "@/components/caminhos/CaminhoDetail";
+import { CaminhoList } from "@/components/caminhos/CaminhoList";
+import { NewCaminhoForm } from "@/components/caminhos/NewCaminhoForm";
 import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { CapabilityDetail } from "@/components/capabilities/CapabilityDetail";
+import { CapabilityList } from "@/components/capabilities/CapabilityList";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
-import { NewProjectForm } from "@/components/projects/NewProjectForm";
-import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
+import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
@@ -16,7 +26,12 @@ import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import ErrorBoundary from "@/components/ui/ErrorBoundary";
 import { useToast } from "@/hooks/useToast";
-import { getAppStateValue, getConfig, setAppStateValue } from "@/lib/tauri-bridge";
+import {
+  getAppStateValue,
+  getConfig,
+  listSkills,
+  setAppStateValue,
+} from "@/lib/tauri-bridge";
 import { useAppStore } from "@/stores/appStore";
 import type { Config } from "@/types/config";
 
@@ -142,9 +157,24 @@ function App() {
               <Route path="chat/:conversationId" element={<ChatPanel />} />
 
               {/* Skills: list in sidebar; no standalone /skills listing page.
-                  Same editor handles create (/skills/new) and edit (/skills/:name). */}
+                  /skills/new always lands on the v1 editor (new skills are
+                  created in v1 format until E4 ships v2 authoring).
+                  /skills/:name dispatches by version: v2 (folder layout)
+                  -> SkillViewerV2 read-only viewer, v1 -> SkillEditor.
+                  /skills/:name/edit always uses SkillEditor — v2 editing
+                  is a follow-up task. */}
               <Route path="skills/new" element={<SkillEditor />} />
-              <Route path="skills/:name" element={<SkillEditor />} />
+              <Route path="skills/:name" element={<SkillRouteDispatch />} />
+              <Route path="skills/:name/edit" element={<SkillEditor />} />
+
+              {/* Capabilities: unified @-mention registry. List groups
+                  natives + connectors; detail shows doc_user prominently
+                  and doc_ai inside a collapsible <details>. */}
+              <Route path="capabilities" element={<CapabilityList />} />
+              <Route
+                path="capabilities/:name"
+                element={<CapabilityDetail />}
+              />
 
               {/* Workflows: full catalog page + viewer + editor. /:name shows
                   the read-only structured view; /:name/edit opens the markdown
@@ -154,10 +184,28 @@ function App() {
               <Route path="workflows/:name" element={<WorkflowViewer />} />
               <Route path="workflows/:name/edit" element={<WorkflowEditor />} />
 
-              {/* Projects: list is inside Settings; these routes support
-                  creating and inspecting a single project. */}
-              <Route path="projects/new" element={<NewProjectForm />} />
-              <Route path="projects/:id" element={<ProjectDetail />} />
+              {/* Caminhos: renamed projects surface. CaminhoList is the
+                  full catalog; new + :id forms mirror the legacy project
+                  routes. The /projects/* routes below redirect here so
+                  bookmarks / linked toasts keep working during the
+                  migration. */}
+              <Route path="caminhos" element={<CaminhoList />} />
+              <Route path="caminhos/new" element={<NewCaminhoForm />} />
+              <Route path="caminhos/:id" element={<CaminhoDetail />} />
+
+              {/* Legacy /projects/* — redirect to /caminhos/*. The
+                  underlying Tauri commands stay registered (C1 kept the
+                  legacy projects::*) so any non-route caller still
+                  works while the surface migrates. */}
+              <Route
+                path="projects/new"
+                element={<Navigate to="/caminhos/new" replace />}
+              />
+              <Route path="projects/:id" element={<ProjectIdRedirect />} />
+              <Route
+                path="projects"
+                element={<Navigate to="/caminhos" replace />}
+              />
 
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFoundPage />} />
@@ -180,4 +228,59 @@ function NotFoundPage() {
       <p className="text-sm text-[var(--text-secondary)]">Rota não encontrada.</p>
     </div>
   );
+}
+
+/** /projects/:id → /caminhos/:id with the param preserved. Navigate's
+ *  `to` doesn't interpolate route params, so the redirect lives in a
+ *  small component that reads `useParams` and builds the destination
+ *  string. */
+function ProjectIdRedirect() {
+  const { id = "" } = useParams<{ id: string }>();
+  return <Navigate to={`/caminhos/${id}`} replace />;
+}
+
+/** /skills/:name dispatcher: probes list_skills for the matching meta
+ *  and renders SkillViewerV2 for v2 (`version` starts with "2"), or
+ *  the v1 SkillEditor for everything else (including legacy 1.x and
+ *  rows we couldn't resolve). Loading state shows a placeholder so
+ *  the user doesn't see the wrong viewer flash before settling. */
+function SkillRouteDispatch() {
+  const { name = "" } = useParams<{ name: string }>();
+  const [version, setVersion] = useState<string | null | "loading">("loading");
+
+  useEffect(() => {
+    if (!name) {
+      setVersion(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const skills = await listSkills();
+        if (cancelled) return;
+        const found = skills.find((s) => s.name === name) ?? null;
+        setVersion(found?.version ?? null);
+      } catch {
+        if (!cancelled) setVersion(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [name]);
+
+  if (version === "loading") {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-[var(--text-secondary)]">
+        Carregando skill...
+      </div>
+    );
+  }
+  if (typeof version === "string" && version.startsWith("2")) {
+    return <SkillViewerV2 />;
+  }
+  // null (skill not found, list failed, or v1 row) → fall through to
+  // the v1 editor; SkillEditor's own loader handles "not found" with
+  // a friendly empty-state.
+  return <SkillEditor />;
 }

@@ -114,7 +114,10 @@ fn ai_client_for_model(model: &ModelConfig) -> Result<AiClient, String> {
 /// Resolve the user's currently-picked model from `app_state`. Falls back to
 /// the static default if the row is missing or carries an unknown id.
 async fn active_model(pool: &sqlx::SqlitePool) -> &'static ModelConfig {
-    let row = queries::get_state(pool, ACTIVE_MODEL_KEY).await.ok().flatten();
+    let row = queries::get_state(pool, ACTIVE_MODEL_KEY)
+        .await
+        .ok()
+        .flatten();
     let id = row.map(|s| s.value).unwrap_or_default();
     models::resolve_model(&id)
 }
@@ -132,6 +135,134 @@ fn extract_slash_command(content: &str) -> Option<&str> {
     } else {
         Some(name)
     }
+}
+
+// ── @ and # mention extraction ──────────────────────────────────────────────
+
+use std::sync::OnceLock;
+
+/// Lazy compile and cache the @-mention regex. Pattern: a word boundary
+/// (start of string OR a whitespace) followed by `@` and a name made
+/// of `[a-z0-9-]+`. The boundary check stops false positives like
+/// `email@host` from matching as `@host`. Match group 1 captures the
+/// name. Rust's `regex` crate has no lookbehind, so we anchor on the
+/// boundary char inside the same pattern.
+fn at_mention_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?:^|\s)@([a-z0-9-]+)").unwrap())
+}
+
+fn hash_mention_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?:^|\s)#([a-z0-9-]+)").unwrap())
+}
+
+/// Pull every `@name` token from the user's message. Order is
+/// preserved (left-to-right), duplicates removed — re-mentioning the
+/// same capability shouldn't inject its doc twice.
+pub fn extract_at_mentions(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cap in at_mention_re().captures_iter(content) {
+        if let Some(m) = cap.get(1) {
+            let name = m.as_str().to_string();
+            if seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Pull every `#name` token from the user's message. Same dedup +
+/// ordering rules as [`extract_at_mentions`].
+pub fn extract_hash_mentions(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cap in hash_mention_re().captures_iter(content) {
+        if let Some(m) = cap.get(1) {
+            let name = m.as_str().to_string();
+            if seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Resolve `@name` mentions against the capabilities table. Skips
+/// rows that don't exist or are disabled (`enabled = 0`) — the model
+/// shouldn't see docs for capabilities the user can't actually
+/// invoke. Returns `(name, doc_ai)` pairs in mention order.
+async fn resolve_at_mentions(pool: &SqlitePool, names: &[String]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::with_capacity(names.len());
+    for name in names {
+        match queries::get_capability_by_name(pool, name).await {
+            Ok(Some(cap)) if cap.enabled == 1 => {
+                out.push((cap.name, cap.doc_ai));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Resolve `#name` mentions against the projects/caminhos table.
+/// Fetches the full project list once and filters in-memory — cheap
+/// for the typical handful of projects a user keeps. Returns
+/// `(name, repo_path)` pairs in mention order; unknown names drop
+/// silently so the model doesn't get confused by half-resolved data.
+async fn resolve_hash_mentions(pool: &SqlitePool, names: &[String]) -> Vec<(String, String)> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let projects = queries::list_projects(pool).await.unwrap_or_default();
+    let mut out: Vec<(String, String)> = Vec::with_capacity(names.len());
+    for name in names {
+        if let Some(p) = projects.iter().find(|p| p.name.as_str() == name.as_str()) {
+            out.push((p.name.clone(), p.repo_path.clone()));
+        }
+    }
+    out
+}
+
+/// Format the resolved mentions as a markdown block to append after
+/// the system prompt. Empty when neither list has matches — caller
+/// should skip the join in that case.
+fn format_mentions_block(
+    capabilities: &[(String, String)],
+    caminhos: &[(String, String)],
+) -> String {
+    if capabilities.is_empty() && caminhos.is_empty() {
+        return String::new();
+    }
+    let mut s = String::new();
+    if !capabilities.is_empty() {
+        s.push_str("## Capabilities mencionadas nesta mensagem\n\n");
+        s.push_str(
+            "O usuário invocou as capabilities abaixo. \
+             Use as instruções de cada uma como referência principal \
+             pra escolher como executar o pedido.\n\n",
+        );
+        for (name, doc) in capabilities {
+            s.push_str(&format!("### @{name}\n\n{doc}\n\n"));
+        }
+    }
+    if !caminhos.is_empty() {
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s.push_str("## Caminhos mencionados nesta mensagem\n\n");
+        s.push_str(
+            "O usuário referenciou as pastas locais abaixo. \
+             Use o `repo_path` como `cwd` quando rodar comandos \
+             relacionados a cada uma.\n\n",
+        );
+        for (name, path) in caminhos {
+            s.push_str(&format!("### #{name}\n- Path: `{path}`\n\n"));
+        }
+    }
+    s.trim_end().to_string()
 }
 
 fn skills_dir() -> Result<PathBuf, String> {
@@ -160,8 +291,12 @@ fn skill_md_path(name: &str) -> Result<PathBuf, String> {
 /// Broken files are skipped with a stderr warning — one bad file should
 /// not hide the rest.
 fn load_skill_catalog() -> Vec<SkillMeta> {
-    let Ok(dir) = skills_dir() else { return Vec::new() };
-    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(dir) = skills_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
 
     let mut metas: Vec<SkillMeta> = Vec::new();
     for entry in entries.flatten() {
@@ -201,6 +336,40 @@ fn push_skill_meta(path: &std::path::Path, metas: &mut Vec<SkillMeta>) {
 /// drives Phase 1 onward as a regular GPT response.
 fn is_ai_routed_slash_command(name: &str) -> bool {
     matches!(name, "criar-skill")
+}
+
+/// Substring triggers that activate the skill-authoring agent without
+/// the user typing `/criar-skill`. Tight allowlist — broader phrases
+/// (e.g. "automatizar isso") would catch generic conversation and
+/// flip the model into the wrong role. Add only patterns that
+/// unambiguously mean "I want to create/save a skill".
+const SKILL_AGENT_TRIGGERS: &[&str] = &[
+    "criar skill",
+    "criar uma skill",
+    "criar nova skill",
+    "fazer skill",
+    "fazer uma skill",
+    "nova skill",
+    "skill nova",
+];
+
+/// Decides whether this turn should run with `PROMPT_SKILL_AGENT`
+/// appended to the system prompt. Active when:
+///   - the user typed `/criar-skill`, OR
+///   - the user typed plain text matching any trigger above.
+///
+/// A different slash (`/algo`) is NOT treated as a skill-agent
+/// trigger even if the body contains a trigger phrase — the slash
+/// owns the routing.
+fn is_skill_agent_active(content: &str, slash_command: Option<&str>) -> bool {
+    if slash_command == Some("criar-skill") {
+        return true;
+    }
+    if slash_command.is_some() {
+        return false;
+    }
+    let lowered = content.to_lowercase();
+    SKILL_AGENT_TRIGGERS.iter().any(|t| lowered.contains(t))
 }
 
 fn format_step_line(index: usize, step: &SkillStep) -> String {
@@ -259,18 +428,14 @@ fn render_confirmation(skill: &ParsedSkill) -> String {
         }
     }
 
-    msg.push_str(
-        "\n---\n\nSelecione um projeto e use o botão **Executar** para iniciar.",
-    );
+    msg.push_str("\n---\n\nSelecione um projeto e use o botão **Executar** para iniciar.");
     msg
 }
 
 fn render_not_found(name: &str, catalog: &[SkillMeta]) -> String {
     let mut msg = format!("Skill `{name}` não encontrada.\n\n");
     if catalog.is_empty() {
-        msg.push_str(
-            "Nenhuma skill no `skills_dir`. Crie a primeira em **Skills → Nova Skill**.",
-        );
+        msg.push_str("Nenhuma skill no `skills_dir`. Crie a primeira em **Skills → Nova Skill**.");
     } else {
         msg.push_str("## Skills disponíveis\n\n");
         for skill in catalog {
@@ -377,11 +542,17 @@ async fn collect_system_state(pool: &SqlitePool, skills: &[SkillMeta]) -> String
         None => lines.push("Execução ativa: nenhuma".to_string()),
     }
 
-    let last = queries::get_last_finished_execution(pool).await.ok().flatten();
+    let last = queries::get_last_finished_execution(pool)
+        .await
+        .ok()
+        .flatten();
     lines.push(match last {
         Some(exec) => {
             let when = exec.finished_at.as_deref().unwrap_or("?");
-            format!("Última execução: {} — {} ({})", exec.skill_name, exec.status, when)
+            format!(
+                "Última execução: {} — {} ({})",
+                exec.skill_name, exec.status, when
+            )
         }
         None => "Última execução: nenhuma".to_string(),
     });
@@ -742,10 +913,7 @@ fn dispatch_list_files(raw: &str) -> String {
     }
 }
 
-async fn dispatch_abort_execution(
-    pool: &SqlitePool,
-    registry: &ExecutionRegistry,
-) -> String {
+async fn dispatch_abort_execution(pool: &SqlitePool, registry: &ExecutionRegistry) -> String {
     let running = match queries::get_running_execution(pool).await {
         Ok(Some(e)) => e,
         Ok(None) => return "Nenhuma execução em andamento.".to_string(),
@@ -848,13 +1016,47 @@ pub async fn send_chat_message(
                 .flatten()
                 .map(|s| s.summary);
             let system_state = collect_system_state(&pool, &catalog).await;
-            let system_prompt = prompts::build_system_prompt(
+            // DB-backed capabilities catalog. Returns "" when no rows
+            // are enabled; build_system_prompt skips the section in
+            // that case via the Some-non-empty filter.
+            let capabilities_block = prompts::build_capabilities_prompt(&pool).await;
+            let mut system_prompt = prompts::build_system_prompt(
                 user_name.as_deref(),
                 company_name.as_deref(),
                 summary.as_deref(),
                 Some(&system_state),
+                if capabilities_block.is_empty() {
+                    None
+                } else {
+                    Some(capabilities_block.as_str())
+                },
                 &catalog,
             );
+
+            // Pull @ and # mentions from the latest user message and
+            // append the resolved doc_ai / repo_path snippets to the
+            // system prompt. Slash commands are gated upstream
+            // (`needs_ai` branch); this only runs for AI-routed turns.
+            // Empty mentions = no append, no extra cost.
+            let at_names = extract_at_mentions(&content);
+            let hash_names = extract_hash_mentions(&content);
+            let resolved_caps = resolve_at_mentions(&pool, &at_names).await;
+            let resolved_caminhos = resolve_hash_mentions(&pool, &hash_names).await;
+            let mentions_block = format_mentions_block(&resolved_caps, &resolved_caminhos);
+            if !mentions_block.is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&mentions_block);
+            }
+
+            // Skill authoring flow — appended after mentions so the
+            // agent rules (etapas 1-6, regras de criação, etc.) sit
+            // closest to the user message and bias the next reply.
+            // Still self-suficient: the prompt acknowledges that
+            // user_name + capabilities catalog were injected upstream.
+            if is_skill_agent_active(&content, slash_command.as_deref()) {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(prompts::PROMPT_SKILL_AGENT);
+            }
 
             let model = active_model(&pool).await;
             let client = ai_client_for_model(model)?;
@@ -913,8 +1115,7 @@ pub async fn send_chat_message(
                     }
                     if final_content.is_empty() {
                         final_content =
-                            "Limite de iterações de tools atingido sem resposta final."
-                                .to_string();
+                            "Limite de iterações de tools atingido sem resposta final.".to_string();
                     }
                     (final_content, None, None)
                 }
@@ -969,7 +1170,9 @@ fn should_auto_title(pre: Option<&Conversation>) -> bool {
 /// failure — the user can always rename manually via the sidebar.
 async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message: &str) {
     let model = active_model(pool).await;
-    let Ok(client) = ai_client_for_model(model) else { return };
+    let Ok(client) = ai_client_for_model(model) else {
+        return;
+    };
 
     let prompt = format!(
         "Gere um título curto (máximo {TITLE_GEN_MAX_CHARS} caracteres, em português, \
@@ -1170,13 +1373,130 @@ pub async fn analyze_step_failure(
     Ok(msg)
 }
 
+// ── skill folder writes (v2 layout) ────────────────────────────────────────
+
+/// One named file written into a v2 skill folder. Used uniformly for
+/// scripts/, references/, assets/.
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillFolderFile {
+    pub name: String,
+    pub content: String,
+}
+
+/// Returns true when `name` is safe to use as a single path component
+/// inside the skills_dir tree. Path traversal + separator chars
+/// rejected at the boundary.
+fn is_safe_skill_path_component(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && !name.contains("..")
+}
+
+/// Persists a v2 skill folder under `skills_dir`:
+///
+/// ```text
+/// skills_dir/<skill_name>/
+///     SKILL.md            (sempre)
+///     scripts/<file>      (cada SkillFolderFile em `scripts`)
+///     references/<file>   (cada SkillFolderFile em `references`)
+///     assets/<file>       (cada SkillFolderFile em `assets`)
+/// ```
+///
+/// Idempotente — re-call sobrescreve arquivos existentes pra suportar
+/// o flow do skill agent que itera o conteúdo entre as etapas
+/// CONSTRUIR / APRESENTAR / VALIDAR. Scripts ganham chmod 755 sob
+/// `cfg(unix)` pra que o BashChannel possa spawnar direto.
+///
+/// Erros surfacam o nome do arquivo problemático pra o agente
+/// conseguir ajustar e re-tentar.
+#[tauri::command]
+pub async fn save_skill_folder(
+    skill_name: String,
+    skill_md: String,
+    scripts: Option<Vec<SkillFolderFile>>,
+    references: Option<Vec<SkillFolderFile>>,
+    assets: Option<Vec<SkillFolderFile>>,
+) -> Result<(), String> {
+    if !is_safe_skill_path_component(&skill_name) {
+        return Err(format!("nome de skill inválido: `{skill_name}`"));
+    }
+
+    let cfg = config::load_config()?;
+    let skills_root = PathBuf::from(cfg.skills_dir);
+    let skill_folder = skills_root.join(&skill_name);
+
+    fs::create_dir_all(&skill_folder)
+        .map_err(|e| format!("falha ao criar pasta {}: {e}", skill_folder.display()))?;
+
+    let skill_md_path = skill_folder.join("SKILL.md");
+    fs::write(&skill_md_path, &skill_md)
+        .map_err(|e| format!("falha ao gravar {}: {e}", skill_md_path.display()))?;
+
+    write_skill_subdir(&skill_folder, "scripts", scripts.unwrap_or_default(), true)?;
+    write_skill_subdir(
+        &skill_folder,
+        "references",
+        references.unwrap_or_default(),
+        false,
+    )?;
+    write_skill_subdir(&skill_folder, "assets", assets.unwrap_or_default(), false)?;
+
+    Ok(())
+}
+
+/// Helper for [`save_skill_folder`] — writes each file inside one
+/// subdirectory of the skill folder. Empty input list = no-op (we
+/// don't even create the subdir; better to let `references/` not
+/// exist than ship a vazio that confuses the listing).
+///
+/// `executable` flag triggers chmod 755 on Unix so scripts run
+/// directly via the BashChannel without needing `bash <script>`
+/// prefix in the etapa.
+fn write_skill_subdir(
+    skill_folder: &std::path::Path,
+    subdir: &str,
+    files: Vec<SkillFolderFile>,
+    executable: bool,
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let dir = skill_folder.join(subdir);
+    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
+
+    for file in files {
+        if !is_safe_skill_path_component(&file.name) {
+            return Err(format!(
+                "nome de arquivo inválido em {subdir}/: `{}`",
+                file.name
+            ));
+        }
+        let path = dir.join(&file.name);
+        fs::write(&path, &file.content)
+            .map_err(|e| format!("falha ao gravar {}: {e}", path.display()))?;
+        if executable {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(&path) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(0o755);
+                    let _ = fs::set_permissions(&path, perms);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn extract_slash_command_basic() {
-        assert_eq!(extract_slash_command("/criar-sistema"), Some("criar-sistema"));
+        assert_eq!(
+            extract_slash_command("/criar-sistema"),
+            Some("criar-sistema")
+        );
         assert_eq!(
             extract_slash_command("  /criar-sistema com argumentos"),
             Some("criar-sistema"),
@@ -1263,6 +1583,120 @@ mod tests {
     fn extract_slash_command_rejects_empty_name() {
         assert_eq!(extract_slash_command("/"), None);
         assert_eq!(extract_slash_command("/   "), None);
+    }
+
+    #[test]
+    fn extract_at_mentions_finds_word_boundary_only() {
+        // Standalone + start-of-string both match.
+        assert_eq!(extract_at_mentions("@terminal"), vec!["terminal"]);
+        assert_eq!(
+            extract_at_mentions("rode @terminal e @code"),
+            vec!["terminal".to_string(), "code".to_string()],
+        );
+        // Embedded @ (e.g. email) must NOT match.
+        assert_eq!(
+            extract_at_mentions("contato@empresa.com"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn extract_at_mentions_dedupes_in_order() {
+        assert_eq!(
+            extract_at_mentions("@terminal abre, depois @terminal fecha"),
+            vec!["terminal".to_string()],
+        );
+    }
+
+    #[test]
+    fn extract_at_mentions_pattern_constraints() {
+        // Allowed: lowercase + digits + hyphens.
+        assert_eq!(extract_at_mentions("@step-1"), vec!["step-1"]);
+        // Uppercase right after @ kills the whole match — no capture.
+        assert_eq!(extract_at_mentions("@Terminal"), Vec::<String>::new());
+        // Underscore truncates the greedy `[a-z0-9-]+` mid-word; the
+        // captured prefix still counts as a mention. This is the
+        // documented behavior — `_` not in the spec's char class.
+        assert_eq!(extract_at_mentions("@my_tool"), vec!["my".to_string()]);
+    }
+
+    #[test]
+    fn extract_hash_mentions_mirrors_at_logic() {
+        assert_eq!(extract_hash_mentions("#meu-projeto"), vec!["meu-projeto"]);
+        assert_eq!(
+            extract_hash_mentions("rode em #a e em #b"),
+            vec!["a".to_string(), "b".to_string()],
+        );
+        // Hashtag-style mid-word doesn't match (no boundary).
+        assert_eq!(extract_hash_mentions("issue#123"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn format_mentions_block_returns_empty_when_nothing_resolved() {
+        let s = format_mentions_block(&[], &[]);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn format_mentions_block_emits_both_sections() {
+        let caps = vec![("terminal".into(), "Roda comandos shell.".into())];
+        let cams = vec![("meu".into(), "/home/user/meu".into())];
+        let s = format_mentions_block(&caps, &cams);
+        assert!(s.contains("## Capabilities mencionadas"));
+        assert!(s.contains("### @terminal"));
+        assert!(s.contains("Roda comandos shell."));
+        assert!(s.contains("## Caminhos mencionados"));
+        assert!(s.contains("### #meu"));
+        assert!(s.contains("/home/user/meu"));
+    }
+
+    #[test]
+    fn skill_agent_active_for_explicit_slash() {
+        assert!(is_skill_agent_active("/criar-skill", Some("criar-skill")));
+        // Even with extra args after the slash, the slash routing wins.
+        assert!(is_skill_agent_active(
+            "/criar-skill legendar videos",
+            Some("criar-skill"),
+        ));
+    }
+
+    #[test]
+    fn skill_agent_active_for_natural_triggers() {
+        assert!(is_skill_agent_active(
+            "quero criar uma skill que legenda videos",
+            None,
+        ));
+        assert!(is_skill_agent_active("Faz uma skill nova pra mim", None));
+        assert!(is_skill_agent_active("CRIAR SKILL automatica", None));
+    }
+
+    #[test]
+    fn skill_agent_inactive_for_unrelated_chat() {
+        assert!(!is_skill_agent_active("oi tudo bem?", None));
+        assert!(!is_skill_agent_active(
+            "automatizar isso seria bom mas sem usar skill",
+            None,
+        ));
+    }
+
+    #[test]
+    fn skill_agent_inactive_when_other_slash_active() {
+        // /listar é um exemplo de slash não-AI-routed; mesmo se o
+        // body bater num trigger de skill, o slash domina.
+        assert!(!is_skill_agent_active(
+            "/listar criar skill",
+            Some("listar"),
+        ));
+    }
+
+    #[test]
+    fn skill_path_component_validation() {
+        assert!(is_safe_skill_path_component("legendar-videos"));
+        assert!(is_safe_skill_path_component("step_1"));
+        assert!(!is_safe_skill_path_component(""));
+        assert!(!is_safe_skill_path_component("../etc/passwd"));
+        assert!(!is_safe_skill_path_component("foo/bar"));
+        assert!(!is_safe_skill_path_component("foo\\bar"));
     }
 
     #[test]

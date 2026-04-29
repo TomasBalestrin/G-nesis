@@ -12,57 +12,97 @@ streams progress back to the chat UI in real time.
 
 1. Download **Genesis.dmg** from Releases.
 2. Open the `.dmg` and drag **Genesis** into **Applications**.
-3. Launch Genesis. The setup wizard will guide you through:
+3. Launch Genesis. The unified 5-step onboarding will guide you:
    - **Step 1** — Welcome
    - **Step 2** — Paste your OpenAI API key; click **Testar** to verify
-   - **Step 3** — Check optional dependencies (`ffmpeg`, `claude` CLI); install
-     with one click (Homebrew) or copy the suggested command
-   - **Step 4** — Done — jump into the chat
+   - **Step 3** — Perfil: name + company (vai pro system prompt)
+   - **Step 4** — Documentos: upload `.md` opcionais sobre seu trabalho
+   - **Step 5** — Resumo gerado por GPT + botão "Começar"
 
 Configuration lives in `~/.genesis/`:
 
 | File | Purpose |
 |------|---------|
 | `config.toml` | OpenAI API key + skills directory |
-| `genesis.db` | SQLite: projects, executions, chat history, conversations |
-| `skills/*.md` | Your skill definitions |
+| `genesis.db` | SQLite: caminhos (folder bookmarks), capabilities, executions, chat |
+| `skills/<nome>/SKILL.md` | Skill v2 (folder layout). v1 `.md` solto ainda lê. |
 
-## Using skills
+## Using Genesis
 
-In chat:
+The chat input supports three trigger characters:
 
-- Type `/` — autocomplete pops up with every skill in your `skills/` dir.
-- Type `/criar-sistema` (or the name of any skill) and press **Enter**.
-- Genesis previews the steps, asks you to pick a project, then kicks off
-  execution. Pause / resume / abort buttons appear while it runs.
-- Progress (per-step status, logs, duration) streams in the right pane at
-  widths ≥ 1200px, or in the dedicated **Progress** view otherwise.
+- **`/<skill>`** at start-of-input — slash command. Autocomplete pops up
+  with every skill in your `skills/` dir. `/criar-sistema` previews the
+  steps, asks you to pick a caminho ativo, then dispatches the executor.
+- **`@<capability>`** anywhere mid-text — mention a capability (built-in
+  or connector). Examples: `@terminal`, `@code`. The backend injects the
+  capability's `doc_ai` snippet into the system prompt for that turn.
+- **`#<caminho>`** anywhere mid-text — mention a registered folder
+  (caminho). The backend resolves to `repo_path` and uses it as `cwd`
+  for any commands the turn dispatches.
 
-Skill file format (`skills/exemplo.md`):
+Examples:
+
+```
+/legendar-videos
+@terminal extrai o áudio dos vídeos em #raw-uploads
+@code refatora o módulo X em #frontend e roda npm test em @terminal
+```
+
+Inline ⏳/✅/❌ status messages stream into the chat as the executor runs;
+pause/abort controls appear in a thin bar above the input while a skill
+is active.
+
+### Skill v2 layout (folder)
+
+```
+~/.genesis/skills/legendar-videos/
+├── SKILL.md             # entry point obrigatório
+├── references/          # opcional — cheat-sheets que o modelo lê sob demanda
+│   └── api-limits.md
+├── scripts/             # opcional — scripts shell (chmod 755 auto)
+│   └── extract.sh
+└── assets/              # opcional — templates / dados
+```
+
+`SKILL.md` example:
 
 ```markdown
 ---
-name: exemplo
-description: O que a skill faz
-version: "1.0"
-author: Bethel
+name: legendar-videos
+description: Gera legendas .srt de qualquer vídeo via Whisper API
+version: "2.0"
+author: maria
+triggers: [legendar, subtítulo]
 ---
-# Tools
-- bash
-# Inputs
-- repo_path
-# Steps
-## step_1
-tool: bash
-command: find {{repo_path}} -name "*.mov"
-validate: exit_code == 0
-on_fail: retry 2
-# Config
-timeout: 300
+
+# Quando usar
+Pra qualquer vídeo MP4/MOV/MKV — gera SRT na mesma pasta.
+
+# Pré-requisitos
+- @terminal pra ffmpeg
+- Whisper API key em ~/.genesis/config.toml
+
+# Etapas
+
+## extract-audio
+Use @terminal pra rodar `scripts/extract.sh {{input}}`. Se o áudio
+passar de 25MB, divida em chunks (ver references/api-limits.md).
+
+## transcribe
+Manda o MP3 pra Whisper API e salva o `.srt` ao lado do vídeo.
+
+# Outputs
+- `<video>.srt`
 ```
 
-See `skills/criar-sistema.md` and `skills/debug-sistema.md` in this repo for
-full examples.
+V2 etapas são **prosa** (não DSL). O modelo traduz `Use @terminal pra ...`
+em tool calls em runtime. Spec completa: [`docs/skill-format-v2.md`](docs/skill-format-v2.md).
+
+Pra criar uma skill nova: `/criar-skill` no chat ativa o agente de autoria
+que conduz em 6 etapas (entender, pesquisar, propor, construir,
+apresentar, validar). Skills v1 (`.md` solto na raiz do `skills_dir`)
+continuam sendo lidas como fallback.
 
 ## Dev
 
@@ -122,19 +162,24 @@ truth. Env only fills blanks.
 
 ```
 src-tauri/          # Rust backend
-  orchestrator/     # skill parser, variable resolver, state machine, validator
+  orchestrator/     # skill_parser (v1+v2 detection), skill_loader_v2 (folder),
+                    # variable_resolver, executor (@-cap + #-caminho resolution)
   channels/         # bash / claude-code / api dispatchers (tokio subprocesses)
-  commands/         # Tauri IPC handlers exposed to the WebView
-  db/               # sqlx + SQLite (WAL) schema & queries
-  ai/               # OpenAI client with 3-retry backoff
+  commands/         # caminhos, capabilities, chat, skills, execution, conversations
+  db/               # sqlx + SQLite (WAL); migrations 001-007 (capabilities table)
+  ai/               # OpenAI client (function-calling loop) + prompts
+                    #   (CORE/USER_CONTEXT/SYSTEM_STATE/CAPABILITIES/REASONING/
+                    #    SKILLS_V2/CAMINHOS/RULES/PROMPT_SKILL_AGENT)
 src/                # React 19 + Tailwind 3 + Zustand
-  components/       # chat, skills, layout, onboarding, settings, progress
+  components/       # chat, caminhos, capabilities, skills, onboarding, settings, workflows
   lib/tauri-bridge  # typed invoke() wrappers — never call @tauri-apps/api directly
-  stores/           # Zustand stores
+  stores/           # appStore, executionStore, chatStore, capabilitiesStore, caminhosStore
 ```
 
-Commands registered at `src-tauri/src/lib.rs` are the stable IPC contract; the
-frontend touches them only through `src/lib/tauri-bridge.ts`.
+Commands registered at `src-tauri/src/lib.rs` are the stable IPC contract;
+the frontend touches them only through `src/lib/tauri-bridge.ts`. Skills
+v2 reads use plugin-fs from the frontend (`SkillViewerV2`) — adjust
+capability scope in `src-tauri/capabilities/default.json` if needed.
 
 ## License
 

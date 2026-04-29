@@ -31,9 +31,7 @@ pub struct ExecutionDetail {
 }
 
 #[tauri::command]
-pub async fn list_projects(
-    pool: State<'_, SqlitePool>,
-) -> Result<Vec<Project>, String> {
+pub async fn list_projects(pool: State<'_, SqlitePool>) -> Result<Vec<Project>, String> {
     queries::list_projects(&pool).await
 }
 
@@ -77,10 +75,7 @@ pub async fn create_project(
 }
 
 #[tauri::command]
-pub async fn delete_project(
-    id: String,
-    pool: State<'_, SqlitePool>,
-) -> Result<(), String> {
+pub async fn delete_project(id: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     queries::delete_project(&pool, &id).await
 }
 

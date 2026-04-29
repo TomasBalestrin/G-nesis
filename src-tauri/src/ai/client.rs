@@ -182,37 +182,15 @@ pub struct ChatWithToolsOutput {
 
 #[derive(Debug)]
 pub enum AiError {
-    MissingApiKey {
-        provider: Provider,
-    },
-    Unauthorized {
-        provider: Provider,
-    },
-    RateLimited {
-        provider: Provider,
-    },
-    ServerError {
-        provider: Provider,
-        status: u16,
-    },
-    Timeout {
-        provider: Provider,
-    },
-    Network {
-        provider: Provider,
-        message: String,
-    },
-    Decode {
-        provider: Provider,
-        message: String,
-    },
-    EmptyResponse {
-        provider: Provider,
-    },
-    BadRequest {
-        provider: Provider,
-        message: String,
-    },
+    MissingApiKey { provider: Provider },
+    Unauthorized { provider: Provider },
+    RateLimited { provider: Provider },
+    ServerError { provider: Provider, status: u16 },
+    Timeout { provider: Provider },
+    Network { provider: Provider, message: String },
+    Decode { provider: Provider, message: String },
+    EmptyResponse { provider: Provider },
+    BadRequest { provider: Provider, message: String },
 }
 
 /// Backwards-compat alias — older code paths spell this `OpenAIError`. New
@@ -272,15 +250,15 @@ impl AiError {
                 "{label} API key inválida ou sem acesso. {}",
                 provider_settings_hint(*provider)
             ),
-            Self::RateLimited { .. } => format!(
-                "Rate limit da {label} excedido. Tente novamente em alguns segundos."
-            ),
-            Self::ServerError { status, .. } => format!(
-                "{label} API indisponível ({status}). Tente novamente mais tarde."
-            ),
-            Self::Timeout { .. } => format!(
-                "Timeout ao chamar {label} ({TIMEOUT_SECS}s). Verifique sua conexão."
-            ),
+            Self::RateLimited { .. } => {
+                format!("Rate limit da {label} excedido. Tente novamente em alguns segundos.")
+            }
+            Self::ServerError { status, .. } => {
+                format!("{label} API indisponível ({status}). Tente novamente mais tarde.")
+            }
+            Self::Timeout { .. } => {
+                format!("Timeout ao chamar {label} ({TIMEOUT_SECS}s). Verifique sua conexão.")
+            }
             Self::Network { message, .. } => {
                 format!("Erro de rede ao chamar {label}: {message}")
             }
@@ -408,10 +386,7 @@ impl OpenAIClient {
     ///
     /// Mirrors `chat_completion` in transport / retry / error handling —
     /// only the prompt and call shape differ.
-    pub async fn generate_knowledge_summary(
-        &self,
-        all_content: &str,
-    ) -> Result<String, AiError> {
+    pub async fn generate_knowledge_summary(&self, all_content: &str) -> Result<String, AiError> {
         let messages = vec![
             Message::system(KNOWLEDGE_SUMMARY_SYSTEM_PROMPT),
             Message::user(all_content),
@@ -479,11 +454,10 @@ async fn decode_openai(resp: reqwest::Response) -> Result<ChatWithToolsOutput, A
     let provider = Provider::OpenAi;
     match status {
         StatusCode::OK => {
-            let parsed: OpenAiChatResponse =
-                resp.json().await.map_err(|e| AiError::Decode {
-                    provider,
-                    message: e.to_string(),
-                })?;
+            let parsed: OpenAiChatResponse = resp.json().await.map_err(|e| AiError::Decode {
+                provider,
+                message: e.to_string(),
+            })?;
             let choice = parsed
                 .choices
                 .into_iter()
@@ -577,7 +551,11 @@ pub struct AnthropicClient {
 }
 
 impl AnthropicClient {
-    pub fn new(api_key: String, model: impl Into<String>, max_tokens: u32) -> Result<Self, AiError> {
+    pub fn new(
+        api_key: String,
+        model: impl Into<String>,
+        max_tokens: u32,
+    ) -> Result<Self, AiError> {
         if api_key.trim().is_empty() {
             return Err(AiError::MissingApiKey {
                 provider: Provider::Anthropic,
@@ -612,15 +590,15 @@ impl AnthropicClient {
         with_retry(Provider::Anthropic, || self.send_once(system, &normalized)).await
     }
 
-    async fn send_once(
-        &self,
-        system: &str,
-        messages: &[Message],
-    ) -> Result<String, AiError> {
+    async fn send_once(&self, system: &str, messages: &[Message]) -> Result<String, AiError> {
         let body = AnthropicMessagesRequest {
             model: &self.model,
             max_tokens: self.max_tokens,
-            system: if system.is_empty() { None } else { Some(system) },
+            system: if system.is_empty() {
+                None
+            } else {
+                Some(system)
+            },
             messages,
             stream: None,
             thinking: None,
@@ -672,7 +650,11 @@ impl AnthropicClient {
         let body = AnthropicMessagesRequest {
             model: &self.model,
             max_tokens: self.max_tokens,
-            system: if system.is_empty() { None } else { Some(system) },
+            system: if system.is_empty() {
+                None
+            } else {
+                Some(system)
+            },
             messages: &normalized,
             stream: Some(true),
             thinking: thinking_block,
@@ -799,7 +781,9 @@ async fn consume_anthropic_stream(
                     }
                 }
                 AnthropicStreamEvent::ContentBlockStop { index } => {
-                    if !thinking_emitted_complete && block_kinds.get(&index).copied() == Some("thinking") {
+                    if !thinking_emitted_complete
+                        && block_kinds.get(&index).copied() == Some("thinking")
+                    {
                         thinking_emitted_complete = true;
                         let summary = derive_thinking_summary(&thinking);
                         if let Some(sink) = sink {
@@ -811,7 +795,10 @@ async fn consume_anthropic_stream(
                 AnthropicStreamEvent::Error { error } => {
                     return Err(AiError::BadRequest {
                         provider,
-                        message: format!("anthropic stream error: {} ({})", error.message, error.kind),
+                        message: format!(
+                            "anthropic stream error: {} ({})",
+                            error.message, error.kind
+                        ),
                     });
                 }
                 _ => {}
@@ -831,7 +818,11 @@ async fn consume_anthropic_stream(
 
     Ok(ChatOutput {
         content,
-        thinking: if thinking.is_empty() { None } else { Some(thinking) },
+        thinking: if thinking.is_empty() {
+            None
+        } else {
+            Some(thinking)
+        },
         thinking_summary,
     })
 }
@@ -1087,21 +1078,20 @@ impl AiClient {
                 ))
             }
             Provider::Anthropic => {
-                let key = anthropic_key
-                    .filter(|k| !k.is_empty())
-                    .ok_or(AiError::MissingApiKey {
-                        provider: Provider::Anthropic,
-                    })?;
-                let mut client = AnthropicClient::new(
-                    key.to_string(),
-                    model.id,
-                    model.max_tokens,
-                )?;
+                let key =
+                    anthropic_key
+                        .filter(|k| !k.is_empty())
+                        .ok_or(AiError::MissingApiKey {
+                            provider: Provider::Anthropic,
+                        })?;
+                let mut client = AnthropicClient::new(key.to_string(), model.id, model.max_tokens)?;
                 if model.supports_thinking {
                     // Half of max_tokens, floored at 1024 so the thinking
                     // budget is meaningful even on small ceilings. Anthropic
                     // requires budget < max_tokens.
-                    let budget = (model.max_tokens / 2).max(1024).min(model.max_tokens.saturating_sub(1));
+                    let budget = (model.max_tokens / 2)
+                        .max(1024)
+                        .min(model.max_tokens.saturating_sub(1));
                     client = client.with_thinking_budget(budget);
                 }
                 Ok(AiClient::Anthropic(client))

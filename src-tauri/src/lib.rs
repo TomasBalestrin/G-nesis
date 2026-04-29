@@ -10,8 +10,8 @@ pub mod orchestrator;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
-    app_state, chat, config as config_cmd, conversations, dependencies, execution, knowledge,
-    projects, skills, workflows,
+    app_state, caminhos, capabilities, chat, config as config_cmd, conversations, dependencies,
+    execution, knowledge, projects, skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -25,12 +25,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let cfg = config::load_config()
-                .map_err(|e| format!("failed to load config: {e}"))?;
+            let cfg = config::load_config().map_err(|e| format!("failed to load config: {e}"))?;
             if cfg.needs_setup {
-                eprintln!(
-                    "[genesis] OPENAI_API_KEY not set — frontend should show setup screen"
-                );
+                eprintln!("[genesis] OPENAI_API_KEY not set — frontend should show setup screen");
             }
             app.manage(cfg);
 
@@ -54,9 +51,14 @@ pub fn run() {
             skills::delete_skill,
             skills::parse_skill,
             // projects
-            projects::list_projects,
-            projects::create_project,
-            projects::delete_project,
+            // projects::list_projects / create_project / delete_project
+            // foram aposentados em H1 — todo o surface migrou pra
+            // caminhos::*. get_execution_history e get_execution_detail
+            // permanecem porque CaminhoDetail consulta o histórico
+            // by project_id (schema DB ainda usa projects table).
+            caminhos::list_caminhos,
+            caminhos::create_caminho,
+            caminhos::delete_caminho,
             projects::get_execution_history,
             projects::get_execution_detail,
             // execution
@@ -70,6 +72,11 @@ pub fn run() {
             chat::list_messages_by_conversation,
             chat::insert_execution_status_message,
             chat::analyze_step_failure,
+            chat::save_skill_folder,
+            // capabilities (unified @-mention registry — read-only paths)
+            capabilities::list_capabilities,
+            capabilities::get_capability,
+            capabilities::list_capabilities_by_type,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,

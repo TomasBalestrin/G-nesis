@@ -4,10 +4,14 @@ import { SendHorizontal, Slash } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useCaminhosStore } from "@/stores/caminhosStore";
+import { useCapabilitiesStore } from "@/stores/capabilitiesStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 
+import { AtCommandModal, filterCapabilities } from "./AtCommandModal";
+import { CaminhoSelector } from "./CaminhoSelector";
+import { HashCommandModal, filterCaminhos } from "./HashCommandModal";
 import { ModelSelector } from "./ModelSelector";
-import { ProjectSelector } from "./ProjectSelector";
 import { SlashCommandModal, filterSkills } from "./SlashCommandModal";
 
 const MAX_HEIGHT = 200;
@@ -18,12 +22,33 @@ interface CommandInputProps {
   placeholder?: string;
 }
 
+type Trigger = "/" | "@" | "#";
+
+interface MentionState {
+  trigger: Trigger | null;
+  /** Text after the trigger char up to the cursor. */
+  query: string;
+  /** Index of the trigger char in `value` (start of the partial mention). */
+  startIndex: number;
+}
+
+const NO_MENTION: MentionState = { trigger: null, query: "", startIndex: -1 };
+
 /**
- * Chat input with an autocomplete popup triggered by a leading `/`. Typing
- * `/leg` opens a popup filtered to skills whose name or description matches;
- * ↑/↓ navigate, Enter/Tab selects + submits, Esc cancels. Clicks outside the
- * popup close it; mouse click on a row fires before textarea blur via
- * onMouseDown preventDefault.
+ * Chat input with three autocomplete popups:
+ *   - `/skill-name`  at the start of the input → submits on select
+ *     (slash commands still bypass the GPT roundtrip when matched).
+ *   - `@capability`  anywhere mid-text → inserts `@name ` at the cursor.
+ *   - `#caminho`     anywhere mid-text → inserts `#name ` at the cursor.
+ *
+ * Detection runs against the current word (last whitespace before the
+ * cursor → cursor position). `/` is gated to start-of-input so plain
+ * sentences with a slash mid-text don't pop the menu. `@` and `#`
+ * fire in any position because they're mention markers, not commands.
+ *
+ * One highlight state, shared across modals — resets when the trigger
+ * or query changes. Keyboard handling is owned here so the textarea's
+ * own onKeyDown can intercept ↑/↓/Enter/Tab/Esc before the popup.
  */
 export function CommandInput({
   onSubmit,
@@ -31,33 +56,62 @@ export function CommandInput({
   placeholder = "Digite um comando (/skill-name) ou converse com o assistente...",
 }: CommandInputProps) {
   const [value, setValue] = useState("");
-  const skills = useSkillsStore((s) => s.items);
-  const skillsLoaded = useSkillsStore((s) => s.loaded);
-  const ensureSkills = useSkillsStore((s) => s.ensureLoaded);
+  const [cursor, setCursor] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const trimmedStart = value.trimStart();
-  const isCommand = trimmedStart.startsWith("/");
-  const slashQuery = isCommand ? trimmedStart.slice(1).split(/\s/)[0] ?? "" : "";
-  const slashOpen = isCommand && !disabled;
+  const skills = useSkillsStore((s) => s.items);
+  const skillsLoaded = useSkillsStore((s) => s.loaded);
+  const ensureSkills = useSkillsStore((s) => s.ensureLoaded);
 
-  const filtered = useMemo(
-    () => (skillsLoaded ? filterSkills(skills, slashQuery) : []),
-    [skills, skillsLoaded, slashQuery],
+  const capabilities = useCapabilitiesStore((s) => s.items);
+  const capsLoaded = useCapabilitiesStore((s) => s.loaded);
+  const ensureCaps = useCapabilitiesStore((s) => s.ensureLoaded);
+
+  const caminhos = useCaminhosStore((s) => s.items);
+  const caminhosLoaded = useCaminhosStore((s) => s.loaded);
+  const ensureCaminhos = useCaminhosStore((s) => s.ensureLoaded);
+
+  const mention = useMemo(
+    () => (disabled ? NO_MENTION : detectMention(value, cursor)),
+    [value, cursor, disabled],
   );
 
-  // Hydrate the catalog the first time the user types `/`. Subsequent
-  // refreshes (e.g. after saving a new skill from chat) flow through the
-  // shared store and re-render this list automatically.
-  useEffect(() => {
-    if (isCommand) ensureSkills();
-  }, [isCommand, ensureSkills]);
+  // Filtered candidates per trigger. Only the active modal renders, so
+  // the inactive arrays are essentially free (empty).
+  const filteredSkills = useMemo(
+    () =>
+      mention.trigger === "/" && skillsLoaded
+        ? filterSkills(skills, mention.query)
+        : [],
+    [mention, skills, skillsLoaded],
+  );
+  const filteredCaps = useMemo(
+    () =>
+      mention.trigger === "@" && capsLoaded
+        ? filterCapabilities(capabilities, mention.query)
+        : [],
+    [mention, capabilities, capsLoaded],
+  );
+  const filteredCaminhos = useMemo(
+    () =>
+      mention.trigger === "#" && caminhosLoaded
+        ? filterCaminhos(caminhos, mention.query)
+        : [],
+    [mention, caminhos, caminhosLoaded],
+  );
 
-  // Reset highlight every time the filter changes.
+  // Hydrate the matching catalog the first time the user triggers it.
+  useEffect(() => {
+    if (mention.trigger === "/") void ensureSkills();
+    if (mention.trigger === "@") void ensureCaps();
+    if (mention.trigger === "#") void ensureCaminhos();
+  }, [mention.trigger, ensureSkills, ensureCaps, ensureCaminhos]);
+
+  // Reset highlight when the trigger or query changes.
   useEffect(() => {
     setHighlight(0);
-  }, [slashQuery]);
+  }, [mention.trigger, mention.query]);
 
   function autoResize() {
     const el = textareaRef.current;
@@ -68,7 +122,17 @@ export function CommandInput({
 
   function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
     setValue(e.target.value);
+    setCursor(e.target.selectionStart ?? 0);
     autoResize();
+  }
+
+  /** Refresh cursor on selection moves (arrow keys, click). Without
+   *  this, moving the caret without typing would keep the menu stuck
+   *  on the previously detected word. */
+  function syncCursor() {
+    const el = textareaRef.current;
+    if (!el) return;
+    setCursor(el.selectionStart ?? 0);
   }
 
   function submitRaw(content: string) {
@@ -76,38 +140,83 @@ export function CommandInput({
     if (!trimmed || disabled) return;
     onSubmit(trimmed);
     setValue("");
+    setCursor(0);
     requestAnimationFrame(() => autoResize());
   }
 
-  function selectSkill(name: string) {
+  function selectSlash(name: string) {
+    // Slash commands at start-of-input still submit immediately —
+    // matches the canned-skill-preview path in chat.rs.
     submitRaw(`/${name}`);
   }
 
+  /** Replace the partial mention (from `mention.startIndex` to the
+   *  cursor) with the full `${prefix}${name} ` token, then move the
+   *  caret past the inserted space so the user can keep typing. */
+  function selectInline(prefix: "@" | "#", name: string) {
+    if (mention.startIndex < 0) return;
+    const before = value.slice(0, mention.startIndex);
+    const after = value.slice(cursor);
+    const inserted = `${prefix}${name} `;
+    const newValue = before + inserted + after;
+    const newCursor = before.length + inserted.length;
+    setValue(newValue);
+    setCursor(newCursor);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(newCursor, newCursor);
+      autoResize();
+    });
+  }
+
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (slashOpen && filtered.length > 0) {
+    // Active list for the current trigger. The branches below only run
+    // when one is non-empty so navigation keys are safe to intercept.
+    const active =
+      mention.trigger === "/"
+        ? filteredSkills.map((s) => s.name)
+        : mention.trigger === "@"
+          ? filteredCaps.map((c) => c.name)
+          : mention.trigger === "#"
+            ? filteredCaminhos.map((c) => c.name)
+            : [];
+
+    if (mention.trigger && active.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setHighlight((i) => (i + 1) % filtered.length);
+        setHighlight((i) => (i + 1) % active.length);
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setHighlight((i) => (i - 1 + filtered.length) % filtered.length);
+        setHighlight((i) => (i - 1 + active.length) % active.length);
         return;
       }
       if (e.key === "Tab") {
         e.preventDefault();
-        selectSkill(filtered[highlight].name);
+        commitMention(active[highlight]);
         return;
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        selectSkill(filtered[highlight].name);
+        commitMention(active[highlight]);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        setValue("");
+        // For slash (start-of-input) clear the whole field; for inline
+        // mentions just close the menu by inserting a space which
+        // breaks the trigger word. Simpler: drop the trigger char and
+        // re-position the caret. But shifting state is messy — closing
+        // the menu via setValue trick would also lose user text. Punt:
+        // for inline, just consume the Esc; the popup hides next render
+        // when query mismatches.
+        if (mention.trigger === "/") {
+          setValue("");
+          setCursor(0);
+        }
         return;
       }
     }
@@ -118,21 +227,67 @@ export function CommandInput({
     }
   }
 
+  function commitMention(name: string) {
+    if (mention.trigger === "/") return selectSlash(name);
+    if (mention.trigger === "@") return selectInline("@", name);
+    if (mention.trigger === "#") return selectInline("#", name);
+  }
+
   function handleFormSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     submitRaw(value);
   }
 
+  // Visual cue per trigger — ring color, textarea text color, leading
+  // slash indicator. Inline mentions (@, #) only color the form ring
+  // since the trigger char lives mid-text and a left-side icon doesn't
+  // make sense for them.
+  const ringClass =
+    mention.trigger === "/"
+      ? "ring-2 ring-[var(--accent)]"
+      : mention.trigger === "@"
+        ? "ring-2 ring-[var(--status-info)]"
+        : mention.trigger === "#"
+          ? "ring-2 ring-[var(--status-success)]"
+          : "";
+
   return (
     <div className="relative">
       <SlashCommandModal
-        open={slashOpen}
-        query={slashQuery}
+        open={mention.trigger === "/" && !disabled}
+        query={mention.query}
         skills={skills ?? []}
         highlight={highlight}
         onHighlightChange={setHighlight}
-        onSelect={selectSkill}
-        onClose={() => setValue("")}
+        onSelect={selectSlash}
+        onClose={() => {
+          setValue("");
+          setCursor(0);
+        }}
+      />
+      <AtCommandModal
+        open={mention.trigger === "@" && !disabled}
+        query={mention.query}
+        capabilities={capabilities ?? []}
+        highlight={highlight}
+        onHighlightChange={setHighlight}
+        onSelect={(name) => selectInline("@", name)}
+        onClose={() => {
+          // Closing without selection just dismisses the menu — leave
+          // the partial `@foo` in the text so the user can keep editing.
+          // Re-detection on the next change picks it back up.
+        }}
+      />
+      <HashCommandModal
+        open={mention.trigger === "#" && !disabled}
+        query={mention.query}
+        caminhos={caminhos ?? []}
+        highlight={highlight}
+        onHighlightChange={setHighlight}
+        onSelect={(name) => selectInline("#", name)}
+        onClose={() => {
+          // Same as AtCommandModal — preserve the partial mention.
+        }}
       />
 
       <form
@@ -140,14 +295,15 @@ export function CommandInput({
         className={cn(
           "rounded-2xl bg-[var(--bg-tertiary)] transition-colors",
           "focus-within:ring-2 focus-within:ring-[var(--accent-ring)]",
-          isCommand && "ring-2 ring-[var(--accent)]",
+          ringClass,
         )}
       >
-        {/* Top row: leading slash hint + textarea + send. The textarea
-            grows up to MAX_HEIGHT and the send button stays pinned to
-            the bottom-right via items-end. */}
+        {/* Top row: leading slash hint + textarea + send. The slash icon
+            shows only for the slash trigger since it lives at the
+            start of the input — inline mentions don't get a left
+            indicator. */}
         <div className="flex items-end gap-2 px-3 pb-1 pt-2">
-          {isCommand && (
+          {mention.trigger === "/" && (
             <Slash
               aria-hidden
               className="mb-2 h-4 w-4 shrink-0 text-[var(--accent)]"
@@ -159,15 +315,19 @@ export function CommandInput({
             rows={1}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onKeyUp={syncCursor}
+            onClick={syncCursor}
             placeholder={placeholder}
             disabled={disabled}
             aria-label="Mensagem"
-            aria-autocomplete={slashOpen ? "list" : undefined}
-            aria-expanded={slashOpen}
+            aria-autocomplete={mention.trigger ? "list" : undefined}
+            aria-expanded={mention.trigger !== null}
             className={cn(
               "min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-relaxed",
               "text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none",
-              isCommand && "font-mono text-[var(--accent)]",
+              // Mono + accent only for slash commands — those replace
+              // the whole input. Inline mentions stay as regular prose.
+              mention.trigger === "/" && "font-mono text-[var(--accent)]",
             )}
           />
           <Button
@@ -184,10 +344,38 @@ export function CommandInput({
             UPWARDS (side="top" set on each DropdownMenuContent) so they
             don't push the chat scroll area on click. */}
         <div className="flex items-center gap-1 px-2 pb-2">
-          <ProjectSelector />
+          <CaminhoSelector />
           <ModelSelector />
         </div>
       </form>
     </div>
   );
+}
+
+/** Detect a trigger character at the current word (last whitespace
+ *  before the cursor → cursor position). Slash is gated to
+ *  start-of-input (everything before the trigger must be whitespace);
+ *  `@` and `#` fire anywhere because they're inline mention markers,
+ *  not commands. The query is whatever follows the trigger up to the
+ *  cursor — empty when the user just typed the trigger char. */
+function detectMention(text: string, cursor: number): MentionState {
+  if (cursor < 0 || cursor > text.length) return NO_MENTION;
+  let i = cursor;
+  while (i > 0 && !/\s/.test(text[i - 1])) i--;
+  const word = text.slice(i, cursor);
+  if (word.length === 0) return NO_MENTION;
+  const head = word[0];
+  if (head === "/") {
+    if (text.slice(0, i).trim() === "") {
+      return { trigger: "/", query: word.slice(1), startIndex: i };
+    }
+    return NO_MENTION;
+  }
+  if (head === "@") {
+    return { trigger: "@", query: word.slice(1), startIndex: i };
+  }
+  if (head === "#") {
+    return { trigger: "#", query: word.slice(1), startIndex: i };
+  }
+  return NO_MENTION;
 }

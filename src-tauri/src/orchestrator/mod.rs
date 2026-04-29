@@ -1,6 +1,7 @@
 //! Orchestration layer: parses skills, resolves variables, executes steps, validates.
 
 pub mod executor;
+pub mod skill_loader_v2;
 pub mod skill_parser;
 pub mod state;
 pub mod validator;
@@ -9,6 +10,9 @@ pub mod workflow_executor;
 pub mod workflow_parser;
 
 pub use executor::{ExecutionHandle, ExecutionRegistry, Executor};
+pub use skill_loader_v2::{
+    detect_source, list_skill_entries, load_skill_folder, SkillEntry, SkillFolder, SkillSource,
+};
 pub use skill_parser::{ParsedSkill, SkillConfig, SkillMeta, SkillStep, StepLoop};
 pub use state::{ExecutionState, StepState};
 pub use validator::StepResult;

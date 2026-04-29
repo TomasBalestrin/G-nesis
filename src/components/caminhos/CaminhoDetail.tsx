@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowLeft,
-  FolderGit2,
-  Trash2,
-} from "lucide-react";
+import { ArrowLeft, Route, Trash2 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
@@ -20,45 +16,53 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTauriCommand } from "@/hooks/useTauriCommand";
 import { useToast } from "@/hooks/useToast";
 import {
-  deleteProject,
+  deleteCaminho,
   getExecutionHistory,
-  listProjects,
+  listCaminhos,
 } from "@/lib/tauri-bridge";
 import type { BadgeProps } from "@/components/ui/badge";
-import type { Execution, ExecutionStatus, Project } from "@/types/project";
+import type { Caminho } from "@/types/caminho";
+import type { Execution, ExecutionStatus } from "@/types/project";
 
-export function ProjectDetail() {
+/**
+ * Detail page for `/caminhos/:id`. Renamed clone of ProjectDetail —
+ * lists a single caminho's metadata + execution history. The history
+ * query stays on `getExecutionHistory({ projectId })` because the
+ * underlying schema column is still `executions.project_id` (alias
+ * lives at the API surface, not the DB).
+ */
+export function CaminhoDetail() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const projectsQuery = useTauriCommand(listProjects);
+  const caminhosQuery = useTauriCommand(listCaminhos);
   const historyQuery = useTauriCommand(getExecutionHistory);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    projectsQuery.execute();
-  }, [projectsQuery.execute]);
+    caminhosQuery.execute();
+  }, [caminhosQuery.execute]);
 
   useEffect(() => {
     if (id) historyQuery.execute({ projectId: id });
   }, [historyQuery.execute, id]);
 
-  const project: Project | undefined = useMemo(
-    () => projectsQuery.data?.find((p) => p.id === id),
-    [projectsQuery.data, id],
+  const caminho: Caminho | undefined = useMemo(
+    () => caminhosQuery.data?.find((p) => p.id === id),
+    [caminhosQuery.data, id],
   );
 
   useEffect(() => {
-    if (projectsQuery.error) {
+    if (caminhosQuery.error) {
       toast({
-        title: "Falha ao carregar projeto",
-        description: projectsQuery.error,
+        title: "Falha ao carregar caminho",
+        description: caminhosQuery.error,
         variant: "destructive",
       });
     }
-  }, [projectsQuery.error, toast]);
+  }, [caminhosQuery.error, toast]);
 
   useEffect(() => {
     if (historyQuery.error) {
@@ -73,12 +77,12 @@ export function ProjectDetail() {
   async function handleDelete() {
     setDeleting(true);
     try {
-      await deleteProject({ id });
-      toast({ title: "Projeto removido" });
-      navigate("/projects");
+      await deleteCaminho({ id });
+      toast({ title: "Caminho removido" });
+      navigate("/caminhos");
     } catch (err) {
       toast({
-        title: "Falha ao remover projeto",
+        title: "Falha ao remover caminho",
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
@@ -88,29 +92,29 @@ export function ProjectDetail() {
     }
   }
 
-  if (projectsQuery.loading && !projectsQuery.data) {
-    return <SingleLine message="Carregando projeto..." />;
+  if (caminhosQuery.loading && !caminhosQuery.data) {
+    return <SingleLine message="Carregando caminho..." />;
   }
 
-  if (!project) {
-    return <MissingProject id={id} />;
+  if (!caminho) {
+    return <MissingCaminho id={id} />;
   }
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-4">
         <Button asChild variant="ghost" size="icon" aria-label="Voltar">
-          <Link to="/projects">
+          <Link to="/caminhos">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
         <div className="min-w-0 flex-1">
           <h2 className="flex items-center gap-2 truncate text-lg font-semibold">
-            <FolderGit2 className="h-4 w-4 text-[var(--text-3)]" />
-            {project.name}
+            <Route className="h-4 w-4 text-[var(--text-3)]" />
+            {caminho.name}
           </h2>
           <p className="truncate font-mono text-xs text-[var(--text-2)]">
-            {project.repo_path}
+            {caminho.repo_path}
           </p>
         </div>
         <Button
@@ -131,9 +135,12 @@ export function ProjectDetail() {
               Informações
             </h3>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-              <InfoRow label="ID" value={project.id} mono />
-              <InfoRow label="Criado" value={formatDate(project.created_at)} />
-              <InfoRow label="Atualizado" value={formatDate(project.updated_at)} />
+              <InfoRow label="ID" value={caminho.id} mono />
+              <InfoRow label="Criado" value={formatDate(caminho.created_at)} />
+              <InfoRow
+                label="Atualizado"
+                value={formatDate(caminho.updated_at)}
+              />
             </dl>
           </section>
 
@@ -153,7 +160,7 @@ export function ProjectDetail() {
               </ul>
             ) : (
               <p className="rounded-lg border border-border bg-[var(--bg-subtle)] px-4 py-6 text-center text-sm text-[var(--text-2)]">
-                Nenhuma execução registrada para este projeto.
+                Nenhuma execução registrada para este caminho.
               </p>
             )}
           </section>
@@ -163,11 +170,11 @@ export function ProjectDetail() {
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remover projeto?</DialogTitle>
+            <DialogTitle>Remover caminho?</DialogTitle>
             <DialogDescription>
-              O projeto <span className="font-mono">{project.name}</span> e todo
-              o histórico de execuções serão apagados. Os arquivos no disco
-              não são tocados. Esta ação não pode ser desfeita.
+              O caminho <span className="font-mono">{caminho.name}</span> e
+              todo o histórico de execuções serão apagados. Os arquivos no
+              disco não são tocados. Esta ação não pode ser desfeita.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -264,14 +271,14 @@ function SingleLine({ message }: { message: string }) {
   );
 }
 
-function MissingProject({ id }: { id: string }) {
+function MissingCaminho({ id }: { id: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <p className="text-sm text-[var(--text-2)]">
-        Projeto <span className="font-mono">{id}</span> não encontrado.
+        Caminho <span className="font-mono">{id}</span> não encontrado.
       </p>
       <Button asChild>
-        <Link to="/projects">Voltar para a lista</Link>
+        <Link to="/caminhos">Voltar para a lista</Link>
       </Button>
     </div>
   );

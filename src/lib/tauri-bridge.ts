@@ -11,10 +11,12 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { reportFatalError } from "@/hooks/useFatalError";
 import { toast } from "@/hooks/useToast";
+import type { Caminho } from "@/types/caminho";
+import type { Capability, CapabilityType } from "@/types/capability";
 import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
-import type { Execution, ExecutionDetail, Project } from "@/types/project";
+import type { Execution, ExecutionDetail } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
@@ -111,21 +113,32 @@ export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
 }
 
-// ── projects ────────────────────────────────────────────────────────────────
+// ── projects (legacy: list/create/delete retired in H1) ────────────────────
+//
+// `list_projects` / `create_project` / `delete_project` foram aposentadas
+// — surface migrou pra `caminhos::*` (C1/C2/C3) e o último consumer
+// caiu em H1 (ProjectSelector deletado, MessageBubble e SettingsPage
+// migrados pra listCaminhos). `getExecutionHistory` permanece porque
+// CaminhoDetail ainda consulta by project_id (schema DB inalterado).
 
-export function listProjects(): Promise<Project[]> {
-  return invoke("list_projects");
+// ── caminhos (renamed projects surface) ─────────────────────────────────────
+//
+// Wraps the `caminhos::*` Tauri commands. Wire types são idênticas
+// (`Caminho = Project`) — alias mora no schema, não no produto.
+
+export function listCaminhos(): Promise<Caminho[]> {
+  return invoke("list_caminhos");
 }
 
-export function createProject(args: {
+export function createCaminho(args: {
   name: string;
   repoPath: string;
-}): Promise<Project> {
-  return invoke("create_project", args);
+}): Promise<Caminho> {
+  return invoke("create_caminho", args);
 }
 
-export function deleteProject(args: { id: string }): Promise<void> {
-  return invoke("delete_project", args);
+export function deleteCaminho(args: { id: string }): Promise<void> {
+  return invoke("delete_caminho", args);
 }
 
 export function getExecutionHistory(args: {
@@ -209,6 +222,33 @@ export function listMessagesByConversation(args: {
   conversationId: string;
 }): Promise<ChatMessage[]> {
   return invoke("list_messages_by_conversation", args);
+}
+
+/**
+ * Persist a v2 skill folder under `skills_dir`. Idempotent — re-call
+ * overwrites existing files so the skill agent's iterate-edit loop
+ * (CONSTRUIR → APRESENTAR → VALIDAR → adjust → re-save) doesn't need
+ * a delete step. Scripts get chmod 755 on Unix; references and
+ * assets keep default perms. Empty file lists skip subdir creation.
+ */
+export interface SkillFolderFile {
+  name: string;
+  content: string;
+}
+export function saveSkillFolder(args: {
+  skillName: string;
+  skillMd: string;
+  scripts?: SkillFolderFile[];
+  references?: SkillFolderFile[];
+  assets?: SkillFolderFile[];
+}): Promise<void> {
+  return invoke("save_skill_folder", {
+    skillName: args.skillName,
+    skillMd: args.skillMd,
+    scripts: args.scripts ?? null,
+    references: args.references ?? null,
+    assets: args.assets ?? null,
+  });
 }
 
 /**
@@ -440,11 +480,47 @@ export function setAppStateValue(args: {
   return invoke("set_app_state_value", args);
 }
 
+// ── capabilities ────────────────────────────────────────────────────────────
+
+/**
+ * Unified @-mention registry — natives shipped with the app + connector
+ * rows added by the user. Read-only paths only; mutators land later
+ * with the connector flow.
+ *
+ * `Capability` shape mirrors src-tauri/src/db/models.rs::Capability.
+ * Backend rename: Rust `type_` field serializes as `"type"` on the wire
+ * so the TS interface keeps the natural name.
+ */
+export function listCapabilities(): Promise<Capability[]> {
+  return invoke("list_capabilities");
+}
+
+export function getCapability(args: {
+  name: string;
+}): Promise<Capability | null> {
+  return invoke("get_capability", args);
+}
+
+export function listCapabilitiesByType(args: {
+  type: CapabilityType;
+}): Promise<Capability[]> {
+  // Backend command argument is `type_` (Rust keyword escape) but the
+  // Tauri bridge accepts the snake_case form via serde. Pass the
+  // user-facing `type` and let the IPC layer do the rename.
+  return invoke("list_capabilities_by_type", { type_: args.type });
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
 // working with results coming over the bridge (keeps the import graph flat).
 
+export type { Caminho } from "@/types/caminho";
+export type {
+  Capability,
+  CapabilityChannel,
+  CapabilityType,
+} from "@/types/capability";
 export type { ChatMessage, Conversation } from "@/types/chat";
 export type { Config } from "@/types/config";
 export type {

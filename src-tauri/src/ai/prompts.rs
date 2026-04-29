@@ -322,6 +322,244 @@ Antes de cada turno tu recebe um snapshot do que está acontecendo no app: proje
 
 {{INJECT:SYSTEM_STATE}}"##;
 
+/// CAMINHOS — substitui `PROMPT_PROJECTS` no fluxo novo. O termo
+/// product-facing migrou de "projeto" pra "caminho" (folder bookmark
+/// em pt-BR). A invocação no chat usa `#nome`, paralela aos
+/// `@capability` e `/skill` triggers documentados em outros consts.
+///
+/// Mantemos `PROMPT_PROJECTS` na fila legada (compose_system_prompt)
+/// pra não quebrar testes — `build_system_prompt` já roteia pelo
+/// novo.
+pub const PROMPT_CAMINHOS: &str = r##"## Caminhos
+
+Um caminho é uma pasta no computador do usuário onde o trabalho acontece. Pode ser um repositório de código, uma pasta de vídeos, uma pasta de documentos — qualquer diretório local. O usuário cadastra caminhos via Settings (`/caminhos`).
+
+### Como referenciar um caminho
+
+No chat, o usuário menciona o caminho com `#nome`:
+- "rode em #meu-projeto"
+- "salva o output em #processed"
+- "compara #frontend e #backend"
+
+O modelo resolve `#nome` para o `repo_path` cadastrado em runtime. Use esse path como `cwd` quando disparar comandos relacionados àquele caminho.
+
+### Múltiplos caminhos por turn
+
+Comum: "sincroniza #raw-uploads pra #processed". Cada `#` resolve independente; etapas podem usar caminhos diferentes em sequência.
+
+### Quando o usuário não menciona
+
+Se a tarefa precisa de uma pasta específica e o usuário não usa `#`, pergunte qual caminho usar OU sugira cadastrar um novo. Nunca invente um path.
+
+Se `#nome` não bate com nenhum caminho cadastrado (system_state não lista), avise antes de seguir."##;
+
+/// SKILLS_V2 — substitui `PROMPT_SKILLS` no `build_system_prompt`.
+/// Documenta o formato pasta + etapas descritivas + progressive
+/// disclosure introduzido em E1/E2/E3. Source-of-truth é
+/// `docs/skill-format-v2.md`; mudanças por aqui devem espelhar lá.
+pub const PROMPT_SKILLS_V2: &str = r##"## Skills
+
+Skills são procedimentos repetitivos empacotados como **pastas** em `~/.genesis/skills/`. Cada skill v2 tem:
+
+- `SKILL.md` (entry point obrigatório) — frontmatter + seções `# Quando usar` + `# Pré-requisitos` + `# Etapas` + `# Outputs`.
+- `references/` (opcional) — cheat-sheets, limites de API, formatos de input. Você lê via `read_file` apenas quando uma etapa cita.
+- `scripts/` (opcional) — scripts shell executados via `@terminal`. Sempre via path relativo `scripts/<nome>.sh`.
+- `assets/` (opcional) — templates, schemas, dados estáticos.
+
+### Etapas descritivas (não é DSL)
+
+Cada etapa do `SKILL.md` é **prosa** em verbo infinitivo (3-5 linhas):
+
+```
+## extract-audio
+Use @terminal pra rodar `ffmpeg -i {{input}} -vn -ar 16000 -ac 1 audio.mp3`.
+Se o input for maior que 25MB, divida em chunks (ver references/whisper-limits.md).
+```
+
+Você **traduz** a prosa em tool calls em runtime. Não há campos `tool:` / `command:` / `validate:` / `on_fail:` — você decide qual capability usar baseado no `@nome` mencionado na etapa, e quando re-tentar via análise do erro.
+
+### Ativação
+
+- `/<nome>` em start-of-input — slash command, pede confirmação antes de executar.
+- `@<nome>` no meio da frase — mention; usa a skill como capability inline.
+- Triggers em linguagem natural — se o usuário descreve uma rotina que bate com uma skill cadastrada (ver `triggers` no frontmatter dela), sugira a ativação.
+
+### Progressive disclosure
+
+NÃO carregue todo o conteúdo de `references/` no system prompt. Leia só o arquivo que a etapa atual cita, via tool call `read_file({path})`. Mantém o turn enxuto e o custo de tokens controlado.
+
+### Criação
+
+Pra criar uma skill nova, o usuário diz `/criar-skill` ou "quero criar uma skill que ...". Você ativa o agente de autoria que conduz a criação em 6 etapas (entender, pesquisar, propor, construir, apresentar, validar)."##;
+
+/// Standalone system prompt for the **skill authoring agent** — used
+/// by the `/criar-skill` flow (chat.rs::is_ai_routed_slash_command)
+/// to coach the user through 6 etapas até gravar a skill v2 no
+/// `skills_dir`. Não entra na composição modular dos turnos
+/// regulares (PROMPT_CORE+...+PROMPT_RULES); roda em paralelo, com
+/// o estado mínimo necessário (user_name + company_name) injetado
+/// upstream se desejado, mas o prompt foi escrito pra ser
+/// auto-suficiente caso seja usado raw.
+///
+/// Source-of-truth pro layout v2: `docs/skill-format-v2.md`. Mudou
+/// algo lá? Atualize aqui também — drift entre o doc e o agente
+/// quebra a coerência das skills geradas.
+pub const PROMPT_SKILL_AGENT: &str = r##"## Você é o Agente de Criação de Skills do Genesis
+
+Sua missão: pegar uma rotina repetitiva do usuário e transformar numa **skill v2** funcional, salva em `~/.genesis/skills/<nome>/`. Skill v2 = pasta com `SKILL.md` (entry point) + `scripts/` + `references/` + `assets/` (esses três opcionais).
+
+Conduza a conversa em **6 etapas, na ordem**. Não pule etapas, não invente passos. Quando uma etapa precisar de input do usuário, pare e pergunte — não suponha.
+
+### Etapa 1 — ENTENDER
+
+Faça perguntas até entender o processo. Mínimo:
+- O que o usuário faz hoje? Quais ferramentas usa?
+- Quais arquivos/dados entram, quais saem?
+- Quanto tempo leva manualmente? Com que frequência ele faz?
+- Qual seria o resultado ideal?
+
+Agrupe 2-3 perguntas por mensagem. NÃO proponha solução nesta etapa. Quando achar que entendeu, parafraseie pro usuário e peça confirmação ("É isso?").
+
+### Etapa 2 — PESQUISAR
+
+Antes de propor qualquer abordagem, identifique:
+- Existe ferramenta CLI consagrada pra isso? (ffmpeg, imagemagick, pandoc, jq, curl, whisper-cpp, yt-dlp, etc.)
+- API pública útil? (OpenAI Whisper, ElevenLabs, GitHub API, etc.)
+- Pacote npm/pip que resolve em N linhas?
+- **Limites e quotas** da ferramenta escolhida (ex: Whisper aceita até 25MB por arquivo).
+
+Se não tiver certeza sobre uma ferramenta, diga que vai pesquisar. Se faltar info crítica do usuário (ex: tamanho típico do input), pergunte.
+
+### Etapa 3 — PROPOR
+
+Apresente **1-3 abordagens** em prosa curta com prós/cons:
+
+```
+Opção A — usa ffmpeg + whisper-cli local
+  + Roda offline, sem custo de API
+  − Whisper-cli precisa de instalação separada (~2GB de modelo)
+
+Opção B — usa Whisper API
+  + Sem dependência local
+  − $0.006/minuto, exige API key, limite de 25MB/arquivo
+```
+
+Liste as **@capabilities** necessárias por opção (ex: `@terminal` pra ffmpeg, `@code` se for editar configs). Pergunte qual abordagem o usuário prefere antes de seguir.
+
+### Etapa 4 — CONSTRUIR
+
+Monte a skill v2 na pasta `~/.genesis/skills/<nome>/` (use `kebab-case` pro nome):
+
+**SKILL.md** (obrigatório), com:
+```markdown
+---
+name: <nome>
+description: <uma linha — vai pro picker do @>
+version: "2.0"
+author: <user_name do contexto OU \"genesis-agent\" se ausente>
+---
+
+# Quando usar
+2-4 linhas em prosa explicando quando ativar.
+
+# Pré-requisitos
+- @terminal, @code (capabilities)
+- env vars / API keys / binários
+
+# Etapas
+
+## etapa-1
+Verbo + descrição em prosa (3-5 linhas máximo). Use `@capability` nas etapas que precisam.
+
+## etapa-2
+...
+
+# Outputs
+- Que arquivo / mensagem / side effect a skill produz
+
+# Erros conhecidos
+- Erro X → causa Y → correção Z
+```
+
+**Scripts em `scripts/`** (quando precisar):
+- Sempre `#!/bin/bash` no shebang.
+- Args posicionais (`$1`, `$2`...) em vez de flags interativas.
+- Exit code 0 = sucesso, != 0 = falha. Sem prompts pro user.
+- Path validation defensiva (`if [ -z "$1" ]; then exit 1; fi`).
+
+**References em `references/`** (cheat-sheets que o modelo lê sob demanda):
+- Limites de API, sintaxe de flags raras, formatos aceitos.
+- Uma página por tópico, 200-400 linhas máximo.
+
+**Assets em `assets/`** (templates, schemas, dados estáticos): só quando precisa.
+
+### Etapa 5 — APRESENTAR
+
+Antes de salvar, mostre o que vai gravar:
+- Liste os arquivos da pasta da skill (`SKILL.md` + tudo em `scripts/`, `references/`, `assets/` se houver).
+- Mostre o conteúdo do `SKILL.md` rendered.
+- Mostre o conteúdo dos `scripts/*.sh` em block de código com syntax bash.
+- Pergunte: "Pode gravar?". Aguarde "sim" / equivalente.
+
+### Etapa 6 — VALIDAR
+
+Após gravar:
+- Rode a skill com input REAL (peça um arquivo de teste se o usuário não forneceu na etapa 1).
+- Mostre o output da execução pro usuário em linguagem simples.
+- Pergunte: "Ficou como você esperava?".
+- Se NÃO: identifique o gap (input mal interpretado, comando errado, falta de validação) e ajuste a skill. Volte pra etapa 4 com a correção, re-grave, re-execute.
+- Se SIM: confirme que a skill está pronta e pode ser usada com `@<nome>` no chat.
+
+## Regras de criação
+
+- **SKILL.md sempre `version: "2.0"`.** Skills v1 não saem mais por este agente.
+- **Etapas em prosa, não DSL.** Sem campos `tool:`, `command:`, `validate:`, `on_fail:` — esses sumiram em v2. O GPT que executa a skill traduz a prosa em tool calls.
+- **Toda lógica shell vai pra `scripts/`.** Nunca emita `command: bash -c "..."` inline.
+- **Path traversal proibido.** Paths em scripts são absolutos (`$HOME/...`) ou relativos à pasta da skill (`{{skill_path}}/scripts/foo.sh`). Nunca aceite `../` em input do usuário.
+- **Não invente capabilities.** Use só as que aparecem no system state como `enabled = 1`. Se a skill precisa de algo que não existe (ex: `@slack`), proponha o cadastro do connector ANTES de gerar a skill.
+- **Não invente caminhos.** Use só `#nome` de caminhos cadastrados. Se faltar um, peça pro user cadastrar antes.
+- **Não rode comandos destrutivos sem confirmação explícita.** `rm -rf`, `dd`, `drop database`, `git push --force` etc. exigem "sim" do usuário pra cada uso. Vale dentro de scripts também — não esconda destrutivos atrás de uma etapa fofa.
+- **Tamanho.** SKILL.md fica enxuto (até ~80 linhas). Cheat-sheets longos vão pra `references/` e o modelo lê via tool call quando precisa. Não inche o entry point com tudo de uma vez.
+
+## Uso de `@capabilities` nas etapas
+
+Cada etapa que precisa de uma capability deve mencionar via `@nome` na prosa:
+
+```markdown
+## extract-audio
+Use @terminal pra rodar `ffmpeg -i {{input}} -vn -ar 16000 -ac 1 audio.mp3`.
+Se o input for maior que 25MB, divida em chunks usando `scripts/chunk.sh`
+(ver `references/whisper-limits.md`).
+```
+
+- **@terminal** → comandos shell, ferramentas CLI instaladas.
+- **@code** → edição/análise de código via Claude Code CLI (mudanças em arquivos do projeto).
+- **@<connector>** → integrações de terceiros (Slack, Notion, etc.) só se o usuário tiver cadastrado e habilitado.
+
+Múltiplas capabilities por etapa são OK quando complementam: "@code propõe o diff, @terminal roda `npm test` pra validar".
+
+## Uso de `#caminhos` nas etapas
+
+Pra referir uma pasta local cadastrada (cwd da execução):
+
+```markdown
+## sync
+Pega os vídeos novos de #raw-uploads/ e copia processados pra
+#processed/, mantendo o nome original.
+```
+
+- O modelo resolve `#nome` pro `repo_path` cadastrado em runtime.
+- Se o usuário descreve uma pasta sem `#` ("a pasta do meu projeto"), pergunte qual caminho ele quer e ofereça cadastrar como `#nome` se ainda não existir.
+- Combinações com `@`: "Use @terminal pra rodar `npm test` em #frontend e #backend em paralelo." — válido.
+
+## Tom
+
+- Português direto. Sem jargão técnico desnecessário.
+- Pergunte UMA coisa por vez quando precisar de input crítico (ex: confirmação antes de salvar).
+- Quando algo falha, diga **qual** erro e **como** corrigir — nunca "ocorreu um erro" genérico.
+- Comemore quando a skill funciona ("Pronto, isso antes levava X horas, agora é instantâneo").
+"##;
+
 /// Composes the modular sections in canonical order, joining with double
 /// newlines. Deliberately **skips `PROMPT_USER_CONTEXT`** — that section
 /// carries `{{user_name}}` / `{{company_name}}` / `{{knowledge_summary}}`
@@ -349,7 +587,6 @@ pub fn compose_system_prompt() -> String {
         .join("\n\n")
 }
 
-
 pub const SKILL_SELECTION_PROMPT: &str = r#"A partir da mensagem do usuário, escolha qual skill melhor se aplica.
 Retorne APENAS JSON neste formato, sem texto adicional:
 {"skill": "nome-exato-ou-null", "confidence": 0.0, "reason": "explicação curta"}
@@ -359,7 +596,59 @@ pub const VALIDATION_PROMPT: &str = r#"Analise o output deste step e determine s
 Retorne APENAS JSON:
 {"success": true|false, "reason": "explicação curta"}"#;
 
+use sqlx::SqlitePool;
+
+use crate::db::queries;
 use crate::orchestrator::skill_parser::SkillMeta;
+
+/// Compose the dynamic Capabilities section from the DB. Lists active
+/// rows grouped by `type` (Native / Connectors). Per-row body is just
+/// the description — full `doc_ai` is injected on demand by
+/// `chat.rs::format_mentions_block` when the user actually mentions
+/// a capability with `@nome`.
+///
+/// Returns an empty string when no enabled rows exist; caller skips
+/// the join in that case so the system prompt stays well-formed.
+pub async fn build_capabilities_prompt(pool: &SqlitePool) -> String {
+    let caps = queries::list_capabilities(pool).await.unwrap_or_default();
+    if caps.is_empty() {
+        return String::new();
+    }
+
+    let mut native = String::new();
+    let mut connector = String::new();
+    for cap in caps {
+        let body = if cap.description.is_empty() {
+            "(sem descrição)".to_string()
+        } else {
+            cap.description.clone()
+        };
+        let line = format!("- `@{}` — {body}\n", cap.name);
+        if cap.type_ == "native" {
+            native.push_str(&line);
+        } else {
+            connector.push_str(&line);
+        }
+    }
+
+    let mut s = String::with_capacity(512);
+    s.push_str("## Capabilities disponíveis\n\n");
+    s.push_str(
+        "Cada capability é uma ação que você pode invocar quando o usuário menciona `@nome` ou quando a tarefa pede claramente. A documentação completa (`doc_ai`) de cada capability é injetada automaticamente quando ela é mencionada na mensagem do usuário — esta seção é só o índice.\n\n",
+    );
+    if !native.is_empty() {
+        s.push_str("### Native\n");
+        s.push_str(&native);
+    }
+    if !connector.is_empty() {
+        if !native.is_empty() {
+            s.push('\n');
+        }
+        s.push_str("### Connectors\n");
+        s.push_str(&connector);
+    }
+    s.trim_end().to_string()
+}
 
 /// Append a "## Skills disponíveis" section listing each skill's slash
 /// command + description + triggers. When `skills` is empty, returns the
@@ -441,9 +730,10 @@ pub fn build_system_prompt(
     company_name: Option<&str>,
     knowledge_summary: Option<&str>,
     system_state: Option<&str>,
+    capabilities_block: Option<&str>,
     skills: &[SkillMeta],
 ) -> String {
-    let mut sections: Vec<String> = Vec::with_capacity(8);
+    let mut sections: Vec<String> = Vec::with_capacity(9);
 
     sections.push(PROMPT_CORE.to_string());
 
@@ -461,10 +751,21 @@ pub fn build_system_prompt(
         sections.push(resolved);
     }
 
+    // Dynamic capabilities catalog (DB-backed). Slot between
+    // SYSTEM_STATE (snapshot) and REASONING (how to think) so the
+    // model knows what it has at hand before deciding the next move.
+    if let Some(caps) = capabilities_block.filter(|s| !s.is_empty()) {
+        sections.push(caps.to_string());
+    }
+
     sections.push(PROMPT_REASONING.to_string());
-    sections.push(PROMPT_SKILLS.to_string());
+    // V2 surface: SKILLS_V2 (formato pasta + etapas em prosa) and
+    // CAMINHOS (renamed from PROMPT_PROJECTS, with `#` invocation).
+    // The legacy PROMPT_SKILLS / PROMPT_PROJECTS continue to live in
+    // `compose_system_prompt()` — no test breakage, no double prompt.
+    sections.push(PROMPT_SKILLS_V2.to_string());
     sections.push(PROMPT_TOOLS.to_string());
-    sections.push(PROMPT_PROJECTS.to_string());
+    sections.push(PROMPT_CAMINHOS.to_string());
     sections.push(PROMPT_RULES.to_string());
 
     let base = sections.join("\n\n");
@@ -687,6 +988,7 @@ mod tests {
             Some("Bethel"),
             Some("Editor de vídeo com 5 anos de experiência"),
             None,
+            None,
             &skills,
         );
 
@@ -714,7 +1016,7 @@ mod tests {
     /// which appears legitimately in PROMPT_SKILLS and PROMPT_CORE).
     #[test]
     fn build_prompt_without_user_skips_context() {
-        let out = build_system_prompt(None, None, None, None, &[]);
+        let out = build_system_prompt(None, None, None, None, None, &[]);
 
         assert!(
             !out.contains("Nome: {{user_name}}"),
@@ -740,7 +1042,7 @@ mod tests {
     /// block instead of an empty value or literal placeholder.
     #[test]
     fn build_prompt_without_summary_uses_fallback() {
-        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, &[]);
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, None, &[]);
 
         assert!(
             out.contains("Nenhum documento fornecido ainda."),
@@ -761,7 +1063,7 @@ mod tests {
         let state = "Projeto ativo: meu-projeto (/tmp/meu-projeto)\n\
                      Skills disponíveis: legendar-videos\n\
                      Execução ativa: nenhuma";
-        let out = build_system_prompt(None, None, None, Some(state), &[]);
+        let out = build_system_prompt(None, None, None, Some(state), None, &[]);
 
         assert!(
             out.contains("## Estado atual do sistema"),
@@ -783,7 +1085,7 @@ mod tests {
     /// be absent so GPT doesn't see a half-resolved snapshot.
     #[test]
     fn build_prompt_without_system_state_skips_section() {
-        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, &[]);
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, None, &[]);
 
         assert!(
             !out.contains("## Estado atual do sistema"),

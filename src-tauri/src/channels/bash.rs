@@ -21,9 +21,7 @@ use async_trait::async_trait;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::channels::{
-    Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS,
-};
+use crate::channels::{Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS};
 
 /// Variables we lift from the login shell. Limited to PATH-adjacent things —
 /// we don't want to import the user's full env (which may contain secrets
@@ -146,11 +144,12 @@ impl Channel for BashChannel {
     }
 
     async fn execute(&self, input: ChannelInput) -> Result<ChannelOutput, ChannelError> {
-        let parts = shlex::split(&input.command)
-            .ok_or_else(|| ChannelError::Spawn(format!(
+        let parts = shlex::split(&input.command).ok_or_else(|| {
+            ChannelError::Spawn(format!(
                 "comando não parseável (shlex): `{}`",
                 input.command
-            )))?;
+            ))
+        })?;
 
         let (program, args) = parts
             .split_first()
@@ -178,12 +177,7 @@ impl Channel for BashChannel {
             .map_err(|e| ChannelError::Spawn(format!("{program}: {e}")))?;
 
         let timeout_secs = input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
-        match timeout(
-            Duration::from_secs(timeout_secs),
-            child.wait_with_output(),
-        )
-        .await
-        {
+        match timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
             Ok(Ok(output)) => Ok(ChannelOutput {
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -209,7 +203,10 @@ mod tests {
 
     #[tokio::test]
     async fn echo_captures_stdout_and_zero_exit() {
-        let out = BashChannel::new().execute(input("echo hello")).await.unwrap();
+        let out = BashChannel::new()
+            .execute(input("echo hello"))
+            .await
+            .unwrap();
         assert_eq!(out.stdout.trim_end(), "hello");
         assert_eq!(out.stderr, "");
         assert_eq!(out.exit_code, Some(0));

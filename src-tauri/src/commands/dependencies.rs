@@ -100,7 +100,12 @@ pub async fn check_dependency(name: String) -> Result<bool, String> {
     let Ok(child) = child else {
         return Ok(false);
     };
-    match timeout(Duration::from_secs(CHECK_TIMEOUT_SECS), child.wait_with_output()).await {
+    match timeout(
+        Duration::from_secs(CHECK_TIMEOUT_SECS),
+        child.wait_with_output(),
+    )
+    .await
+    {
         Ok(Ok(output)) => Ok(output.status.success()),
         // Spawning `which` failing is not the same as the binary being absent —
         // we already returned the negative path, so report false rather than err.
@@ -155,7 +160,10 @@ pub async fn install_dependency(name: String) -> Result<String, String> {
         })
     } else {
         Err(if stderr.is_empty() {
-            format!("brew install {name} falhou (exit {:?}).", output.status.code())
+            format!(
+                "brew install {name} falhou (exit {:?}).",
+                output.status.code()
+            )
         } else {
             stderr
         })

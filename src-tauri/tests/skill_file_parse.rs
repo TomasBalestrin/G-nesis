@@ -52,10 +52,7 @@ fn debug_sistema_parses() {
     assert!(s1.prompt.as_deref().unwrap().contains("{{error_message}}"));
     // On-fail string is preserved verbatim even when the executor does not
     // yet understand compound syntax like "retry(N) then ...".
-    assert_eq!(
-        s1.on_fail.as_deref(),
-        Some("retry(2) then abort"),
-    );
+    assert_eq!(s1.on_fail.as_deref(), Some("retry(2) then abort"),);
 
     let s2 = &skill.steps[1];
     assert_eq!(s2.tool, "bash");

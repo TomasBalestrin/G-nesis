@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
+  Code2,
   Download,
+  Eye,
   Loader2,
   Play,
   Save,
@@ -19,9 +21,10 @@ import {
   executeSkill,
   insertExecutionStatusMessage,
   installDependency,
-  listProjects,
+  listCaminhos,
   safeInvoke,
   saveSkill,
+  saveSkillFolder,
 } from "@/lib/tauri-bridge";
 import { useExecutionStore } from "@/stores/executionStore";
 import { useSkillsStore } from "@/stores/skillsStore";
@@ -65,6 +68,10 @@ interface SkillSegment {
   type: "skill";
   code: string;
   name: string;
+  /** Frontmatter `version` field. Empty string when absent. The save
+   *  branch routes v2 (starts with "2") to `save_skill_folder` and
+   *  anything else (1.x, missing) to the legacy `save_skill` path. */
+  version: string;
 }
 type Segment = TextSegment | SkillSegment;
 
@@ -72,6 +79,10 @@ const FENCE_REGEX = /```([\w-]*)\n([\s\S]*?)\n```/g;
 // Frontmatter must lead the block; capture the `name:` value (kebab-case
 // allowed plus `_`/`.`).
 const FRONTMATTER_NAME_REGEX = /^---\s*\n[\s\S]*?\bname\s*:\s*["']?([A-Za-z0-9._-]+)["']?\s*\n[\s\S]*?\n---/;
+// Same anchor — leading frontmatter required — and capture the
+// version number/string. Quoted or bare both accepted; the hyphen-
+// less char class keeps versions semantic ("2.0", "1.0.0").
+const FRONTMATTER_VERSION_REGEX = /^---\s*\n[\s\S]*?\bversion\s*:\s*["']?([0-9.]+)["']?\s*\n[\s\S]*?\n---/;
 
 function splitSegments(content: string): Segment[] {
   const segments: Segment[] = [];
@@ -85,10 +96,18 @@ function splitSegments(content: string): Segment[] {
     const nameMatch = body.match(FRONTMATTER_NAME_REGEX);
     if (!nameMatch) continue;
 
+    const versionMatch = body.match(FRONTMATTER_VERSION_REGEX);
+    const version = versionMatch?.[1] ?? "";
+
     if (match.index > cursor) {
       segments.push({ type: "text", value: content.slice(cursor, match.index) });
     }
-    segments.push({ type: "skill", code: body, name: nameMatch[1] });
+    segments.push({
+      type: "skill",
+      code: body,
+      name: nameMatch[1],
+      version,
+    });
     cursor = match.index + full.length;
   }
   if (cursor < content.length) {
@@ -177,7 +196,12 @@ export function MessageBubble({ message, onAutoSend }: MessageBubbleProps) {
                 {seg.value}
               </ReactMarkdown>
             ) : (
-              <SkillSavePanel key={i} code={seg.code} name={seg.name} />
+              <SkillPreviewCard
+                key={i}
+                code={seg.code}
+                name={seg.name}
+                version={seg.version}
+              />
             ),
           )
         )}
@@ -292,28 +316,47 @@ function DependencyConfirmPanel({
   );
 }
 
-interface SkillSavePanelProps {
+interface SkillPreviewCardProps {
   code: string;
   name: string;
+  /** Frontmatter `version` from the parsed block. Empty string when
+   *  absent. `version.startsWith("2")` routes the save call to
+   *  `save_skill_folder`; everything else falls back to the v1
+   *  `save_skill` path so legacy assistant outputs keep working. */
+  version: string;
 }
 
 /**
- * Renders an assistant-generated skill `.md` block with a Save button. Saving
- * goes through the same backend path as the editor (validates frontmatter +
- * steps), then triggers a global skills-store refresh so the sidebar and
- * slash autocomplete pick up the new entry without a page reload.
+ * Renders an assistant-generated skill `.md` block with two actions:
+ *   - **Ver**: toggles between rendered (markdown) and raw views.
+ *   - **Salvar**: persists the skill. v2 (frontmatter `version: "2.x"`)
+ *     calls `save_skill_folder` which creates the folder layout
+ *     (`SKILL.md` only — scripts/references/assets are handled in
+ *     follow-up turns of the skill agent). v1 keeps the legacy
+ *     `save_skill` path that writes a single `.md` file.
+ *
+ * Both branches refresh the skills store on success so the sidebar
+ * and `/`-autocomplete pick up the new entry without a reload.
  */
-function SkillSavePanel({ code, name }: SkillSavePanelProps) {
+function SkillPreviewCard({ code, name, version }: SkillPreviewCardProps) {
   const refreshSkills = useSkillsStore((s) => s.refresh);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [view, setView] = useState<"raw" | "rendered">("raw");
   const { toast } = useToast();
+
+  const isV2 = version.startsWith("2");
+  const filenameLabel = isV2 ? `skills/${name}/SKILL.md` : `skills/${name}.md`;
 
   async function handleSave() {
     if (saved) return;
     setSaving(true);
     try {
-      await saveSkill({ name, content: code });
+      if (isV2) {
+        await saveSkillFolder({ skillName: name, skillMd: code });
+      } else {
+        await saveSkill({ name, content: code });
+      }
       setSaved(true);
       toast({ title: `Skill ${name} salva` });
       refreshSkills();
@@ -330,24 +373,61 @@ function SkillSavePanel({ code, name }: SkillSavePanelProps) {
 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-[var(--border-sub)] bg-[var(--bg-secondary)]">
-      <div className="flex items-center justify-between border-b border-[var(--border-sub)] bg-[var(--bg-tertiary)] px-3 py-1.5 text-xs">
-        <span className="font-mono text-[var(--text-secondary)]">
-          skills/{name}.md
-        </span>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={saving || saved}
-          onClick={handleSave}
-          aria-label={`Salvar skill ${name}`}
-        >
-          <Save className="h-3.5 w-3.5" />
-          {saved ? "Salva" : saving ? "Salvando..." : "Salvar Skill"}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-sub)] bg-[var(--bg-tertiary)] px-3 py-1.5 text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-mono text-[var(--text-secondary)]">
+            {filenameLabel}
+          </span>
+          {version ? (
+            <span className="rounded-md bg-[var(--bg-secondary)] px-1.5 py-0 font-mono text-[10px] text-[var(--text-tertiary)]">
+              v{version}
+            </span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setView((v) => (v === "raw" ? "rendered" : "raw"))}
+            aria-label={
+              view === "raw" ? "Ver markdown renderizado" : "Ver código raw"
+            }
+          >
+            {view === "raw" ? (
+              <>
+                <Eye className="h-3.5 w-3.5" />
+                Ver
+              </>
+            ) : (
+              <>
+                <Code2 className="h-3.5 w-3.5" />
+                Raw
+              </>
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={saving || saved}
+            onClick={handleSave}
+            aria-label={`Salvar skill ${name}`}
+          >
+            <Save className="h-3.5 w-3.5" />
+            {saved ? "Salva" : saving ? "Salvando..." : "Salvar"}
+          </Button>
+        </div>
       </div>
-      <pre className="max-h-96 overflow-auto bg-[var(--code-bg)] p-3 font-mono text-xs text-[var(--code-tx)]">
-        {code}
-      </pre>
+      {view === "raw" ? (
+        <pre className="max-h-96 overflow-auto bg-[var(--code-bg)] p-3 font-mono text-xs text-[var(--code-tx)]">
+          {code}
+        </pre>
+      ) : (
+        <div className="max-h-96 overflow-auto bg-[var(--bg-primary)] px-4 py-3 text-sm leading-relaxed text-[var(--text-primary)]">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {code}
+          </ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }
@@ -380,7 +460,10 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   const setActiveExecution = useExecutionStore((s) => s.setActiveExecution);
 
   useEffect(() => {
-    listProjects()
+    // listCaminhos returns the same shape (Caminho = Project alias)
+    // — local state still typed as Project for now; rename happens
+    // when the wider `Project` type alias is retired.
+    listCaminhos()
       .then((ps) => {
         setProjects(ps);
         if (ps.length > 0) {

@@ -26,6 +26,7 @@ const MIGRATION_002: &str = include_str!("../../migrations/002_conversations.sql
 const MIGRATION_003: &str = include_str!("../../migrations/003_app_state.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_workflows.sql");
 const MIGRATION_006: &str = include_str!("../../migrations/006_knowledge.sql");
+const MIGRATION_007: &str = include_str!("../../migrations/007_capabilities.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -95,14 +96,23 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
         .await
         .map_err(|e| format!("migration 006 failed: {e}"))?;
 
-    // 007 — inline execution-status flow: chat_messages.kind discriminates
+    // Inline execution-status flow: chat_messages.kind discriminates
     // regular text bubbles from execution status entries; executions.
     // conversation_id pins the audit trail to the chat thread that
     // started the run so status messages route back to the right
-    // conversation. Both are inline ALTER TABLE — same guard pattern as
-    // the thinking columns above.
+    // conversation. Both are inline ALTER TABLE — same guard pattern
+    // as the thinking columns above. Not numbered as a migration file
+    // because they're column tweaks, not a schema unit.
     ensure_chat_messages_kind(pool).await?;
     ensure_executions_conversation_id(pool).await?;
+
+    // 007 — capabilities table (unified registry of @-mentions: native
+    // tools shipped with the app + future connector integrations).
+    // Idempotent CREATE TABLE + INSERT OR IGNORE so re-runs don't
+    // clobber user edits to the seeded native rows.
+    pool.execute(MIGRATION_007)
+        .await
+        .map_err(|e| format!("migration 007 failed: {e}"))?;
 
     Ok(())
 }

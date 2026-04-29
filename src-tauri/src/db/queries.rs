@@ -4,7 +4,7 @@
 use sqlx::SqlitePool;
 
 use crate::db::models::{
-    AppState, ChatMessage, Conversation, Execution, ExecutionStep, KnowledgeFile,
+    AppState, Capability, ChatMessage, Conversation, Execution, ExecutionStep, KnowledgeFile,
     KnowledgeFileMeta, KnowledgeSummary, Project,
 };
 
@@ -100,8 +100,7 @@ pub async fn get_active_project(pool: &SqlitePool) -> Result<Option<Project>, St
 /// Single source of truth for the columns SELECTed into [`Execution`].
 /// Prevents drift when a column is added (FromRow rejects rows missing a
 /// field). All SELECTs in this section must format with this const.
-const EXECUTION_COLUMNS: &str =
-    "id, project_id, skill_name, status, started_at, finished_at, \
+const EXECUTION_COLUMNS: &str = "id, project_id, skill_name, status, started_at, finished_at, \
      total_steps, completed_steps, created_at, conversation_id";
 
 /// Count executions for `skill_name` that are still in flight (pending,
@@ -136,10 +135,7 @@ pub async fn list_executions_for_project(
     .map_err(map_err)
 }
 
-pub async fn get_execution(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<Execution>, String> {
+pub async fn get_execution(pool: &SqlitePool, id: &str) -> Result<Option<Execution>, String> {
     sqlx::query_as::<_, Execution>(&format!(
         "SELECT {EXECUTION_COLUMNS} FROM executions WHERE id = ?1"
     ))
@@ -168,9 +164,7 @@ pub async fn get_running_execution(pool: &SqlitePool) -> Result<Option<Execution
 /// status alone isn't enough since the schema permits intermediate
 /// values. Used by the system-state snapshot so the model can reference
 /// "the last thing we ran" without asking the user.
-pub async fn get_last_finished_execution(
-    pool: &SqlitePool,
-) -> Result<Option<Execution>, String> {
+pub async fn get_last_finished_execution(pool: &SqlitePool) -> Result<Option<Execution>, String> {
     sqlx::query_as::<_, Execution>(&format!(
         "SELECT {EXECUTION_COLUMNS} FROM executions \
          WHERE finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1"
@@ -358,10 +352,7 @@ pub async fn list_conversations(pool: &SqlitePool) -> Result<Vec<Conversation>, 
     .map_err(map_err)
 }
 
-pub async fn get_conversation(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<Conversation>, String> {
+pub async fn get_conversation(pool: &SqlitePool, id: &str) -> Result<Option<Conversation>, String> {
     sqlx::query_as::<_, Conversation>(
         "SELECT id, title, created_at, updated_at
          FROM conversations WHERE id = ?1",
@@ -400,11 +391,7 @@ pub async fn delete_conversation(pool: &SqlitePool, id: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub async fn rename_conversation(
-    pool: &SqlitePool,
-    id: &str,
-    title: &str,
-) -> Result<(), String> {
+pub async fn rename_conversation(pool: &SqlitePool, id: &str, title: &str) -> Result<(), String> {
     sqlx::query("UPDATE conversations SET title = ?1 WHERE id = ?2")
         .bind(title)
         .bind(id)
@@ -435,22 +422,16 @@ pub async fn touch_conversation(pool: &SqlitePool, id: &str) -> Result<(), Strin
 /// guarantee the canonical keys (`active_project_id`, `active_model_id`)
 /// always resolve to a row after first startup.
 pub async fn get_state(pool: &SqlitePool, key: &str) -> Result<Option<AppState>, String> {
-    sqlx::query_as::<_, AppState>(
-        "SELECT key, value, updated_at FROM app_state WHERE key = ?1",
-    )
-    .bind(key)
-    .fetch_optional(pool)
-    .await
-    .map_err(map_err)
+    sqlx::query_as::<_, AppState>("SELECT key, value, updated_at FROM app_state WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_err)
 }
 
 /// UPSERT a single key. Returns the freshly written row so callers can echo
 /// the new `updated_at` to the frontend without an extra query.
-pub async fn set_state(
-    pool: &SqlitePool,
-    key: &str,
-    value: &str,
-) -> Result<AppState, String> {
+pub async fn set_state(pool: &SqlitePool, key: &str, value: &str) -> Result<AppState, String> {
     sqlx::query(
         "INSERT INTO app_state (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET
@@ -472,12 +453,11 @@ pub async fn set_state(
 /// in that it returns just the string payload — callers that don't care
 /// about `updated_at` use this to skip a layer of unwrapping.
 pub async fn get_app_state(pool: &SqlitePool, key: &str) -> Result<Option<String>, String> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM app_state WHERE key = ?1")
-            .bind(key)
-            .fetch_optional(pool)
-            .await
-            .map_err(map_err)?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_state WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .map_err(map_err)?;
     Ok(row.map(|(v,)| v))
 }
 
@@ -512,24 +492,20 @@ pub async fn insert_knowledge_file(
     filename: &str,
     content: &str,
 ) -> Result<(), String> {
-    sqlx::query(
-        "INSERT INTO knowledge_files (id, filename, content) VALUES (?1, ?2, ?3)",
-    )
-    .bind(id)
-    .bind(filename)
-    .bind(content)
-    .execute(pool)
-    .await
-    .map_err(map_err)?;
+    sqlx::query("INSERT INTO knowledge_files (id, filename, content) VALUES (?1, ?2, ?3)")
+        .bind(id)
+        .bind(filename)
+        .bind(content)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
     Ok(())
 }
 
 /// List all knowledge files without their content — sidebar / settings
 /// only need filename + uploaded_at, and the content column can run into
 /// hundreds of KB per row.
-pub async fn list_knowledge_files(
-    pool: &SqlitePool,
-) -> Result<Vec<KnowledgeFileMeta>, String> {
+pub async fn list_knowledge_files(pool: &SqlitePool) -> Result<Vec<KnowledgeFileMeta>, String> {
     sqlx::query_as::<_, KnowledgeFileMeta>(
         "SELECT id, filename, uploaded_at
          FROM knowledge_files
@@ -542,10 +518,7 @@ pub async fn list_knowledge_files(
 
 /// Fetch a single knowledge file with its full content — used by the
 /// editor / re-upload flow when the user wants to see the original markdown.
-pub async fn get_knowledge_file(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<KnowledgeFile, String> {
+pub async fn get_knowledge_file(pool: &SqlitePool, id: &str) -> Result<KnowledgeFile, String> {
     sqlx::query_as::<_, KnowledgeFile>(
         "SELECT id, filename, content, uploaded_at
          FROM knowledge_files
@@ -613,9 +586,7 @@ pub async fn upsert_knowledge_summary(
 /// Read the current summary if any has been generated yet. `None` means
 /// the user has uploaded files but never asked for a summary, OR no files
 /// at all — the caller decides which message to show.
-pub async fn get_knowledge_summary(
-    pool: &SqlitePool,
-) -> Result<Option<KnowledgeSummary>, String> {
+pub async fn get_knowledge_summary(pool: &SqlitePool) -> Result<Option<KnowledgeSummary>, String> {
     sqlx::query_as::<_, KnowledgeSummary>(
         "SELECT id, summary, generated_at, source_count
          FROM knowledge_summary
@@ -634,4 +605,64 @@ pub async fn delete_knowledge_summary(pool: &SqlitePool) -> Result<(), String> {
         .await
         .map_err(map_err)?;
     Ok(())
+}
+
+// ── capabilities ────────────────────────────────────────────────────────────
+
+/// Single source of truth for the columns SELECTed into [`Capability`].
+/// `type` is escaped because it's a reserved Rust keyword — the FromRow
+/// derive lines this up with the `type_` field via the
+/// `#[sqlx(rename = "type")]` attribute on the struct.
+const CAPABILITY_COLUMNS: &str = "id, name, display_name, description, type, channel, config, \
+     doc_ai, doc_user, enabled, created_at, updated_at";
+
+/// Active capabilities sorted by type then name. Disabled rows are
+/// hidden (the picker only shows what the user can actually invoke).
+/// Sort by type so natives come before connectors (lexicographic on
+/// `'native' < 'connector'`? no — `'connector' < 'native'`. Both
+/// surfaces handle either order; we just want a stable groupings).
+pub async fn list_capabilities(pool: &SqlitePool) -> Result<Vec<Capability>, String> {
+    sqlx::query_as::<_, Capability>(&format!(
+        "SELECT {CAPABILITY_COLUMNS} FROM capabilities \
+         WHERE enabled = 1 \
+         ORDER BY type, name"
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Fetch a capability by its `name` handle (the @-mention identifier).
+/// Returns `None` for unknown / disabled-and-renamed rows. Callers
+/// resolve the channel + doc_ai from the row and dispatch accordingly.
+pub async fn get_capability_by_name(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<Option<Capability>, String> {
+    sqlx::query_as::<_, Capability>(&format!(
+        "SELECT {CAPABILITY_COLUMNS} FROM capabilities WHERE name = ?1"
+    ))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Active capabilities filtered to a single `type_` (`"native"` or
+/// `"connector"`). Used by the settings page to render the two groups
+/// independently. Mirrors `list_capabilities` ordering by name within
+/// the requested type.
+pub async fn list_capabilities_by_type(
+    pool: &SqlitePool,
+    type_: &str,
+) -> Result<Vec<Capability>, String> {
+    sqlx::query_as::<_, Capability>(&format!(
+        "SELECT {CAPABILITY_COLUMNS} FROM capabilities \
+         WHERE type = ?1 AND enabled = 1 \
+         ORDER BY name"
+    ))
+    .bind(type_)
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
 }

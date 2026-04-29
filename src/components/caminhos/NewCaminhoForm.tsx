@@ -7,9 +7,14 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/useToast";
-import { createProject } from "@/lib/tauri-bridge";
+import { createCaminho } from "@/lib/tauri-bridge";
 
-export function NewProjectForm() {
+/**
+ * Create form for `/caminhos/new`. Renamed clone of NewProjectForm —
+ * same flow (folder picker via tauri-plugin-dialog, name + path
+ * validation on the backend, redirect to detail on success).
+ */
+export function NewCaminhoForm() {
   const [name, setName] = useState("");
   const [repoPath, setRepoPath] = useState("");
   const [saving, setSaving] = useState(false);
@@ -21,7 +26,7 @@ export function NewProjectForm() {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "Selecione o diretório do projeto",
+        title: "Selecione a pasta do caminho",
       });
       if (typeof selected === "string") {
         setRepoPath(selected);
@@ -49,15 +54,15 @@ export function NewProjectForm() {
 
     setSaving(true);
     try {
-      const project = await createProject({
+      const caminho = await createCaminho({
         name: trimmedName,
         repoPath: trimmedPath,
       });
-      toast({ title: "Projeto criado" });
-      navigate(`/projects/${project.id}`);
+      toast({ title: "Caminho criado" });
+      navigate(`/caminhos/${caminho.id}`);
     } catch (err) {
       toast({
-        title: "Falha ao criar projeto",
+        title: "Falha ao criar caminho",
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
@@ -72,14 +77,14 @@ export function NewProjectForm() {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-4">
         <Button asChild variant="ghost" size="icon" aria-label="Voltar">
-          <Link to="/projects">
+          <Link to="/caminhos">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
         <div>
-          <h2 className="text-lg font-semibold">Novo Projeto</h2>
+          <h2 className="text-lg font-semibold">Novo Caminho</h2>
           <p className="text-xs text-[var(--text-2)]">
-            Aponte para um repositório local.
+            Aponte para uma pasta local.
           </p>
         </div>
       </header>
@@ -88,32 +93,32 @@ export function NewProjectForm() {
         <form
           onSubmit={handleSubmit}
           className="mx-auto max-w-xl space-y-6 p-6"
-          aria-label="Criar projeto"
+          aria-label="Criar caminho"
         >
           <div className="space-y-2">
-            <label htmlFor="project-name" className="text-sm font-medium">
+            <label htmlFor="caminho-name" className="text-sm font-medium">
               Nome
             </label>
             <Input
-              id="project-name"
+              id="caminho-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="meu-projeto"
+              placeholder="meu-caminho"
               autoFocus
               disabled={saving}
             />
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="project-path" className="text-sm font-medium">
-              Caminho do repositório
+            <label htmlFor="caminho-path" className="text-sm font-medium">
+              Caminho da pasta
             </label>
             <div className="flex gap-2">
               <Input
-                id="project-path"
+                id="caminho-path"
                 value={repoPath}
                 onChange={(e) => setRepoPath(e.target.value)}
-                placeholder="/home/usuario/projetos/meu-projeto"
+                placeholder="/home/usuario/pastas/meu-caminho"
                 disabled={saving}
                 className="font-mono"
               />
@@ -134,7 +139,7 @@ export function NewProjectForm() {
 
           <div className="flex justify-end gap-2 pt-2">
             <Button asChild variant="outline" type="button" disabled={saving}>
-              <Link to="/projects">Cancelar</Link>
+              <Link to="/caminhos">Cancelar</Link>
             </Button>
             <Button type="submit" disabled={!canSubmit || saving}>
               <Save className="h-4 w-4" />
