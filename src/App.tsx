@@ -14,6 +14,7 @@ import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
+import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
@@ -201,7 +202,19 @@ function App() {
                 element={<Navigate to="/caminhos" replace />}
               />
 
-              <Route path="settings" element={<SettingsPage />} />
+              {/* Settings: SettingsLayout shell wraps a sub-sidebar +
+                  <Outlet />. Index redirects to /settings/knowledge.
+                  All 5 child routes currently render SettingsPage —
+                  subsequent B-series tasks split it into per-section
+                  pages so each NavLink lands on focused content. */}
+              <Route path="settings" element={<SettingsLayout />}>
+                <Route index element={<Navigate to="knowledge" replace />} />
+                <Route path="knowledge" element={<SettingsPage />} />
+                <Route path="skills" element={<SettingsPage />} />
+                <Route path="caminhos" element={<SettingsPage />} />
+                <Route path="workflows" element={<SettingsPage />} />
+                <Route path="config" element={<SettingsPage />} />
+              </Route>
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
