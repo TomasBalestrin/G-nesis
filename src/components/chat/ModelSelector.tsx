@@ -60,9 +60,10 @@ function findModel(id: string): ModelOption {
 
 /**
  * Compact dropdown for picking which model the orchestrator uses. Sits
- * between ProjectSelector and the chat input. Selection is persisted via
- * app_state — backend reads `active_model_id` when wiring the chat router
- * (planned). For now the selection is purely UI state.
+ * next to CaminhoSelector in the bottom row of the chat input.
+ * Selection is persisted via app_state — backend reads `active_model_id`
+ * when wiring the chat router (planned). For now the selection is
+ * purely UI state.
  */
 export function ModelSelector() {
   const activeModelId = useAppStore((s) => s.activeModelId);
