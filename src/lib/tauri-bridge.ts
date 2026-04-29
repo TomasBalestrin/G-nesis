@@ -236,6 +236,33 @@ export function listMessagesByConversation(args: {
 }
 
 /**
+ * Persist a v2 skill folder under `skills_dir`. Idempotent — re-call
+ * overwrites existing files so the skill agent's iterate-edit loop
+ * (CONSTRUIR → APRESENTAR → VALIDAR → adjust → re-save) doesn't need
+ * a delete step. Scripts get chmod 755 on Unix; references and
+ * assets keep default perms. Empty file lists skip subdir creation.
+ */
+export interface SkillFolderFile {
+  name: string;
+  content: string;
+}
+export function saveSkillFolder(args: {
+  skillName: string;
+  skillMd: string;
+  scripts?: SkillFolderFile[];
+  references?: SkillFolderFile[];
+  assets?: SkillFolderFile[];
+}): Promise<void> {
+  return invoke("save_skill_folder", {
+    skillName: args.skillName,
+    skillMd: args.skillMd,
+    scripts: args.scripts ?? null,
+    references: args.references ?? null,
+    assets: args.assets ?? null,
+  });
+}
+
+/**
  * Persist an inline execution-status chat message and emit
  * `chat:message_inserted` for the live ChatPanel to append. `kind` is
  * forwarded verbatim to the `chat_messages.kind` column — pass
