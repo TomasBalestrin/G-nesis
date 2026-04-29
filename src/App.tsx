@@ -18,6 +18,7 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
+import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
@@ -25,7 +26,12 @@ import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { Toaster } from "@/components/ui/toaster";
 import ErrorBoundary from "@/components/ui/ErrorBoundary";
 import { useToast } from "@/hooks/useToast";
-import { getAppStateValue, getConfig, setAppStateValue } from "@/lib/tauri-bridge";
+import {
+  getAppStateValue,
+  getConfig,
+  listSkills,
+  setAppStateValue,
+} from "@/lib/tauri-bridge";
 import { useAppStore } from "@/stores/appStore";
 import type { Config } from "@/types/config";
 
@@ -151,9 +157,15 @@ function App() {
               <Route path="chat/:conversationId" element={<ChatPanel />} />
 
               {/* Skills: list in sidebar; no standalone /skills listing page.
-                  Same editor handles create (/skills/new) and edit (/skills/:name). */}
+                  /skills/new always lands on the v1 editor (new skills are
+                  created in v1 format until E4 ships v2 authoring).
+                  /skills/:name dispatches by version: v2 (folder layout)
+                  -> SkillViewerV2 read-only viewer, v1 -> SkillEditor.
+                  /skills/:name/edit always uses SkillEditor — v2 editing
+                  is a follow-up task. */}
               <Route path="skills/new" element={<SkillEditor />} />
-              <Route path="skills/:name" element={<SkillEditor />} />
+              <Route path="skills/:name" element={<SkillRouteDispatch />} />
+              <Route path="skills/:name/edit" element={<SkillEditor />} />
 
               {/* Capabilities: unified @-mention registry. List groups
                   natives + connectors; detail shows doc_user prominently
@@ -225,4 +237,50 @@ function NotFoundPage() {
 function ProjectIdRedirect() {
   const { id = "" } = useParams<{ id: string }>();
   return <Navigate to={`/caminhos/${id}`} replace />;
+}
+
+/** /skills/:name dispatcher: probes list_skills for the matching meta
+ *  and renders SkillViewerV2 for v2 (`version` starts with "2"), or
+ *  the v1 SkillEditor for everything else (including legacy 1.x and
+ *  rows we couldn't resolve). Loading state shows a placeholder so
+ *  the user doesn't see the wrong viewer flash before settling. */
+function SkillRouteDispatch() {
+  const { name = "" } = useParams<{ name: string }>();
+  const [version, setVersion] = useState<string | null | "loading">("loading");
+
+  useEffect(() => {
+    if (!name) {
+      setVersion(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const skills = await listSkills();
+        if (cancelled) return;
+        const found = skills.find((s) => s.name === name) ?? null;
+        setVersion(found?.version ?? null);
+      } catch {
+        if (!cancelled) setVersion(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [name]);
+
+  if (version === "loading") {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-[var(--text-secondary)]">
+        Carregando skill...
+      </div>
+    );
+  }
+  if (typeof version === "string" && version.startsWith("2")) {
+    return <SkillViewerV2 />;
+  }
+  // null (skill not found, list failed, or v1 row) → fall through to
+  // the v1 editor; SkillEditor's own loader handles "not found" with
+  // a friendly empty-state.
+  return <SkillEditor />;
 }
