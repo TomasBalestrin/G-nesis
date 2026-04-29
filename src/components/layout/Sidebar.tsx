@@ -8,6 +8,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  Route,
   Settings,
   Sun,
   Trash2,
@@ -86,6 +87,7 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
         <ChatsSection onNavigate={onNavigate} />
         <SkillsSection onNavigate={onNavigate} />
         <CapabilitiesNavItem onNavigate={onNavigate} />
+        <CaminhosNavItem onNavigate={onNavigate} />
         <WorkflowsSection onNavigate={onNavigate} />
       </nav>
 
@@ -471,6 +473,35 @@ function CapabilitiesNavItem({ onNavigate }: { onNavigate: () => void }) {
       >
         <Plug className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
         Capabilities
+      </NavLink>
+    </section>
+  );
+}
+
+// ── caminhos nav item ───────────────────────────────────────────────────────
+
+/**
+ * Nav entry for the renamed projects surface (`/caminhos`). Same shape
+ * as CapabilitiesNavItem — single NavLink, no collapsible item list.
+ * The catalog page itself shows the cards; sidebar only routes.
+ */
+function CaminhosNavItem({ onNavigate }: { onNavigate: () => void }) {
+  return (
+    <section>
+      <NavLink
+        to="/caminhos"
+        onClick={onNavigate}
+        className={({ isActive }) =>
+          cn(
+            "flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-xs transition-colors duration-100",
+            isActive
+              ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+              : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+          )
+        }
+      >
+        <Route className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+        Caminhos
       </NavLink>
     </section>
   );

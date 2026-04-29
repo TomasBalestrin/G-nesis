@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from "react-router-dom";
 
+import { CaminhoDetail } from "@/components/caminhos/CaminhoDetail";
+import { CaminhoList } from "@/components/caminhos/CaminhoList";
+import { NewCaminhoForm } from "@/components/caminhos/NewCaminhoForm";
 import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { CapabilityDetail } from "@/components/capabilities/CapabilityDetail";
 import { CapabilityList } from "@/components/capabilities/CapabilityList";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
-import { NewProjectForm } from "@/components/projects/NewProjectForm";
-import { ProjectDetail } from "@/components/projects/ProjectDetail";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
@@ -165,10 +172,28 @@ function App() {
               <Route path="workflows/:name" element={<WorkflowViewer />} />
               <Route path="workflows/:name/edit" element={<WorkflowEditor />} />
 
-              {/* Projects: list is inside Settings; these routes support
-                  creating and inspecting a single project. */}
-              <Route path="projects/new" element={<NewProjectForm />} />
-              <Route path="projects/:id" element={<ProjectDetail />} />
+              {/* Caminhos: renamed projects surface. CaminhoList is the
+                  full catalog; new + :id forms mirror the legacy project
+                  routes. The /projects/* routes below redirect here so
+                  bookmarks / linked toasts keep working during the
+                  migration. */}
+              <Route path="caminhos" element={<CaminhoList />} />
+              <Route path="caminhos/new" element={<NewCaminhoForm />} />
+              <Route path="caminhos/:id" element={<CaminhoDetail />} />
+
+              {/* Legacy /projects/* — redirect to /caminhos/*. The
+                  underlying Tauri commands stay registered (C1 kept the
+                  legacy projects::*) so any non-route caller still
+                  works while the surface migrates. */}
+              <Route
+                path="projects/new"
+                element={<Navigate to="/caminhos/new" replace />}
+              />
+              <Route path="projects/:id" element={<ProjectIdRedirect />} />
+              <Route
+                path="projects"
+                element={<Navigate to="/caminhos" replace />}
+              />
 
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFoundPage />} />
@@ -191,4 +216,13 @@ function NotFoundPage() {
       <p className="text-sm text-[var(--text-secondary)]">Rota não encontrada.</p>
     </div>
   );
+}
+
+/** /projects/:id → /caminhos/:id with the param preserved. Navigate's
+ *  `to` doesn't interpolate route params, so the redirect lives in a
+ *  small component that reads `useParams` and builds the destination
+ *  string. */
+function ProjectIdRedirect() {
+  const { id = "" } = useParams<{ id: string }>();
+  return <Navigate to={`/caminhos/${id}`} replace />;
 }
