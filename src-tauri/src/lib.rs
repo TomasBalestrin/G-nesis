@@ -75,6 +75,7 @@ pub fn run() {
             chat::list_messages_by_conversation,
             chat::insert_execution_status_message,
             chat::analyze_step_failure,
+            chat::save_skill_folder,
             // capabilities (unified @-mention registry — read-only paths)
             capabilities::list_capabilities,
             capabilities::get_capability,

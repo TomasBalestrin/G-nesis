@@ -337,6 +337,40 @@ fn is_ai_routed_slash_command(name: &str) -> bool {
     matches!(name, "criar-skill")
 }
 
+/// Substring triggers that activate the skill-authoring agent without
+/// the user typing `/criar-skill`. Tight allowlist — broader phrases
+/// (e.g. "automatizar isso") would catch generic conversation and
+/// flip the model into the wrong role. Add only patterns that
+/// unambiguously mean "I want to create/save a skill".
+const SKILL_AGENT_TRIGGERS: &[&str] = &[
+    "criar skill",
+    "criar uma skill",
+    "criar nova skill",
+    "fazer skill",
+    "fazer uma skill",
+    "nova skill",
+    "skill nova",
+];
+
+/// Decides whether this turn should run with `PROMPT_SKILL_AGENT`
+/// appended to the system prompt. Active when:
+///   - the user typed `/criar-skill`, OR
+///   - the user typed plain text matching any trigger above.
+///
+/// A different slash (`/algo`) is NOT treated as a skill-agent
+/// trigger even if the body contains a trigger phrase — the slash
+/// owns the routing.
+fn is_skill_agent_active(content: &str, slash_command: Option<&str>) -> bool {
+    if slash_command == Some("criar-skill") {
+        return true;
+    }
+    if slash_command.is_some() {
+        return false;
+    }
+    let lowered = content.to_lowercase();
+    SKILL_AGENT_TRIGGERS.iter().any(|t| lowered.contains(t))
+}
+
 fn format_step_line(index: usize, step: &SkillStep) -> String {
     let payload_preview = step
         .command
@@ -1006,6 +1040,16 @@ pub async fn send_chat_message(
                 system_prompt.push_str(&mentions_block);
             }
 
+            // Skill authoring flow — appended after mentions so the
+            // agent rules (etapas 1-6, regras de criação, etc.) sit
+            // closest to the user message and bias the next reply.
+            // Still self-suficient: the prompt acknowledges that
+            // user_name + capabilities catalog were injected upstream.
+            if is_skill_agent_active(&content, slash_command.as_deref()) {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(prompts::PROMPT_SKILL_AGENT);
+            }
+
             let model = active_model(&pool).await;
             let client = ai_client_for_model(model)?;
 
@@ -1320,6 +1364,118 @@ pub async fn analyze_step_failure(
     Ok(msg)
 }
 
+// ── skill folder writes (v2 layout) ────────────────────────────────────────
+
+/// One named file written into a v2 skill folder. Used uniformly for
+/// scripts/, references/, assets/.
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillFolderFile {
+    pub name: String,
+    pub content: String,
+}
+
+/// Returns true when `name` is safe to use as a single path component
+/// inside the skills_dir tree. Path traversal + separator chars
+/// rejected at the boundary.
+fn is_safe_skill_path_component(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+}
+
+/// Persists a v2 skill folder under `skills_dir`:
+///
+/// ```text
+/// skills_dir/<skill_name>/
+///     SKILL.md            (sempre)
+///     scripts/<file>      (cada SkillFolderFile em `scripts`)
+///     references/<file>   (cada SkillFolderFile em `references`)
+///     assets/<file>       (cada SkillFolderFile em `assets`)
+/// ```
+///
+/// Idempotente — re-call sobrescreve arquivos existentes pra suportar
+/// o flow do skill agent que itera o conteúdo entre as etapas
+/// CONSTRUIR / APRESENTAR / VALIDAR. Scripts ganham chmod 755 sob
+/// `cfg(unix)` pra que o BashChannel possa spawnar direto.
+///
+/// Erros surfacam o nome do arquivo problemático pra o agente
+/// conseguir ajustar e re-tentar.
+#[tauri::command]
+pub async fn save_skill_folder(
+    skill_name: String,
+    skill_md: String,
+    scripts: Option<Vec<SkillFolderFile>>,
+    references: Option<Vec<SkillFolderFile>>,
+    assets: Option<Vec<SkillFolderFile>>,
+) -> Result<(), String> {
+    if !is_safe_skill_path_component(&skill_name) {
+        return Err(format!("nome de skill inválido: `{skill_name}`"));
+    }
+
+    let cfg = config::load_config()?;
+    let skills_root = PathBuf::from(cfg.skills_dir);
+    let skill_folder = skills_root.join(&skill_name);
+
+    fs::create_dir_all(&skill_folder).map_err(|e| {
+        format!("falha ao criar pasta {}: {e}", skill_folder.display())
+    })?;
+
+    let skill_md_path = skill_folder.join("SKILL.md");
+    fs::write(&skill_md_path, &skill_md).map_err(|e| {
+        format!("falha ao gravar {}: {e}", skill_md_path.display())
+    })?;
+
+    write_skill_subdir(&skill_folder, "scripts", scripts.unwrap_or_default(), true)?;
+    write_skill_subdir(&skill_folder, "references", references.unwrap_or_default(), false)?;
+    write_skill_subdir(&skill_folder, "assets", assets.unwrap_or_default(), false)?;
+
+    Ok(())
+}
+
+/// Helper for [`save_skill_folder`] — writes each file inside one
+/// subdirectory of the skill folder. Empty input list = no-op (we
+/// don't even create the subdir; better to let `references/` not
+/// exist than ship a vazio that confuses the listing).
+///
+/// `executable` flag triggers chmod 755 on Unix so scripts run
+/// directly via the BashChannel without needing `bash <script>`
+/// prefix in the etapa.
+fn write_skill_subdir(
+    skill_folder: &std::path::Path,
+    subdir: &str,
+    files: Vec<SkillFolderFile>,
+    executable: bool,
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let dir = skill_folder.join(subdir);
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
+
+    for file in files {
+        if !is_safe_skill_path_component(&file.name) {
+            return Err(format!("nome de arquivo inválido em {subdir}/: `{}`", file.name));
+        }
+        let path = dir.join(&file.name);
+        fs::write(&path, &file.content)
+            .map_err(|e| format!("falha ao gravar {}: {e}", path.display()))?;
+        if executable {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(&path) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(0o755);
+                    let _ = fs::set_permissions(&path, perms);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1475,6 +1631,55 @@ mod tests {
         assert!(s.contains("## Caminhos mencionados"));
         assert!(s.contains("### #meu"));
         assert!(s.contains("/home/user/meu"));
+    }
+
+    #[test]
+    fn skill_agent_active_for_explicit_slash() {
+        assert!(is_skill_agent_active("/criar-skill", Some("criar-skill")));
+        // Even with extra args after the slash, the slash routing wins.
+        assert!(is_skill_agent_active(
+            "/criar-skill legendar videos",
+            Some("criar-skill"),
+        ));
+    }
+
+    #[test]
+    fn skill_agent_active_for_natural_triggers() {
+        assert!(is_skill_agent_active(
+            "quero criar uma skill que legenda videos",
+            None,
+        ));
+        assert!(is_skill_agent_active("Faz uma skill nova pra mim", None));
+        assert!(is_skill_agent_active("CRIAR SKILL automatica", None));
+    }
+
+    #[test]
+    fn skill_agent_inactive_for_unrelated_chat() {
+        assert!(!is_skill_agent_active("oi tudo bem?", None));
+        assert!(!is_skill_agent_active(
+            "automatizar isso seria bom mas sem usar skill",
+            None,
+        ));
+    }
+
+    #[test]
+    fn skill_agent_inactive_when_other_slash_active() {
+        // /listar é um exemplo de slash não-AI-routed; mesmo se o
+        // body bater num trigger de skill, o slash domina.
+        assert!(!is_skill_agent_active(
+            "/listar criar skill",
+            Some("listar"),
+        ));
+    }
+
+    #[test]
+    fn skill_path_component_validation() {
+        assert!(is_safe_skill_path_component("legendar-videos"));
+        assert!(is_safe_skill_path_component("step_1"));
+        assert!(!is_safe_skill_path_component(""));
+        assert!(!is_safe_skill_path_component("../etc/passwd"));
+        assert!(!is_safe_skill_path_component("foo/bar"));
+        assert!(!is_safe_skill_path_component("foo\\bar"));
     }
 
     #[test]
