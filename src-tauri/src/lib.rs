@@ -10,8 +10,8 @@ pub mod orchestrator;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
-    app_state, chat, config as config_cmd, conversations, dependencies, execution, knowledge,
-    projects, skills, workflows,
+    app_state, capabilities, chat, config as config_cmd, conversations, dependencies, execution,
+    knowledge, projects, skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -70,6 +70,10 @@ pub fn run() {
             chat::list_messages_by_conversation,
             chat::insert_execution_status_message,
             chat::analyze_step_failure,
+            // capabilities (unified @-mention registry — read-only paths)
+            capabilities::list_capabilities,
+            capabilities::get_capability,
+            capabilities::list_capabilities_by_type,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,
