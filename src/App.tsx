@@ -14,10 +14,10 @@ import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
+import { KnowledgeSection } from "@/components/settings/KnowledgeSection";
 import { SettingsCaminhosSection } from "@/components/settings/SettingsCaminhosSection";
 import { SettingsConfigSection } from "@/components/settings/SettingsConfigSection";
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
-import { SettingsPage } from "@/components/settings/SettingsPage";
 import { SettingsSkillsSection } from "@/components/settings/SettingsSkillsSection";
 import { SettingsWorkflowsSection } from "@/components/settings/SettingsWorkflowsSection";
 import { SkillEditor } from "@/components/skills/SkillEditor";
@@ -191,13 +191,11 @@ function App() {
               <Route path="caminhos/:id" element={<CaminhoDetail />} />
 
               {/* Settings: SettingsLayout shell wraps a sub-sidebar +
-                  <Outlet />. Index redirects to /settings/knowledge.
-                  All 5 child routes currently render SettingsPage —
-                  subsequent B-series tasks split it into per-section
-                  pages so each NavLink lands on focused content. */}
+                  <Outlet />. Index redirects to /settings/knowledge;
+                  cada child route monta a section própria. */}
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to="knowledge" replace />} />
-                <Route path="knowledge" element={<SettingsPage />} />
+                <Route path="knowledge" element={<KnowledgeRoute />} />
                 <Route path="skills" element={<SettingsSkillsSection />} />
                 <Route path="caminhos" element={<SettingsCaminhosSection />} />
                 <Route path="workflows" element={<SettingsWorkflowsSection />} />
@@ -221,6 +219,29 @@ function NotFoundPage() {
     <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
       <h2 className="text-xl font-bold">404</h2>
       <p className="text-sm text-[var(--text-secondary)]">Rota não encontrada.</p>
+    </div>
+  );
+}
+
+/** Wraps KnowledgeSection com header + scroll pra casar com o padrão
+ *  das outras child routes da SettingsLayout (B2-B4). KnowledgeSection
+ *  em si é só uma stack de subsections, sem cabeçalho próprio. */
+function KnowledgeRoute() {
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-border px-6 py-4">
+        <h2 className="text-2xl font-bold tracking-tight">
+          Base de conhecimento
+        </h2>
+        <p className="text-sm text-[var(--text-2)]">
+          Perfil, documentos e o resumo que vai pro system prompt.
+        </p>
+      </header>
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-2xl p-6">
+          <KnowledgeSection />
+        </div>
+      </div>
     </div>
   );
 }

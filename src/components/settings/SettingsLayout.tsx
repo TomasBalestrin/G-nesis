@@ -16,8 +16,8 @@ interface NavItem {
 }
 
 // Nested routes are wired in App.tsx; this layout only renders the
-// sub-sidebar shell + <Outlet />. Subsequent B-series tasks split
-// SettingsPage into per-section pages mounted under each child route.
+// sub-sidebar shell + <Outlet />. Cada child route monta sua própria
+// section (KnowledgeRoute, SettingsSkillsSection, etc).
 const ITEMS: NavItem[] = [
   { to: "/settings/knowledge", label: "Base de Conhecimento", icon: BookOpen },
   { to: "/settings/skills", label: "Skills", icon: FileCode },
