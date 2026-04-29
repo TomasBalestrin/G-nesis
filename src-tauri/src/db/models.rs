@@ -147,3 +147,37 @@ pub struct KnowledgeSummary {
     pub generated_at: String,
     pub source_count: i64,
 }
+
+/// One row per @-mention the user can invoke in chat. Two flavors live
+/// in the same table (discriminated by `type_`):
+///   - `"native"`     — shipped with the app (terminal, code). `channel`
+///                      points at the executor backend (bash / claude-code
+///                      / api).
+///   - `"connector"`  — third-party integration. `channel` is `None`;
+///                      auth + endpoints live inside the `config` JSON.
+///
+/// `doc_ai` is the snippet injected into the system prompt when the
+/// capability is mentioned, so the model knows what it does and the
+/// rules to follow. `doc_user` is the picker copy for humans.
+///
+/// Field rename: SQLite reserves no keyword named `type`, but Rust does
+/// — `type_` is the field, serde's `rename = "type"` keeps the JSON
+/// wire shape and the FromRow column lookup aligned with the
+/// `capabilities.type` column.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Capability {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    #[sqlx(rename = "type")]
+    pub type_: String,
+    pub channel: Option<String>,
+    pub config: String,
+    pub doc_ai: String,
+    pub doc_user: String,
+    pub enabled: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}

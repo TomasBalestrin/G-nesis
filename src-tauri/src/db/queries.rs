@@ -4,7 +4,7 @@
 use sqlx::SqlitePool;
 
 use crate::db::models::{
-    AppState, ChatMessage, Conversation, Execution, ExecutionStep, KnowledgeFile,
+    AppState, Capability, ChatMessage, Conversation, Execution, ExecutionStep, KnowledgeFile,
     KnowledgeFileMeta, KnowledgeSummary, Project,
 };
 
@@ -634,4 +634,65 @@ pub async fn delete_knowledge_summary(pool: &SqlitePool) -> Result<(), String> {
         .await
         .map_err(map_err)?;
     Ok(())
+}
+
+// ── capabilities ────────────────────────────────────────────────────────────
+
+/// Single source of truth for the columns SELECTed into [`Capability`].
+/// `type` is escaped because it's a reserved Rust keyword — the FromRow
+/// derive lines this up with the `type_` field via the
+/// `#[sqlx(rename = "type")]` attribute on the struct.
+const CAPABILITY_COLUMNS: &str =
+    "id, name, display_name, description, type, channel, config, \
+     doc_ai, doc_user, enabled, created_at, updated_at";
+
+/// Active capabilities sorted by type then name. Disabled rows are
+/// hidden (the picker only shows what the user can actually invoke).
+/// Sort by type so natives come before connectors (lexicographic on
+/// `'native' < 'connector'`? no — `'connector' < 'native'`. Both
+/// surfaces handle either order; we just want a stable groupings).
+pub async fn list_capabilities(pool: &SqlitePool) -> Result<Vec<Capability>, String> {
+    sqlx::query_as::<_, Capability>(&format!(
+        "SELECT {CAPABILITY_COLUMNS} FROM capabilities \
+         WHERE enabled = 1 \
+         ORDER BY type, name"
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Fetch a capability by its `name` handle (the @-mention identifier).
+/// Returns `None` for unknown / disabled-and-renamed rows. Callers
+/// resolve the channel + doc_ai from the row and dispatch accordingly.
+pub async fn get_capability_by_name(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<Option<Capability>, String> {
+    sqlx::query_as::<_, Capability>(&format!(
+        "SELECT {CAPABILITY_COLUMNS} FROM capabilities WHERE name = ?1"
+    ))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Active capabilities filtered to a single `type_` (`"native"` or
+/// `"connector"`). Used by the settings page to render the two groups
+/// independently. Mirrors `list_capabilities` ordering by name within
+/// the requested type.
+pub async fn list_capabilities_by_type(
+    pool: &SqlitePool,
+    type_: &str,
+) -> Result<Vec<Capability>, String> {
+    sqlx::query_as::<_, Capability>(&format!(
+        "SELECT {CAPABILITY_COLUMNS} FROM capabilities \
+         WHERE type = ?1 AND enabled = 1 \
+         ORDER BY name"
+    ))
+    .bind(type_)
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
 }
