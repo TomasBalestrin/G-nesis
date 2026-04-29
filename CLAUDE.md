@@ -38,20 +38,38 @@ cd src-tauri && cargo clippy
 genesis/
 ├── src-tauri/src/          # Rust backend
 │   ├── commands/           # Tauri IPC handlers
+│   │   ├── caminhos.rs     # caminhos (renomeado projects surface)
+│   │   ├── capabilities.rs # @-mention registry
+│   │   ├── chat.rs         # send_chat_message, save_skill_folder, save_skill, mention helpers
+│   │   ├── execution.rs    # execute_skill, abort, pause, resume
+│   │   ├── skills.rs       # list/read/save/delete (v1 + v2 via skill_loader_v2)
+│   │   └── ...
 │   ├── orchestrator/       # Skill parser, executor, validator
+│   │   ├── executor.rs     # @capability + #caminho resolution
+│   │   ├── skill_loader_v2.rs # v2 folder loader, v1 fallback
+│   │   └── skill_parser.rs # v1 + v2 frontmatter detection
 │   ├── channels/           # Claude Code, bash, API
-│   ├── ai/                 # OpenAI client
-│   ├── db/                 # SQLite models + queries
+│   ├── ai/                 # OpenAI client + prompts (CORE/CAPABILITIES/SKILLS_V2/CAMINHOS/SYSTEM_STATE/PROMPT_SKILL_AGENT)
+│   ├── db/                 # SQLite models + queries (capabilities, caminhos via projects table)
 │   └── config.rs
 ├── src/                    # React frontend
-│   ├── components/{layout,chat,skills,progress,projects,ui}/
-│   ├── hooks/              # useTauriCommand, useTauriEvent, useExecution, useChat
-│   ├── stores/             # appStore, executionStore, chatStore (Zustand)
+│   ├── components/{layout,chat,caminhos,capabilities,skills,onboarding,settings,workflows,ui}/
+│   ├── hooks/              # useTauriCommand, useTauriEvent, useExecution, useThinking
+│   ├── stores/             # appStore, executionStore, chatStore, capabilitiesStore, caminhosStore, skillsStore
 │   ├── lib/                # tauri-bridge.ts, utils.ts
-│   └── types/              # skill.ts, project.ts, chat.ts, events.ts
-├── skills/                 # Skills .md
+│   └── types/              # skill.ts, project.ts (= caminho.ts alias), capability.ts, chat.ts, events.ts
+├── skills/                 # Skills v2 (pastas <nome>/SKILL.md) + v1 (.md soltos legacy)
+├── docs/                   # PRD, architecture, ux-flows, skill-format-v2
+├── system-prompt-genesis.md # Source-of-truth do system prompt do orquestrador
 └── CLAUDE.md
 ```
+
+### Conceitos do surface
+
+- **Capabilities** (`@nome`): ações invocáveis no chat — ex: `@terminal`, `@code`. Backend resolve cada `@` pra um `doc_ai` injetado no system prompt. Native (channel-backed) ou connector (config JSON).
+- **Caminhos** (`#nome`): pastas locais cadastradas, refer cwd da execução. Substitui o termo legacy "projeto".
+- **Skills** (`/nome`): procedimentos repetitivos. v2 = pasta com `SKILL.md` (entry point) + `references/` + `scripts/` + `assets/`. v1 = `.md` solto continua suportado.
+- **Triple prefix**: `/` (start-of-input, slash command), `@` (qualquer posição, capability mention), `#` (qualquer posição, caminho mention) — extraídos do conteúdo da mensagem por `extract_*_mentions` em `chat.rs`.
 
 ---
 
@@ -135,9 +153,7 @@ Após qualquer alteração: `cargo check` (Rust) + `npm run build` (frontend). S
 ## Docs Disponíveis
 
 - `docs/PRD.md` — features, modelo de dados, comandos Tauri, integrações
-- `docs/tech-stack.md` — stack completo, pacotes, ADRs
 - `docs/architecture.md` — diretórios, comunicação WebView↔Rust, patterns
-- `docs/schema.md` — SQLite schema, triggers, Rust structs
-- `docs/security.md` — API keys, subprocessos, filesystem
-- `docs/ux-flows.md` — rotas, navegação, fluxos, responsividade
-- `docs/TASKS.md` — tasks de implementação
+- `docs/ux-flows.md` — rotas, navegação, fluxos
+- `docs/skill-format-v2.md` — spec da pasta v2 (SKILL.md + references/scripts/assets)
+- `system-prompt-genesis.md` — source-of-truth do system prompt
