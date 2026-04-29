@@ -6,7 +6,6 @@ import {
   Moon,
   Pencil,
   Plus,
-  Route,
   Settings,
   Sun,
   Trash2,
@@ -81,7 +80,6 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         <ChatsSection onNavigate={onNavigate} />
         <SkillsSection onNavigate={onNavigate} />
-        <CaminhosNavItem onNavigate={onNavigate} />
       </nav>
 
       <Footer />
@@ -437,35 +435,6 @@ function SkillItem({
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-// ── caminhos nav item ───────────────────────────────────────────────────────
-
-/**
- * Nav entry for the renamed projects surface (`/caminhos`). Single
- * NavLink, no collapsible item list —
- * The catalog page itself shows the cards; sidebar only routes.
- */
-function CaminhosNavItem({ onNavigate }: { onNavigate: () => void }) {
-  return (
-    <section>
-      <NavLink
-        to="/caminhos"
-        onClick={onNavigate}
-        className={({ isActive }) =>
-          cn(
-            "flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-xs transition-colors duration-100",
-            isActive
-              ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-              : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
-          )
-        }
-      >
-        <Route className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
-        Caminhos
-      </NavLink>
-    </section>
   );
 }
 
