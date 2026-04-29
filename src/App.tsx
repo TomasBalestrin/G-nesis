@@ -14,6 +14,7 @@ import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
+import { SettingsCaminhosSection } from "@/components/settings/SettingsCaminhosSection";
 import { SettingsConfigSection } from "@/components/settings/SettingsConfigSection";
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsPage } from "@/components/settings/SettingsPage";
@@ -212,7 +213,7 @@ function App() {
                 <Route index element={<Navigate to="knowledge" replace />} />
                 <Route path="knowledge" element={<SettingsPage />} />
                 <Route path="skills" element={<SettingsPage />} />
-                <Route path="caminhos" element={<SettingsPage />} />
+                <Route path="caminhos" element={<SettingsCaminhosSection />} />
                 <Route path="workflows" element={<SettingsPage />} />
                 <Route path="config" element={<SettingsConfigSection />} />
               </Route>
