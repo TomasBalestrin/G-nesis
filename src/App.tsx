@@ -12,8 +12,6 @@ import { CaminhoList } from "@/components/caminhos/CaminhoList";
 import { NewCaminhoForm } from "@/components/caminhos/NewCaminhoForm";
 import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { CapabilityDetail } from "@/components/capabilities/CapabilityDetail";
-import { CapabilityList } from "@/components/capabilities/CapabilityList";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
 import { SettingsPage } from "@/components/settings/SettingsPage";
@@ -167,14 +165,10 @@ function App() {
               <Route path="skills/:name" element={<SkillRouteDispatch />} />
               <Route path="skills/:name/edit" element={<SkillEditor />} />
 
-              {/* Capabilities: unified @-mention registry. List groups
-                  natives + connectors; detail shows doc_user prominently
-                  and doc_ai inside a collapsible <details>. */}
-              <Route path="capabilities" element={<CapabilityList />} />
-              <Route
-                path="capabilities/:name"
-                element={<CapabilityDetail />}
-              />
+              {/* Capabilities: surface routes removidas em A2.
+                  Backend continua expondo list_capabilities pro
+                  autocomplete @ no chat e pra resolução de mention
+                  dentro do system prompt — só a UI dedicada saiu. */}
 
               {/* Workflows: full catalog page + viewer + editor. /:name shows
                   the read-only structured view; /:name/edit opens the markdown
