@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { reportFatalError } from "@/hooks/useFatalError";
 import { toast } from "@/hooks/useToast";
+import type { Caminho } from "@/types/caminho";
 import type { Capability, CapabilityType } from "@/types/capability";
 import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
@@ -127,6 +128,28 @@ export function createProject(args: {
 
 export function deleteProject(args: { id: string }): Promise<void> {
   return invoke("delete_project", args);
+}
+
+// ── caminhos (renamed projects surface) ─────────────────────────────────────
+//
+// Wraps the `caminhos::*` Tauri commands. Legacy `listProjects` /
+// `createProject` / `deleteProject` above stay live — frontend migrates
+// gradually. The wire types are identical (`Caminho = Project`) so a
+// component can swap which wrapper it calls without touching its props.
+
+export function listCaminhos(): Promise<Caminho[]> {
+  return invoke("list_caminhos");
+}
+
+export function createCaminho(args: {
+  name: string;
+  repoPath: string;
+}): Promise<Caminho> {
+  return invoke("create_caminho", args);
+}
+
+export function deleteCaminho(args: { id: string }): Promise<void> {
+  return invoke("delete_caminho", args);
 }
 
 export function getExecutionHistory(args: {
@@ -476,6 +499,7 @@ export function listCapabilitiesByType(args: {
 // Re-export the row types so consumers can import from a single place when
 // working with results coming over the bridge (keeps the import graph flat).
 
+export type { Caminho } from "@/types/caminho";
 export type {
   Capability,
   CapabilityChannel,
