@@ -1016,11 +1016,20 @@ pub async fn send_chat_message(
                 .flatten()
                 .map(|s| s.summary);
             let system_state = collect_system_state(&pool, &catalog).await;
+            // DB-backed capabilities catalog. Returns "" when no rows
+            // are enabled; build_system_prompt skips the section in
+            // that case via the Some-non-empty filter.
+            let capabilities_block = prompts::build_capabilities_prompt(&pool).await;
             let mut system_prompt = prompts::build_system_prompt(
                 user_name.as_deref(),
                 company_name.as_deref(),
                 summary.as_deref(),
                 Some(&system_state),
+                if capabilities_block.is_empty() {
+                    None
+                } else {
+                    Some(capabilities_block.as_str())
+                },
                 &catalog,
             );
 

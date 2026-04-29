@@ -322,6 +322,76 @@ Antes de cada turno tu recebe um snapshot do que está acontecendo no app: proje
 
 {{INJECT:SYSTEM_STATE}}"##;
 
+/// CAMINHOS — substitui `PROMPT_PROJECTS` no fluxo novo. O termo
+/// product-facing migrou de "projeto" pra "caminho" (folder bookmark
+/// em pt-BR). A invocação no chat usa `#nome`, paralela aos
+/// `@capability` e `/skill` triggers documentados em outros consts.
+///
+/// Mantemos `PROMPT_PROJECTS` na fila legada (compose_system_prompt)
+/// pra não quebrar testes — `build_system_prompt` já roteia pelo
+/// novo.
+pub const PROMPT_CAMINHOS: &str = r##"## Caminhos
+
+Um caminho é uma pasta no computador do usuário onde o trabalho acontece. Pode ser um repositório de código, uma pasta de vídeos, uma pasta de documentos — qualquer diretório local. O usuário cadastra caminhos via Settings (`/caminhos`).
+
+### Como referenciar um caminho
+
+No chat, o usuário menciona o caminho com `#nome`:
+- "rode em #meu-projeto"
+- "salva o output em #processed"
+- "compara #frontend e #backend"
+
+O modelo resolve `#nome` para o `repo_path` cadastrado em runtime. Use esse path como `cwd` quando disparar comandos relacionados àquele caminho.
+
+### Múltiplos caminhos por turn
+
+Comum: "sincroniza #raw-uploads pra #processed". Cada `#` resolve independente; etapas podem usar caminhos diferentes em sequência.
+
+### Quando o usuário não menciona
+
+Se a tarefa precisa de uma pasta específica e o usuário não usa `#`, pergunte qual caminho usar OU sugira cadastrar um novo. Nunca invente um path.
+
+Se `#nome` não bate com nenhum caminho cadastrado (system_state não lista), avise antes de seguir."##;
+
+/// SKILLS_V2 — substitui `PROMPT_SKILLS` no `build_system_prompt`.
+/// Documenta o formato pasta + etapas descritivas + progressive
+/// disclosure introduzido em E1/E2/E3. Source-of-truth é
+/// `docs/skill-format-v2.md`; mudanças por aqui devem espelhar lá.
+pub const PROMPT_SKILLS_V2: &str = r##"## Skills
+
+Skills são procedimentos repetitivos empacotados como **pastas** em `~/.genesis/skills/`. Cada skill v2 tem:
+
+- `SKILL.md` (entry point obrigatório) — frontmatter + seções `# Quando usar` + `# Pré-requisitos` + `# Etapas` + `# Outputs`.
+- `references/` (opcional) — cheat-sheets, limites de API, formatos de input. Você lê via `read_file` apenas quando uma etapa cita.
+- `scripts/` (opcional) — scripts shell executados via `@terminal`. Sempre via path relativo `scripts/<nome>.sh`.
+- `assets/` (opcional) — templates, schemas, dados estáticos.
+
+### Etapas descritivas (não é DSL)
+
+Cada etapa do `SKILL.md` é **prosa** em verbo infinitivo (3-5 linhas):
+
+```
+## extract-audio
+Use @terminal pra rodar `ffmpeg -i {{input}} -vn -ar 16000 -ac 1 audio.mp3`.
+Se o input for maior que 25MB, divida em chunks (ver references/whisper-limits.md).
+```
+
+Você **traduz** a prosa em tool calls em runtime. Não há campos `tool:` / `command:` / `validate:` / `on_fail:` — você decide qual capability usar baseado no `@nome` mencionado na etapa, e quando re-tentar via análise do erro.
+
+### Ativação
+
+- `/<nome>` em start-of-input — slash command, pede confirmação antes de executar.
+- `@<nome>` no meio da frase — mention; usa a skill como capability inline.
+- Triggers em linguagem natural — se o usuário descreve uma rotina que bate com uma skill cadastrada (ver `triggers` no frontmatter dela), sugira a ativação.
+
+### Progressive disclosure
+
+NÃO carregue todo o conteúdo de `references/` no system prompt. Leia só o arquivo que a etapa atual cita, via tool call `read_file({path})`. Mantém o turn enxuto e o custo de tokens controlado.
+
+### Criação
+
+Pra criar uma skill nova, o usuário diz `/criar-skill` ou "quero criar uma skill que ...". Você ativa o agente de autoria que conduz a criação em 6 etapas (entender, pesquisar, propor, construir, apresentar, validar)."##;
+
 /// Standalone system prompt for the **skill authoring agent** — used
 /// by the `/criar-skill` flow (chat.rs::is_ai_routed_slash_command)
 /// to coach the user through 6 etapas até gravar a skill v2 no
@@ -527,7 +597,59 @@ pub const VALIDATION_PROMPT: &str = r#"Analise o output deste step e determine s
 Retorne APENAS JSON:
 {"success": true|false, "reason": "explicação curta"}"#;
 
+use sqlx::SqlitePool;
+
+use crate::db::queries;
 use crate::orchestrator::skill_parser::SkillMeta;
+
+/// Compose the dynamic Capabilities section from the DB. Lists active
+/// rows grouped by `type` (Native / Connectors). Per-row body is just
+/// the description — full `doc_ai` is injected on demand by
+/// `chat.rs::format_mentions_block` when the user actually mentions
+/// a capability with `@nome`.
+///
+/// Returns an empty string when no enabled rows exist; caller skips
+/// the join in that case so the system prompt stays well-formed.
+pub async fn build_capabilities_prompt(pool: &SqlitePool) -> String {
+    let caps = queries::list_capabilities(pool).await.unwrap_or_default();
+    if caps.is_empty() {
+        return String::new();
+    }
+
+    let mut native = String::new();
+    let mut connector = String::new();
+    for cap in caps {
+        let body = if cap.description.is_empty() {
+            "(sem descrição)".to_string()
+        } else {
+            cap.description.clone()
+        };
+        let line = format!("- `@{}` — {body}\n", cap.name);
+        if cap.type_ == "native" {
+            native.push_str(&line);
+        } else {
+            connector.push_str(&line);
+        }
+    }
+
+    let mut s = String::with_capacity(512);
+    s.push_str("## Capabilities disponíveis\n\n");
+    s.push_str(
+        "Cada capability é uma ação que você pode invocar quando o usuário menciona `@nome` ou quando a tarefa pede claramente. A documentação completa (`doc_ai`) de cada capability é injetada automaticamente quando ela é mencionada na mensagem do usuário — esta seção é só o índice.\n\n",
+    );
+    if !native.is_empty() {
+        s.push_str("### Native\n");
+        s.push_str(&native);
+    }
+    if !connector.is_empty() {
+        if !native.is_empty() {
+            s.push('\n');
+        }
+        s.push_str("### Connectors\n");
+        s.push_str(&connector);
+    }
+    s.trim_end().to_string()
+}
 
 /// Append a "## Skills disponíveis" section listing each skill's slash
 /// command + description + triggers. When `skills` is empty, returns the
@@ -609,9 +731,10 @@ pub fn build_system_prompt(
     company_name: Option<&str>,
     knowledge_summary: Option<&str>,
     system_state: Option<&str>,
+    capabilities_block: Option<&str>,
     skills: &[SkillMeta],
 ) -> String {
-    let mut sections: Vec<String> = Vec::with_capacity(8);
+    let mut sections: Vec<String> = Vec::with_capacity(9);
 
     sections.push(PROMPT_CORE.to_string());
 
@@ -629,10 +752,21 @@ pub fn build_system_prompt(
         sections.push(resolved);
     }
 
+    // Dynamic capabilities catalog (DB-backed). Slot between
+    // SYSTEM_STATE (snapshot) and REASONING (how to think) so the
+    // model knows what it has at hand before deciding the next move.
+    if let Some(caps) = capabilities_block.filter(|s| !s.is_empty()) {
+        sections.push(caps.to_string());
+    }
+
     sections.push(PROMPT_REASONING.to_string());
-    sections.push(PROMPT_SKILLS.to_string());
+    // V2 surface: SKILLS_V2 (formato pasta + etapas em prosa) and
+    // CAMINHOS (renamed from PROMPT_PROJECTS, with `#` invocation).
+    // The legacy PROMPT_SKILLS / PROMPT_PROJECTS continue to live in
+    // `compose_system_prompt()` — no test breakage, no double prompt.
+    sections.push(PROMPT_SKILLS_V2.to_string());
     sections.push(PROMPT_TOOLS.to_string());
-    sections.push(PROMPT_PROJECTS.to_string());
+    sections.push(PROMPT_CAMINHOS.to_string());
     sections.push(PROMPT_RULES.to_string());
 
     let base = sections.join("\n\n");
@@ -855,6 +989,7 @@ mod tests {
             Some("Bethel"),
             Some("Editor de vídeo com 5 anos de experiência"),
             None,
+            None,
             &skills,
         );
 
@@ -882,7 +1017,7 @@ mod tests {
     /// which appears legitimately in PROMPT_SKILLS and PROMPT_CORE).
     #[test]
     fn build_prompt_without_user_skips_context() {
-        let out = build_system_prompt(None, None, None, None, &[]);
+        let out = build_system_prompt(None, None, None, None, None, &[]);
 
         assert!(
             !out.contains("Nome: {{user_name}}"),
@@ -908,7 +1043,7 @@ mod tests {
     /// block instead of an empty value or literal placeholder.
     #[test]
     fn build_prompt_without_summary_uses_fallback() {
-        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, &[]);
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, None, &[]);
 
         assert!(
             out.contains("Nenhum documento fornecido ainda."),
@@ -929,7 +1064,7 @@ mod tests {
         let state = "Projeto ativo: meu-projeto (/tmp/meu-projeto)\n\
                      Skills disponíveis: legendar-videos\n\
                      Execução ativa: nenhuma";
-        let out = build_system_prompt(None, None, None, Some(state), &[]);
+        let out = build_system_prompt(None, None, None, Some(state), None, &[]);
 
         assert!(
             out.contains("## Estado atual do sistema"),
@@ -951,7 +1086,7 @@ mod tests {
     /// be absent so GPT doesn't see a half-resolved snapshot.
     #[test]
     fn build_prompt_without_system_state_skips_section() {
-        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, &[]);
+        let out = build_system_prompt(Some("João"), Some("Bethel"), None, None, None, &[]);
 
         assert!(
             !out.contains("## Estado atual do sistema"),
