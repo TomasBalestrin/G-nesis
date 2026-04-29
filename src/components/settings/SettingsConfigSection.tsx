@@ -2,71 +2,93 @@ import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   CheckCircle2,
+  Download,
   Eye,
   EyeOff,
-  FolderGit2,
   FolderOpen,
   KeyRound,
-  Plus,
+  Loader2,
+  RefreshCw,
   Save,
-  Sparkles,
+  Terminal,
+  XCircle,
 } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
-import { KnowledgeSection } from "@/components/settings/KnowledgeSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useTauriCommand } from "@/hooks/useTauriCommand";
 import { useToast } from "@/hooks/useToast";
 import {
   callOpenAI,
+  checkDependency,
   getConfig,
-  listCaminhos,
+  installDependency,
   saveConfig,
 } from "@/lib/tauri-bridge";
 import type { Config } from "@/types/config";
-import type { Project } from "@/types/project";
+
+const DEPS = ["claude"] as const;
+type DepName = (typeof DEPS)[number];
+
+type DepStatus = "checking" | "installed" | "missing" | "installing";
 
 /**
- * Onboarding + runtime configuration.
- *
- * If the page is opened with `needs_setup=true` (no API key saved), a
- * successful save redirects to `/` (chat) per ux-flows.md §4. When opened
- * manually from the sidebar, save/test just show toasts and stay on page.
- *
- * "Testar" persists first, then calls `callOpenAI` — our backend helper
- * reads the key from disk, so saving is a prerequisite. A bad key can be
- * overwritten by the next save without any cleanup.
+ * Settings → /settings/config. API key, skills dir e checagem das deps
+ * externas (claude CLI). Não inclui ProjectsSection nem KnowledgeSection
+ * — essas vivem nas próprias child routes da SettingsLayout.
  */
-export function SettingsPage() {
+export function SettingsConfigSection() {
   const [apiKey, setApiKey] = useState("");
   const [skillsDir, setSkillsDir] = useState("");
+  const [claudeCliPath, setClaudeCliPath] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [initialNeedsSetup, setInitialNeedsSetup] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [deps, setDeps] = useState<Record<DepName, DepStatus>>({
+    claude: "checking",
+  });
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    (async () => {
-      try {
-        const cfg = await getConfig();
-        setApiKey(cfg.openai_api_key ?? "");
-        setSkillsDir(cfg.skills_dir);
-        setInitialNeedsSetup(cfg.needs_setup);
-      } catch (err) {
-        toast({
-          title: "Falha ao carregar configurações",
-          description: err instanceof Error ? err.message : String(err),
-          variant: "destructive",
-        });
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, [toast]);
+    void loadConfig();
+    void refreshDeps();
+  }, []);
+
+  async function loadConfig() {
+    try {
+      const cfg = await getConfig();
+      setApiKey(cfg.openai_api_key ?? "");
+      setSkillsDir(cfg.skills_dir);
+      setClaudeCliPath(cfg.claude_cli_path);
+      setInitialNeedsSetup(cfg.needs_setup);
+    } catch (err) {
+      toast({
+        title: "Falha ao carregar configurações",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setLoaded(true);
+    }
+  }
+
+  async function refreshDeps() {
+    setDeps((prev) => ({ ...prev, claude: "checking" }));
+    const results = await Promise.all(
+      DEPS.map(async (name) => {
+        try {
+          const ok = await checkDependency({ name });
+          return [name, ok ? "installed" : "missing"] as const;
+        } catch {
+          return [name, "missing"] as const;
+        }
+      }),
+    );
+    setDeps(Object.fromEntries(results) as Record<DepName, DepStatus>);
+  }
 
   async function persist(): Promise<Config | null> {
     try {
@@ -93,7 +115,6 @@ export function SettingsPage() {
     const saved = await persist();
     setSaving(false);
     if (!saved) return;
-
     toast({ title: "Configurações salvas" });
     if (initialNeedsSetup && !saved.needs_setup) {
       navigate("/");
@@ -104,10 +125,7 @@ export function SettingsPage() {
 
   async function handleTest() {
     if (!apiKey.trim()) {
-      toast({
-        title: "Cole a API key antes de testar",
-        variant: "destructive",
-      });
+      toast({ title: "Cole a API key antes de testar", variant: "destructive" });
       return;
     }
     setTesting(true);
@@ -117,14 +135,9 @@ export function SettingsPage() {
       return;
     }
     try {
-      const reply = await callOpenAI({
-        prompt: "Responda apenas com a palavra OK.",
-      });
+      const reply = await callOpenAI({ prompt: "Responda apenas com a palavra OK." });
       if (reply.trim().length === 0) {
-        toast({
-          title: "Resposta vazia da OpenAI",
-          variant: "destructive",
-        });
+        toast({ title: "Resposta vazia da OpenAI", variant: "destructive" });
       } else {
         toast({
           title: "API key válida",
@@ -149,15 +162,29 @@ export function SettingsPage() {
         multiple: false,
         title: "Selecione o diretório de skills",
       });
-      if (typeof selected === "string") {
-        setSkillsDir(selected);
-      }
+      if (typeof selected === "string") setSkillsDir(selected);
     } catch (err) {
       toast({
         title: "Falha ao abrir seletor de pasta",
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
+    }
+  }
+
+  async function handleInstallDep(name: DepName) {
+    setDeps((prev) => ({ ...prev, [name]: "installing" }));
+    try {
+      await installDependency({ name });
+      toast({ title: `${name} instalado` });
+    } catch (err) {
+      toast({
+        title: `Falha ao instalar ${name}`,
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      void refreshDeps();
     }
   }
 
@@ -174,16 +201,14 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="border-b border-border px-6 py-4">
-        <h2 className="text-2xl font-bold tracking-tight">Settings</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Configurações</h2>
         <p className="text-sm text-[var(--text-2)]">
-          API key, diretório de skills e outras preferências.
+          API key, diretórios e dependências externas.
         </p>
       </header>
 
       <div className="flex-1 overflow-auto">
         <div className="mx-auto max-w-2xl space-y-8 p-6">
-          {initialNeedsSetup ? <SetupBanner /> : null}
-
           <Section
             icon={<KeyRound className="h-4 w-4" />}
             title="OpenAI API key"
@@ -206,11 +231,7 @@ export function SettingsPage() {
                   aria-label={showKey ? "Ocultar key" : "Mostrar key"}
                   className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-[var(--text-3)] hover:text-foreground focus-visible:outline-none"
                 >
-                  {showKey ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
+                  {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
               <Button
@@ -251,119 +272,117 @@ export function SettingsPage() {
             </Button>
           </div>
 
-          <Section
-            icon={<Sparkles className="h-4 w-4" />}
-            title="Base de conhecimento"
-            description="Perfil, documentos sobre seu trabalho e o resumo que vai pro system prompt."
-          >
-            <KnowledgeSection />
-          </Section>
-
-          <ProjectsSection />
+          <DepsSection
+            deps={deps}
+            claudeCliPath={claudeCliPath}
+            onRefresh={() => void refreshDeps()}
+            onInstall={handleInstallDep}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function ProjectsSection() {
-  // Settings retains the legacy "Projects" section header for now —
-  // the surface migration moves user-facing copy to "caminhos" but
-  // the section here didn't get updated yet. The data fetch swapped
-  // to `listCaminhos` so the legacy `listProjects` bridge can be
-  // retired without leaving Settings broken.
-  const { data, loading, execute } = useTauriCommand(listCaminhos);
+interface DepsSectionProps {
+  deps: Record<DepName, DepStatus>;
+  claudeCliPath: string | null;
+  onRefresh: () => void;
+  onInstall: (name: DepName) => void;
+}
 
-  useEffect(() => {
-    execute();
-  }, [execute]);
-
+function DepsSection({
+  deps,
+  claudeCliPath,
+  onRefresh,
+  onInstall,
+}: DepsSectionProps) {
   return (
     <Section
-      icon={<FolderGit2 className="h-4 w-4" />}
-      title="Projetos"
-      description="Repositórios locais onde as skills executam. Use Novo Projeto para cadastrar um repo."
+      icon={<Terminal className="h-4 w-4" />}
+      title="Dependências externas"
+      description="Binários que o Genesis chama. claude_cli_path vem de ~/.genesis/config.toml."
+      action={
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
+          <RefreshCw className="h-3.5 w-3.5" />
+          Verificar
+        </Button>
+      }
     >
-      <div className="space-y-2">
-        <div className="flex justify-end">
-          <Button asChild size="sm">
-            <Link to="/projects/new">
-              <Plus className="h-4 w-4" />
-              Novo Projeto
-            </Link>
-          </Button>
-        </div>
-        {loading && !data ? (
-          <p className="text-xs text-[var(--text-2)]">Carregando...</p>
-        ) : data && data.length === 0 ? (
-          <p className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-3 py-4 text-center text-xs text-[var(--text-2)]">
-            Nenhum projeto cadastrado.
-          </p>
-        ) : (
-          <ul className="divide-y divide-[var(--border-sub)] overflow-hidden rounded-lg border border-border bg-card">
-            {(data ?? []).map((project) => (
-              <ProjectRow key={project.id} project={project} />
-            ))}
-          </ul>
-        )}
-      </div>
+      <ul className="divide-y divide-[var(--border-sub)] overflow-hidden rounded-lg border border-border bg-card">
+        {DEPS.map((name) => (
+          <DepRow
+            key={name}
+            name={name}
+            status={deps[name]}
+            path={name === "claude" ? claudeCliPath : null}
+            onInstall={() => onInstall(name)}
+          />
+        ))}
+      </ul>
     </Section>
   );
 }
 
-interface ProjectRowProps {
-  project: Project;
+interface DepRowProps {
+  name: DepName;
+  status: DepStatus;
+  path: string | null;
+  onInstall: () => void;
 }
 
-function ProjectRow({ project }: ProjectRowProps) {
+function DepRow({ name, status, path, onInstall }: DepRowProps) {
   return (
-    <li>
-      <Link
-        to={`/projects/${project.id}`}
-        className="flex items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-subtle)]"
-      >
-        <FolderGit2 className="h-4 w-4 shrink-0 text-[var(--text-3)]" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium">{project.name}</div>
-          <div className="truncate font-mono text-xs text-[var(--text-2)]">
-            {project.repo_path}
-          </div>
-        </div>
-      </Link>
+    <li className="flex items-center gap-3 px-3 py-2 text-sm">
+      <DepStatusIcon status={status} />
+      <div className="min-w-0 flex-1">
+        <div className="font-mono">{name}</div>
+        {path ? (
+          <div className="truncate font-mono text-xs text-[var(--text-2)]">{path}</div>
+        ) : null}
+      </div>
+      {status === "missing" ? (
+        <Button type="button" size="sm" variant="outline" onClick={onInstall}>
+          <Download className="h-3.5 w-3.5" />
+          Instalar
+        </Button>
+      ) : null}
     </li>
   );
+}
+
+function DepStatusIcon({ status }: { status: DepStatus }) {
+  if (status === "checking" || status === "installing") {
+    return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--text-3)]" />;
+  }
+  if (status === "installed") {
+    return <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--accent)]" />;
+  }
+  return <XCircle className="h-4 w-4 shrink-0 text-[var(--destructive)]" />;
 }
 
 interface SectionProps {
   icon: React.ReactNode;
   title: string;
   description: string;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }
 
-function Section({ icon, title, description, children }: SectionProps) {
+function Section({ icon, title, description, action, children }: SectionProps) {
   return (
     <section className="space-y-3">
-      <div>
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
-          <span className="text-[var(--text-3)]">{icon}</span>
-          {title}
-        </h3>
-        <p className="mt-1 text-xs text-[var(--text-2)]">{description}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <span className="text-[var(--text-3)]">{icon}</span>
+            {title}
+          </h3>
+          <p className="mt-1 text-xs text-[var(--text-2)]">{description}</p>
+        </div>
+        {action}
       </div>
       {children}
     </section>
-  );
-}
-
-function SetupBanner() {
-  return (
-    <div className="rounded-xl border border-[var(--primary-bd)] bg-[var(--primary-bg)] p-4 text-sm text-[var(--primary-tx)]">
-      <p className="font-semibold">Configuração inicial</p>
-      <p className="mt-1 text-[var(--text)]">
-        Cole sua OpenAI API key, teste e salve. Você será levado pro chat em
-        seguida.
-      </p>
-    </div>
   );
 }

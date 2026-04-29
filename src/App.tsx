@@ -12,11 +12,14 @@ import { CaminhoList } from "@/components/caminhos/CaminhoList";
 import { NewCaminhoForm } from "@/components/caminhos/NewCaminhoForm";
 import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { CapabilityDetail } from "@/components/capabilities/CapabilityDetail";
-import { CapabilityList } from "@/components/capabilities/CapabilityList";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
-import { SettingsPage } from "@/components/settings/SettingsPage";
+import { KnowledgeSection } from "@/components/settings/KnowledgeSection";
+import { SettingsCaminhosSection } from "@/components/settings/SettingsCaminhosSection";
+import { SettingsConfigSection } from "@/components/settings/SettingsConfigSection";
+import { SettingsLayout } from "@/components/settings/SettingsLayout";
+import { SettingsSkillsSection } from "@/components/settings/SettingsSkillsSection";
+import { SettingsWorkflowsSection } from "@/components/settings/SettingsWorkflowsSection";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
@@ -167,14 +170,10 @@ function App() {
               <Route path="skills/:name" element={<SkillRouteDispatch />} />
               <Route path="skills/:name/edit" element={<SkillEditor />} />
 
-              {/* Capabilities: unified @-mention registry. List groups
-                  natives + connectors; detail shows doc_user prominently
-                  and doc_ai inside a collapsible <details>. */}
-              <Route path="capabilities" element={<CapabilityList />} />
-              <Route
-                path="capabilities/:name"
-                element={<CapabilityDetail />}
-              />
+              {/* Capabilities: surface routes removidas em A2.
+                  Backend continua expondo list_capabilities pro
+                  autocomplete @ no chat e pra resolução de mention
+                  dentro do system prompt — só a UI dedicada saiu. */}
 
               {/* Workflows: full catalog page + viewer + editor. /:name shows
                   the read-only structured view; /:name/edit opens the markdown
@@ -186,28 +185,22 @@ function App() {
 
               {/* Caminhos: renamed projects surface. CaminhoList is the
                   full catalog; new + :id forms mirror the legacy project
-                  routes. The /projects/* routes below redirect here so
-                  bookmarks / linked toasts keep working during the
-                  migration. */}
+                  routes. */}
               <Route path="caminhos" element={<CaminhoList />} />
               <Route path="caminhos/new" element={<NewCaminhoForm />} />
               <Route path="caminhos/:id" element={<CaminhoDetail />} />
 
-              {/* Legacy /projects/* — redirect to /caminhos/*. The
-                  underlying Tauri commands stay registered (C1 kept the
-                  legacy projects::*) so any non-route caller still
-                  works while the surface migrates. */}
-              <Route
-                path="projects/new"
-                element={<Navigate to="/caminhos/new" replace />}
-              />
-              <Route path="projects/:id" element={<ProjectIdRedirect />} />
-              <Route
-                path="projects"
-                element={<Navigate to="/caminhos" replace />}
-              />
-
-              <Route path="settings" element={<SettingsPage />} />
+              {/* Settings: SettingsLayout shell wraps a sub-sidebar +
+                  <Outlet />. Index redirects to /settings/knowledge;
+                  cada child route monta a section própria. */}
+              <Route path="settings" element={<SettingsLayout />}>
+                <Route index element={<Navigate to="knowledge" replace />} />
+                <Route path="knowledge" element={<KnowledgeRoute />} />
+                <Route path="skills" element={<SettingsSkillsSection />} />
+                <Route path="caminhos" element={<SettingsCaminhosSection />} />
+                <Route path="workflows" element={<SettingsWorkflowsSection />} />
+                <Route path="config" element={<SettingsConfigSection />} />
+              </Route>
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
@@ -230,13 +223,27 @@ function NotFoundPage() {
   );
 }
 
-/** /projects/:id → /caminhos/:id with the param preserved. Navigate's
- *  `to` doesn't interpolate route params, so the redirect lives in a
- *  small component that reads `useParams` and builds the destination
- *  string. */
-function ProjectIdRedirect() {
-  const { id = "" } = useParams<{ id: string }>();
-  return <Navigate to={`/caminhos/${id}`} replace />;
+/** Wraps KnowledgeSection com header + scroll pra casar com o padrão
+ *  das outras child routes da SettingsLayout (B2-B4). KnowledgeSection
+ *  em si é só uma stack de subsections, sem cabeçalho próprio. */
+function KnowledgeRoute() {
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-border px-6 py-4">
+        <h2 className="text-2xl font-bold tracking-tight">
+          Base de conhecimento
+        </h2>
+        <p className="text-sm text-[var(--text-2)]">
+          Perfil, documentos e o resumo que vai pro system prompt.
+        </p>
+      </header>
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-2xl p-6">
+          <KnowledgeSection />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** /skills/:name dispatcher: probes list_skills for the matching meta

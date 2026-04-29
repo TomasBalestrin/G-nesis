@@ -516,7 +516,7 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
       const projectLabel = project?.name ?? selectedId;
       insertExecutionStatusMessage({
         executionId,
-        content: `⏳ Executando skill **${skillName}** no projeto **${projectLabel}**...`,
+        content: `⏳ Executando skill **${skillName}** no caminho **${projectLabel}**...`,
         kind: "execution-status",
       }).catch((err) =>
         console.warn("[SkillExecutePanel] initial status msg failed:", err),
@@ -529,7 +529,7 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   if (projects === null) {
     return (
       <div className="mt-3 text-xs text-[var(--text-2)]">
-        Carregando projetos...
+        Carregando caminhos...
       </div>
     );
   }
@@ -537,12 +537,12 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   if (projects.length === 0) {
     return (
       <div className="mt-3 rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-3 py-2 text-xs">
-        Nenhum projeto cadastrado.{" "}
+        Nenhum caminho cadastrado.{" "}
         <Link
-          to="/projects/new"
+          to="/caminhos/new"
           className="text-primary underline underline-offset-2"
         >
-          Cadastrar projeto
+          Cadastrar caminho
         </Link>{" "}
         para poder executar skills.
       </div>
@@ -553,7 +553,7 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border-sub)] pt-3">
       <label htmlFor={selectId} className="text-xs text-[var(--text-2)]">
-        Projeto
+        Caminho
       </label>
       <select
         id={selectId}

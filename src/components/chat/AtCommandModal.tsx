@@ -66,12 +66,12 @@ export function AtCommandModal({
     <div
       ref={containerRef}
       role="listbox"
-      aria-label="Capabilities disponíveis"
+      aria-label="Menções disponíveis"
       className="absolute bottom-full left-0 right-0 mb-2 max-h-64 animate-fade-in overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-lg"
     >
       {filtered.length === 0 ? (
         <div className="px-3 py-4 text-center text-xs text-[var(--text-2)]">
-          Nenhuma capability encontrada
+          Nenhum item encontrado
         </div>
       ) : (
         <ul className="py-1">
