@@ -21,7 +21,7 @@ import {
   executeSkill,
   insertExecutionStatusMessage,
   installDependency,
-  listProjects,
+  listCaminhos,
   safeInvoke,
   saveSkill,
   saveSkillFolder,
@@ -460,7 +460,10 @@ function SkillExecutePanel({ skillName }: SkillExecutePanelProps) {
   const setActiveExecution = useExecutionStore((s) => s.setActiveExecution);
 
   useEffect(() => {
-    listProjects()
+    // listCaminhos returns the same shape (Caminho = Project alias)
+    // — local state still typed as Project for now; rename happens
+    // when the wider `Project` type alias is retired.
+    listCaminhos()
       .then((ps) => {
         setProjects(ps);
         if (ps.length > 0) {

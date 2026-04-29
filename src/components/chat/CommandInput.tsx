@@ -9,9 +9,9 @@ import { useCapabilitiesStore } from "@/stores/capabilitiesStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 
 import { AtCommandModal, filterCapabilities } from "./AtCommandModal";
+import { CaminhoSelector } from "./CaminhoSelector";
 import { HashCommandModal, filterCaminhos } from "./HashCommandModal";
 import { ModelSelector } from "./ModelSelector";
-import { ProjectSelector } from "./ProjectSelector";
 import { SlashCommandModal, filterSkills } from "./SlashCommandModal";
 
 const MAX_HEIGHT = 200;
@@ -344,7 +344,7 @@ export function CommandInput({
             UPWARDS (side="top" set on each DropdownMenuContent) so they
             don't push the chat scroll area on click. */}
         <div className="flex items-center gap-1 px-2 pb-2">
-          <ProjectSelector />
+          <CaminhoSelector />
           <ModelSelector />
         </div>
       </form>

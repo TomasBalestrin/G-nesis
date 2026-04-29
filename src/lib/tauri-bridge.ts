@@ -16,7 +16,7 @@ import type { Capability, CapabilityType } from "@/types/capability";
 import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
-import type { Execution, ExecutionDetail, Project } from "@/types/project";
+import type { Execution, ExecutionDetail } from "@/types/project";
 import type { ParsedSkill, SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
@@ -113,29 +113,18 @@ export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
 }
 
-// ── projects ────────────────────────────────────────────────────────────────
-
-export function listProjects(): Promise<Project[]> {
-  return invoke("list_projects");
-}
-
-export function createProject(args: {
-  name: string;
-  repoPath: string;
-}): Promise<Project> {
-  return invoke("create_project", args);
-}
-
-export function deleteProject(args: { id: string }): Promise<void> {
-  return invoke("delete_project", args);
-}
+// ── projects (legacy: list/create/delete retired in H1) ────────────────────
+//
+// `list_projects` / `create_project` / `delete_project` foram aposentadas
+// — surface migrou pra `caminhos::*` (C1/C2/C3) e o último consumer
+// caiu em H1 (ProjectSelector deletado, MessageBubble e SettingsPage
+// migrados pra listCaminhos). `getExecutionHistory` permanece porque
+// CaminhoDetail ainda consulta by project_id (schema DB inalterado).
 
 // ── caminhos (renamed projects surface) ─────────────────────────────────────
 //
-// Wraps the `caminhos::*` Tauri commands. Legacy `listProjects` /
-// `createProject` / `deleteProject` above stay live — frontend migrates
-// gradually. The wire types are identical (`Caminho = Project`) so a
-// component can swap which wrapper it calls without touching its props.
+// Wraps the `caminhos::*` Tauri commands. Wire types são idênticas
+// (`Caminho = Project`) — alias mora no schema, não no produto.
 
 export function listCaminhos(): Promise<Caminho[]> {
   return invoke("list_caminhos");

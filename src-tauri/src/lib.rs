@@ -54,11 +54,11 @@ pub fn run() {
             skills::delete_skill,
             skills::parse_skill,
             // projects
-            projects::list_projects,
-            projects::create_project,
-            projects::delete_project,
-            // caminhos (renamed projects surface — legacy projects::*
-            // commands kept above for backward compat during migration)
+            // projects::list_projects / create_project / delete_project
+            // foram aposentados em H1 — todo o surface migrou pra
+            // caminhos::*. get_execution_history e get_execution_detail
+            // permanecem porque CaminhoDetail consulta o histórico
+            // by project_id (schema DB ainda usa projects table).
             caminhos::list_caminhos,
             caminhos::create_caminho,
             caminhos::delete_caminho,

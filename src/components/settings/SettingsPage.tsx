@@ -21,7 +21,7 @@ import { useToast } from "@/hooks/useToast";
 import {
   callOpenAI,
   getConfig,
-  listProjects,
+  listCaminhos,
   saveConfig,
 } from "@/lib/tauri-bridge";
 import type { Config } from "@/types/config";
@@ -267,7 +267,12 @@ export function SettingsPage() {
 }
 
 function ProjectsSection() {
-  const { data, loading, execute } = useTauriCommand(listProjects);
+  // Settings retains the legacy "Projects" section header for now —
+  // the surface migration moves user-facing copy to "caminhos" but
+  // the section here didn't get updated yet. The data fetch swapped
+  // to `listCaminhos` so the legacy `listProjects` bridge can be
+  // retired without leaving Settings broken.
+  const { data, loading, execute } = useTauriCommand(listCaminhos);
 
   useEffect(() => {
     execute();
