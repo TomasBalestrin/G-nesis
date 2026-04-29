@@ -3,6 +3,8 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { ChatIndexRedirect } from "@/components/chat/ChatIndexRedirect";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { CapabilityDetail } from "@/components/capabilities/CapabilityDetail";
+import { CapabilityList } from "@/components/capabilities/CapabilityList";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage";
 import { NewProjectForm } from "@/components/projects/NewProjectForm";
@@ -145,6 +147,15 @@ function App() {
                   Same editor handles create (/skills/new) and edit (/skills/:name). */}
               <Route path="skills/new" element={<SkillEditor />} />
               <Route path="skills/:name" element={<SkillEditor />} />
+
+              {/* Capabilities: unified @-mention registry. List groups
+                  natives + connectors; detail shows doc_user prominently
+                  and doc_ai inside a collapsible <details>. */}
+              <Route path="capabilities" element={<CapabilityList />} />
+              <Route
+                path="capabilities/:name"
+                element={<CapabilityDetail />}
+              />
 
               {/* Workflows: full catalog page + viewer + editor. /:name shows
                   the read-only structured view; /:name/edit opens the markdown
