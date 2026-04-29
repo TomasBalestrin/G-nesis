@@ -17,6 +17,7 @@ use tauri::State;
 
 use crate::config;
 use crate::db::queries;
+use crate::orchestrator::skill_loader_v2;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta};
 
 fn skills_dir() -> Result<PathBuf, String> {
@@ -46,26 +47,26 @@ pub async fn list_skills() -> Result<Vec<SkillMeta>, String> {
         return Ok(Vec::new());
     }
 
-    let entries = fs::read_dir(&dir)
-        .map_err(|e| format!("falha ao ler skills_dir {}: {e}", dir.display()))?;
-
+    // skill_loader_v2 detecta v1 (.md solto) + v2 (pasta com SKILL.md)
+    // num só pass, com pasta vencendo arquivo solto quando ambos
+    // existem. Cada entrada vira um parse independente — broken
+    // skills logam stderr e somem da lista, igual o comportamento
+    // anterior.
     let mut metas: Vec<SkillMeta> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            match fs::read_to_string(&path) {
-                Ok(content) => match skill_parser::parse_skill(&content) {
-                    Ok(skill) => metas.push(skill.meta),
-                    Err(err) => eprintln!(
-                        "[skills] pulando {} ao listar: {err}",
-                        path.display()
-                    ),
-                },
+    for entry in skill_loader_v2::list_skill_entries(&dir) {
+        let path = entry.source.entry_path();
+        match fs::read_to_string(path) {
+            Ok(content) => match skill_parser::parse_skill(&content) {
+                Ok(skill) => metas.push(skill.meta),
                 Err(err) => eprintln!(
-                    "[skills] falha ao ler {}: {err}",
+                    "[skills] pulando {} ao listar: {err}",
                     path.display()
                 ),
-            }
+            },
+            Err(err) => eprintln!(
+                "[skills] falha ao ler {}: {err}",
+                path.display()
+            ),
         }
     }
 
