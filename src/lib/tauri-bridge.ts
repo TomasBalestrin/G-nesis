@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { reportFatalError } from "@/hooks/useFatalError";
 import { toast } from "@/hooks/useToast";
+import type { Capability, CapabilityType } from "@/types/capability";
 import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
@@ -440,11 +441,46 @@ export function setAppStateValue(args: {
   return invoke("set_app_state_value", args);
 }
 
+// ── capabilities ────────────────────────────────────────────────────────────
+
+/**
+ * Unified @-mention registry — natives shipped with the app + connector
+ * rows added by the user. Read-only paths only; mutators land later
+ * with the connector flow.
+ *
+ * `Capability` shape mirrors src-tauri/src/db/models.rs::Capability.
+ * Backend rename: Rust `type_` field serializes as `"type"` on the wire
+ * so the TS interface keeps the natural name.
+ */
+export function listCapabilities(): Promise<Capability[]> {
+  return invoke("list_capabilities");
+}
+
+export function getCapability(args: {
+  name: string;
+}): Promise<Capability | null> {
+  return invoke("get_capability", args);
+}
+
+export function listCapabilitiesByType(args: {
+  type: CapabilityType;
+}): Promise<Capability[]> {
+  // Backend command argument is `type_` (Rust keyword escape) but the
+  // Tauri bridge accepts the snake_case form via serde. Pass the
+  // user-facing `type` and let the IPC layer do the rename.
+  return invoke("list_capabilities_by_type", { type_: args.type });
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when
 // working with results coming over the bridge (keeps the import graph flat).
 
+export type {
+  Capability,
+  CapabilityChannel,
+  CapabilityType,
+} from "@/types/capability";
 export type { ChatMessage, Conversation } from "@/types/chat";
 export type { Config } from "@/types/config";
 export type {
