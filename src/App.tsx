@@ -18,6 +18,8 @@ import { SettingsCaminhosSection } from "@/components/settings/SettingsCaminhosS
 import { SettingsConfigSection } from "@/components/settings/SettingsConfigSection";
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import { SettingsSkillsSection } from "@/components/settings/SettingsSkillsSection";
+import { SettingsWorkflowsSection } from "@/components/settings/SettingsWorkflowsSection";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
@@ -212,9 +214,9 @@ function App() {
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to="knowledge" replace />} />
                 <Route path="knowledge" element={<SettingsPage />} />
-                <Route path="skills" element={<SettingsPage />} />
+                <Route path="skills" element={<SettingsSkillsSection />} />
                 <Route path="caminhos" element={<SettingsCaminhosSection />} />
-                <Route path="workflows" element={<SettingsPage />} />
+                <Route path="workflows" element={<SettingsWorkflowsSection />} />
                 <Route path="config" element={<SettingsConfigSection />} />
               </Route>
               <Route path="*" element={<NotFoundPage />} />
