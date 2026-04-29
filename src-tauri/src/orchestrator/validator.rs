@@ -118,8 +118,7 @@ fn parse_i32(raw: &str) -> Result<i32, String> {
 fn unquote(s: &str) -> &str {
     let s = s.trim();
     if s.len() >= 2
-        && ((s.starts_with('"') && s.ends_with('"'))
-            || (s.starts_with('\'') && s.ends_with('\'')))
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
     {
         &s[1..s.len() - 1]
     } else {
@@ -171,9 +170,7 @@ fn eval(expr: &Expr, out: &ChannelOutput) -> bool {
     match expr {
         Expr::ExitCodeEq(n) => out.exit_code == Some(*n),
         Expr::ExitCodeNe(n) => out.exit_code != Some(*n),
-        Expr::OutputContains(needle) => {
-            out.stdout.contains(needle) || out.stderr.contains(needle)
-        }
+        Expr::OutputContains(needle) => out.stdout.contains(needle) || out.stderr.contains(needle),
         Expr::OutputNotContains(needle) => {
             !out.stdout.contains(needle) && !out.stderr.contains(needle)
         }
@@ -207,8 +204,14 @@ mod tests {
     #[test]
     fn none_or_empty_expression_succeeds() {
         assert!(matches!(validate(None, &ok_output()), StepResult::Success));
-        assert!(matches!(validate(Some(""), &ok_output()), StepResult::Success));
-        assert!(matches!(validate(Some("   "), &ok_output()), StepResult::Success));
+        assert!(matches!(
+            validate(Some(""), &ok_output()),
+            StepResult::Success
+        ));
+        assert!(matches!(
+            validate(Some("   "), &ok_output()),
+            StepResult::Success
+        ));
     }
 
     #[test]
@@ -258,7 +261,10 @@ mod tests {
     #[test]
     fn and_requires_both() {
         let expr = r#"exit_code == 0 and output contains "hello""#;
-        assert!(matches!(validate(Some(expr), &ok_output()), StepResult::Success));
+        assert!(matches!(
+            validate(Some(expr), &ok_output()),
+            StepResult::Success
+        ));
         assert!(matches!(
             validate(Some(expr), &fail_output()),
             StepResult::Failed(_)
@@ -268,7 +274,10 @@ mod tests {
     #[test]
     fn or_requires_either() {
         let expr = r#"exit_code == 42 or output contains "hello""#;
-        assert!(matches!(validate(Some(expr), &ok_output()), StepResult::Success));
+        assert!(matches!(
+            validate(Some(expr), &ok_output()),
+            StepResult::Success
+        ));
         let expr2 = r#"exit_code == 42 or output contains "unicorn""#;
         assert!(matches!(
             validate(Some(expr2), &ok_output()),
@@ -280,7 +289,10 @@ mod tests {
     fn and_binds_tighter_than_or() {
         // a or b and c === a or (b and c)
         let expr = r#"exit_code == 42 or exit_code == 0 and output contains "hello""#;
-        assert!(matches!(validate(Some(expr), &ok_output()), StepResult::Success));
+        assert!(matches!(
+            validate(Some(expr), &ok_output()),
+            StepResult::Success
+        ));
     }
 
     #[test]

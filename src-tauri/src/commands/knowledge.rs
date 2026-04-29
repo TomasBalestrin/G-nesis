@@ -64,18 +64,14 @@ fn validate_filename(filename: &str) -> Result<(), String> {
 /// regenerate the singleton summary. Best-effort — failures bubble up so
 /// the caller can decide whether to surface or swallow. Empty corpus
 /// drops the summary row instead of asking GPT to summarise nothing.
-async fn regenerate_summary_inner(
-    pool: &SqlitePool,
-) -> Result<Option<KnowledgeSummary>, String> {
+async fn regenerate_summary_inner(pool: &SqlitePool) -> Result<Option<KnowledgeSummary>, String> {
     let contents = queries::get_all_knowledge_contents(pool).await?;
     if contents.is_empty() {
         queries::delete_knowledge_summary(pool).await?;
         return Ok(None);
     }
 
-    let mut concatenated = String::with_capacity(
-        contents.iter().map(|(_, c)| c.len() + 64).sum(),
-    );
+    let mut concatenated = String::with_capacity(contents.iter().map(|(_, c)| c.len() + 64).sum());
     for (filename, content) in &contents {
         concatenated.push_str("=== ");
         concatenated.push_str(filename);
@@ -134,10 +130,7 @@ pub async fn list_knowledge_files(
 /// drops the summary row so the chat surface stops injecting stale
 /// context into the system prompt.
 #[tauri::command]
-pub async fn delete_knowledge_file(
-    id: String,
-    pool: State<'_, SqlitePool>,
-) -> Result<(), String> {
+pub async fn delete_knowledge_file(id: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     queries::delete_knowledge_file(&pool, &id).await?;
 
     if let Err(err) = regenerate_summary_inner(&pool).await {

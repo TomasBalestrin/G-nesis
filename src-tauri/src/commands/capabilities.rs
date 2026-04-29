@@ -17,9 +17,7 @@ use crate::db::queries;
 /// All enabled capabilities, ordered by type then name. Used by the chat
 /// `@`-picker to render the full menu in one call.
 #[tauri::command]
-pub async fn list_capabilities(
-    pool: State<'_, SqlitePool>,
-) -> Result<Vec<Capability>, String> {
+pub async fn list_capabilities(pool: State<'_, SqlitePool>) -> Result<Vec<Capability>, String> {
     queries::list_capabilities(&pool).await
 }
 

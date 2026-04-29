@@ -168,10 +168,7 @@ fn channel_for(tool: &str) -> Option<Box<dyn Channel>> {
 ///
 /// `None` only when neither path resolves — caller surfaces a
 /// "tool desconhecido" failure.
-async fn resolve_channel_for_step(
-    pool: &SqlitePool,
-    tool: &str,
-) -> Option<Box<dyn Channel>> {
+async fn resolve_channel_for_step(pool: &SqlitePool, tool: &str) -> Option<Box<dyn Channel>> {
     if let Ok(Some(cap)) = queries::get_capability_by_name(pool, tool).await {
         if cap.enabled == 1 {
             if let Some(channel_name) = cap.channel.as_deref() {
@@ -252,12 +249,21 @@ impl Executor {
         execution_id: String,
         cwd: Option<String>,
     ) -> Self {
-        Self { app, pool, handle, execution_id, cwd }
+        Self {
+            app,
+            pool,
+            handle,
+            execution_id,
+            cwd,
+        }
     }
 
     pub async fn run(&self, skill: ParsedSkill, mut ctx: ResolveContext) -> ExecutionState {
         if skill.step_loop.is_some() {
-            self.log("", "aviso: step_loop ainda não implementado — steps rodam uma vez".into());
+            self.log(
+                "",
+                "aviso: step_loop ainda não implementado — steps rodam uma vez".into(),
+            );
         }
 
         for (order, step) in skill.steps.iter().enumerate() {
@@ -360,7 +366,11 @@ impl Executor {
 
         let resolved = match variable_resolver::resolve(&raw_payload, ctx) {
             Ok(s) => s,
-            Err(e) => return self.fail_step(&row_id, &step.id, e.to_string(), retry_count).await,
+            Err(e) => {
+                return self
+                    .fail_step(&row_id, &step.id, e.to_string(), retry_count)
+                    .await
+            }
         };
 
         let Some(channel) = resolve_channel_for_step(&self.pool, &step.tool).await else {
@@ -372,8 +382,7 @@ impl Executor {
         // resolved command text. Falls back to the executor's
         // project-level cwd when nothing resolves — preserves v1
         // behavior where the active project anchors every step.
-        let step_cwd =
-            resolve_cwd_for_step(&self.pool, &resolved, self.cwd.clone()).await;
+        let step_cwd = resolve_cwd_for_step(&self.pool, &resolved, self.cwd.clone()).await;
 
         let input = ChannelInput {
             command: resolved,
@@ -388,7 +397,11 @@ impl Executor {
 
         let output = match channel.execute(input).await {
             Ok(o) => o,
-            Err(e) => return self.fail_step(&row_id, &step.id, e.to_string(), retry_count).await,
+            Err(e) => {
+                return self
+                    .fail_step(&row_id, &step.id, e.to_string(), retry_count)
+                    .await
+            }
         };
 
         for line in output.stdout.lines() {
@@ -455,14 +468,8 @@ impl Executor {
         } else {
             reason.clone()
         };
-        let _ = queries::update_step_status(
-            &self.pool,
-            row_id,
-            "failed",
-            None,
-            Some(&reason),
-        )
-        .await;
+        let _ =
+            queries::update_step_status(&self.pool, row_id, "failed", None, Some(&reason)).await;
         self.emit(
             "execution:step_failed",
             &StepFailedPayload {

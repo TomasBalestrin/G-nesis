@@ -587,7 +587,6 @@ pub fn compose_system_prompt() -> String {
         .join("\n\n")
 }
 
-
 pub const SKILL_SELECTION_PROMPT: &str = r#"A partir da mensagem do usuário, escolha qual skill melhor se aplica.
 Retorne APENAS JSON neste formato, sem texto adicional:
 {"skill": "nome-exato-ou-null", "confidence": 0.0, "reason": "explicação curta"}

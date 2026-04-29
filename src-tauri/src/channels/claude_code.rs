@@ -23,9 +23,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::channels::bash::child_env_overrides;
-use crate::channels::{
-    Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS,
-};
+use crate::channels::{Channel, ChannelError, ChannelInput, ChannelOutput, DEFAULT_TIMEOUT_SECS};
 use crate::config;
 
 const ALLOWED_TOOLS: &str = "Bash,Read,Edit";
@@ -109,9 +107,8 @@ impl ClaudeCodeChannel {
         }
         let mut prompt = String::with_capacity(input.command.len() + 128);
         prompt.push_str("# Arquivos de contexto\n");
-        prompt.push_str(
-            "Use o tool Read para consultar os arquivos abaixo conforme necessário:\n\n",
-        );
+        prompt
+            .push_str("Use o tool Read para consultar os arquivos abaixo conforme necessário:\n\n");
         for path in &input.context_files {
             prompt.push_str("- ");
             prompt.push_str(path);
@@ -172,16 +169,12 @@ impl Channel for ClaudeCodeChannel {
         })?;
 
         let timeout_secs = input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
-        let output = match timeout(
-            Duration::from_secs(timeout_secs),
-            child.wait_with_output(),
-        )
-        .await
-        {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => return Err(ChannelError::Io(e.to_string())),
-            Err(_elapsed) => return Err(ChannelError::Timeout),
-        };
+        let output =
+            match timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
+                Ok(Ok(out)) => out,
+                Ok(Err(e)) => return Err(ChannelError::Io(e.to_string())),
+                Err(_elapsed) => return Err(ChannelError::Timeout),
+            };
 
         let stdout_raw = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -215,17 +208,17 @@ mod tests {
             command: "Explique o projeto".into(),
             ..Default::default()
         };
-        assert_eq!(ClaudeCodeChannel::build_prompt(&input), "Explique o projeto");
+        assert_eq!(
+            ClaudeCodeChannel::build_prompt(&input),
+            "Explique o projeto"
+        );
     }
 
     #[test]
     fn build_prompt_prepends_context_block() {
         let input = ChannelInput {
             command: "Refatore o parser".into(),
-            context_files: vec![
-                "src/main.rs".into(),
-                "docs/PRD.md".into(),
-            ],
+            context_files: vec!["src/main.rs".into(), "docs/PRD.md".into()],
             ..Default::default()
         };
         let prompt = ClaudeCodeChannel::build_prompt(&input);

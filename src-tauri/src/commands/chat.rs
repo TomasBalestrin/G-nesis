@@ -114,7 +114,10 @@ fn ai_client_for_model(model: &ModelConfig) -> Result<AiClient, String> {
 /// Resolve the user's currently-picked model from `app_state`. Falls back to
 /// the static default if the row is missing or carries an unknown id.
 async fn active_model(pool: &sqlx::SqlitePool) -> &'static ModelConfig {
-    let row = queries::get_state(pool, ACTIVE_MODEL_KEY).await.ok().flatten();
+    let row = queries::get_state(pool, ACTIVE_MODEL_KEY)
+        .await
+        .ok()
+        .flatten();
     let id = row.map(|s| s.value).unwrap_or_default();
     models::resolve_model(&id)
 }
@@ -191,10 +194,7 @@ pub fn extract_hash_mentions(content: &str) -> Vec<String> {
 /// rows that don't exist or are disabled (`enabled = 0`) — the model
 /// shouldn't see docs for capabilities the user can't actually
 /// invoke. Returns `(name, doc_ai)` pairs in mention order.
-async fn resolve_at_mentions(
-    pool: &SqlitePool,
-    names: &[String],
-) -> Vec<(String, String)> {
+async fn resolve_at_mentions(pool: &SqlitePool, names: &[String]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::with_capacity(names.len());
     for name in names {
         match queries::get_capability_by_name(pool, name).await {
@@ -212,10 +212,7 @@ async fn resolve_at_mentions(
 /// for the typical handful of projects a user keeps. Returns
 /// `(name, repo_path)` pairs in mention order; unknown names drop
 /// silently so the model doesn't get confused by half-resolved data.
-async fn resolve_hash_mentions(
-    pool: &SqlitePool,
-    names: &[String],
-) -> Vec<(String, String)> {
+async fn resolve_hash_mentions(pool: &SqlitePool, names: &[String]) -> Vec<(String, String)> {
     if names.is_empty() {
         return Vec::new();
     }
@@ -294,8 +291,12 @@ fn skill_md_path(name: &str) -> Result<PathBuf, String> {
 /// Broken files are skipped with a stderr warning — one bad file should
 /// not hide the rest.
 fn load_skill_catalog() -> Vec<SkillMeta> {
-    let Ok(dir) = skills_dir() else { return Vec::new() };
-    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(dir) = skills_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
 
     let mut metas: Vec<SkillMeta> = Vec::new();
     for entry in entries.flatten() {
@@ -427,18 +428,14 @@ fn render_confirmation(skill: &ParsedSkill) -> String {
         }
     }
 
-    msg.push_str(
-        "\n---\n\nSelecione um projeto e use o botão **Executar** para iniciar.",
-    );
+    msg.push_str("\n---\n\nSelecione um projeto e use o botão **Executar** para iniciar.");
     msg
 }
 
 fn render_not_found(name: &str, catalog: &[SkillMeta]) -> String {
     let mut msg = format!("Skill `{name}` não encontrada.\n\n");
     if catalog.is_empty() {
-        msg.push_str(
-            "Nenhuma skill no `skills_dir`. Crie a primeira em **Skills → Nova Skill**.",
-        );
+        msg.push_str("Nenhuma skill no `skills_dir`. Crie a primeira em **Skills → Nova Skill**.");
     } else {
         msg.push_str("## Skills disponíveis\n\n");
         for skill in catalog {
@@ -545,11 +542,17 @@ async fn collect_system_state(pool: &SqlitePool, skills: &[SkillMeta]) -> String
         None => lines.push("Execução ativa: nenhuma".to_string()),
     }
 
-    let last = queries::get_last_finished_execution(pool).await.ok().flatten();
+    let last = queries::get_last_finished_execution(pool)
+        .await
+        .ok()
+        .flatten();
     lines.push(match last {
         Some(exec) => {
             let when = exec.finished_at.as_deref().unwrap_or("?");
-            format!("Última execução: {} — {} ({})", exec.skill_name, exec.status, when)
+            format!(
+                "Última execução: {} — {} ({})",
+                exec.skill_name, exec.status, when
+            )
         }
         None => "Última execução: nenhuma".to_string(),
     });
@@ -910,10 +913,7 @@ fn dispatch_list_files(raw: &str) -> String {
     }
 }
 
-async fn dispatch_abort_execution(
-    pool: &SqlitePool,
-    registry: &ExecutionRegistry,
-) -> String {
+async fn dispatch_abort_execution(pool: &SqlitePool, registry: &ExecutionRegistry) -> String {
     let running = match queries::get_running_execution(pool).await {
         Ok(Some(e)) => e,
         Ok(None) => return "Nenhuma execução em andamento.".to_string(),
@@ -1042,8 +1042,7 @@ pub async fn send_chat_message(
             let hash_names = extract_hash_mentions(&content);
             let resolved_caps = resolve_at_mentions(&pool, &at_names).await;
             let resolved_caminhos = resolve_hash_mentions(&pool, &hash_names).await;
-            let mentions_block =
-                format_mentions_block(&resolved_caps, &resolved_caminhos);
+            let mentions_block = format_mentions_block(&resolved_caps, &resolved_caminhos);
             if !mentions_block.is_empty() {
                 system_prompt.push_str("\n\n");
                 system_prompt.push_str(&mentions_block);
@@ -1116,8 +1115,7 @@ pub async fn send_chat_message(
                     }
                     if final_content.is_empty() {
                         final_content =
-                            "Limite de iterações de tools atingido sem resposta final."
-                                .to_string();
+                            "Limite de iterações de tools atingido sem resposta final.".to_string();
                     }
                     (final_content, None, None)
                 }
@@ -1172,7 +1170,9 @@ fn should_auto_title(pre: Option<&Conversation>) -> bool {
 /// failure — the user can always rename manually via the sidebar.
 async fn maybe_autotitle(pool: &SqlitePool, conversation_id: &str, first_message: &str) {
     let model = active_model(pool).await;
-    let Ok(client) = ai_client_for_model(model) else { return };
+    let Ok(client) = ai_client_for_model(model) else {
+        return;
+    };
 
     let prompt = format!(
         "Gere um título curto (máximo {TITLE_GEN_MAX_CHARS} caracteres, em português, \
@@ -1387,10 +1387,7 @@ pub struct SkillFolderFile {
 /// inside the skills_dir tree. Path traversal + separator chars
 /// rejected at the boundary.
 fn is_safe_skill_path_component(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.contains("..")
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && !name.contains("..")
 }
 
 /// Persists a v2 skill folder under `skills_dir`:
@@ -1426,17 +1423,20 @@ pub async fn save_skill_folder(
     let skills_root = PathBuf::from(cfg.skills_dir);
     let skill_folder = skills_root.join(&skill_name);
 
-    fs::create_dir_all(&skill_folder).map_err(|e| {
-        format!("falha ao criar pasta {}: {e}", skill_folder.display())
-    })?;
+    fs::create_dir_all(&skill_folder)
+        .map_err(|e| format!("falha ao criar pasta {}: {e}", skill_folder.display()))?;
 
     let skill_md_path = skill_folder.join("SKILL.md");
-    fs::write(&skill_md_path, &skill_md).map_err(|e| {
-        format!("falha ao gravar {}: {e}", skill_md_path.display())
-    })?;
+    fs::write(&skill_md_path, &skill_md)
+        .map_err(|e| format!("falha ao gravar {}: {e}", skill_md_path.display()))?;
 
     write_skill_subdir(&skill_folder, "scripts", scripts.unwrap_or_default(), true)?;
-    write_skill_subdir(&skill_folder, "references", references.unwrap_or_default(), false)?;
+    write_skill_subdir(
+        &skill_folder,
+        "references",
+        references.unwrap_or_default(),
+        false,
+    )?;
     write_skill_subdir(&skill_folder, "assets", assets.unwrap_or_default(), false)?;
 
     Ok(())
@@ -1460,12 +1460,14 @@ fn write_skill_subdir(
         return Ok(());
     }
     let dir = skill_folder.join(subdir);
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
 
     for file in files {
         if !is_safe_skill_path_component(&file.name) {
-            return Err(format!("nome de arquivo inválido em {subdir}/: `{}`", file.name));
+            return Err(format!(
+                "nome de arquivo inválido em {subdir}/: `{}`",
+                file.name
+            ));
         }
         let path = dir.join(&file.name);
         fs::write(&path, &file.content)
@@ -1491,7 +1493,10 @@ mod tests {
 
     #[test]
     fn extract_slash_command_basic() {
-        assert_eq!(extract_slash_command("/criar-sistema"), Some("criar-sistema"));
+        assert_eq!(
+            extract_slash_command("/criar-sistema"),
+            Some("criar-sistema")
+        );
         assert_eq!(
             extract_slash_command("  /criar-sistema com argumentos"),
             Some("criar-sistema"),
@@ -1589,7 +1594,10 @@ mod tests {
             vec!["terminal".to_string(), "code".to_string()],
         );
         // Embedded @ (e.g. email) must NOT match.
-        assert_eq!(extract_at_mentions("contato@empresa.com"), Vec::<String>::new());
+        assert_eq!(
+            extract_at_mentions("contato@empresa.com"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

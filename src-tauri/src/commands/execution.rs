@@ -50,10 +50,7 @@ fn read_skill_content(name: &str) -> Result<String, String> {
 /// persisted `app_state.active_project_id`. Returns a clear error when
 /// neither path yields a usable id — the orchestrator can't run a skill
 /// without a working directory.
-async fn resolve_project_id(
-    pool: &SqlitePool,
-    explicit: Option<String>,
-) -> Result<String, String> {
+async fn resolve_project_id(pool: &SqlitePool, explicit: Option<String>) -> Result<String, String> {
     if let Some(id) = explicit.filter(|s| !s.is_empty()) {
         return Ok(id);
     }
@@ -106,7 +103,9 @@ pub async fn execute_skill(
     queries::insert_execution(&pool, &execution).await?;
 
     let handle = ExecutionHandle::new();
-    registry.register(execution_id.clone(), handle.clone()).await;
+    registry
+        .register(execution_id.clone(), handle.clone())
+        .await;
 
     let pool_owned = pool.inner().clone();
     let registry_owned = registry.inner().clone(); // State<_> derefs to the inner; Arc/managed

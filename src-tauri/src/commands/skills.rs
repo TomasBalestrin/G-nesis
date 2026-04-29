@@ -58,15 +58,9 @@ pub async fn list_skills() -> Result<Vec<SkillMeta>, String> {
         match fs::read_to_string(path) {
             Ok(content) => match skill_parser::parse_skill(&content) {
                 Ok(skill) => metas.push(skill.meta),
-                Err(err) => eprintln!(
-                    "[skills] pulando {} ao listar: {err}",
-                    path.display()
-                ),
+                Err(err) => eprintln!("[skills] pulando {} ao listar: {err}", path.display()),
             },
-            Err(err) => eprintln!(
-                "[skills] falha ao ler {}: {err}",
-                path.display()
-            ),
+            Err(err) => eprintln!("[skills] falha ao ler {}: {err}", path.display()),
         }
     }
 
@@ -78,8 +72,7 @@ pub async fn list_skills() -> Result<Vec<SkillMeta>, String> {
 pub async fn read_skill(name: String) -> Result<String, String> {
     let dir = skills_dir()?;
     let path = skill_path(&dir, &name)?;
-    fs::read_to_string(&path)
-        .map_err(|e| format!("falha ao ler skill `{name}`: {e}"))
+    fs::read_to_string(&path).map_err(|e| format!("falha ao ler skill `{name}`: {e}"))
 }
 
 #[tauri::command]
@@ -89,23 +82,17 @@ pub async fn save_skill(name: String, content: String) -> Result<(), String> {
 
     // Reject invalid skills at the boundary (PRD §F3): parser fails fast if
     // frontmatter or any step is malformed.
-    skill_parser::parse_skill(&content)
-        .map_err(|e| format!("skill inválida: {e}"))?;
+    skill_parser::parse_skill(&content).map_err(|e| format!("skill inválida: {e}"))?;
 
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
-    fs::write(&path, content)
-        .map_err(|e| format!("falha ao salvar skill `{name}`: {e}"))
+    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
+    fs::write(&path, content).map_err(|e| format!("falha ao salvar skill `{name}`: {e}"))
 }
 
 /// Delete the .md file backing a skill. Refuses to proceed when at least one
 /// execution of the same skill is still pending/running/paused — keeps the
 /// `.md` available to the executor's retry/log path until the job settles.
 #[tauri::command]
-pub async fn delete_skill(
-    name: String,
-    pool: State<'_, SqlitePool>,
-) -> Result<(), String> {
+pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     let dir = skills_dir()?;
     let path = skill_path(&dir, &name)?;
 
@@ -128,8 +115,8 @@ pub async fn delete_skill(
 pub async fn parse_skill(name: String) -> Result<ParsedSkill, String> {
     let dir = skills_dir()?;
     let path = skill_path(&dir, &name)?;
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("falha ao ler skill `{name}`: {e}"))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("falha ao ler skill `{name}`: {e}"))?;
     skill_parser::parse_skill(&content)
 }
 

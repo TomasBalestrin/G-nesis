@@ -81,11 +81,17 @@ fn default_skills_dir() -> String {
 }
 
 fn default_workflows_dir() -> String {
-    config_dir().join("workflows").to_string_lossy().into_owned()
+    config_dir()
+        .join("workflows")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn default_db_path() -> String {
-    config_dir().join("genesis.db").to_string_lossy().into_owned()
+    config_dir()
+        .join("genesis.db")
+        .to_string_lossy()
+        .into_owned()
 }
 
 // ── load / save ─────────────────────────────────────────────────────────────
@@ -157,8 +163,7 @@ pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result
 
 fn read_config_file(path: &Path) -> Result<Config, String> {
     match fs::read_to_string(path) {
-        Ok(s) => toml::from_str(&s)
-            .map_err(|e| format!("invalid {}: {e}", path.display())),
+        Ok(s) => toml::from_str(&s).map_err(|e| format!("invalid {}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
         Err(e) => Err(format!("cannot read {}: {e}", path.display())),
     }
@@ -202,6 +207,5 @@ fn apply_env_overrides(cfg: &mut Config) {
 }
 
 fn ensure_dir(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path)
-        .map_err(|e| format!("cannot create {}: {e}", path.display()))
+    fs::create_dir_all(path).map_err(|e| format!("cannot create {}: {e}", path.display()))
 }

@@ -129,11 +129,7 @@ impl WorkflowExecutor {
         }
     }
 
-    pub async fn run(
-        &self,
-        workflow: ParsedWorkflow,
-        seed_ctx: ResolveContext,
-    ) -> ExecutionState {
+    pub async fn run(&self, workflow: ParsedWorkflow, seed_ctx: ResolveContext) -> ExecutionState {
         let mut last_status: Option<StepOutcome> = None;
 
         for step in &workflow.steps {
@@ -201,7 +197,10 @@ impl WorkflowExecutor {
             // routing key stays NULL.
             conversation_id: None,
         };
-        if queries::insert_execution(&self.pool, &exec_row).await.is_err() {
+        if queries::insert_execution(&self.pool, &exec_row)
+            .await
+            .is_err()
+        {
             return self.emit_completed(step, StepOutcome::Failed, &skill_execution_id);
         }
 
@@ -379,7 +378,10 @@ mod tests {
     fn unknown_condition_is_permissive() {
         // Future grammar — for now, fall through to "run". Better than
         // silently skipping the step the user wanted.
-        assert!(should_run(Some("output contains foo"), Some(StepOutcome::Success)));
+        assert!(should_run(
+            Some("output contains foo"),
+            Some(StepOutcome::Success)
+        ));
     }
 
     #[test]

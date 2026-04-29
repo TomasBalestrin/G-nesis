@@ -155,8 +155,7 @@ pub fn parse_skill(content: &str) -> Result<ParsedSkill, String> {
     // v2 detection: explicit version 2.x in frontmatter OR body contains a
     // ## Etapa heading. Both formats can coexist (v2 may include a # Tools
     // section for clarity), so we allow per-section dispatch below.
-    let is_v2 = skill.meta.version.starts_with("2.")
-        || body.lines().any(is_v2_etapa_heading);
+    let is_v2 = skill.meta.version.starts_with("2.") || body.lines().any(is_v2_etapa_heading);
 
     let v1_top_sections = split_sections(body, 1);
 
@@ -213,10 +212,7 @@ fn is_v2_etapa_heading(line: &str) -> bool {
 
 fn etapa_id(heading: &str, fallback_idx: usize) -> String {
     let lower = heading.to_lowercase();
-    let after = lower
-        .strip_prefix("etapa ")
-        .unwrap_or(&lower)
-        .trim();
+    let after = lower.strip_prefix("etapa ").unwrap_or(&lower).trim();
     let n: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
     if n.is_empty() {
         format!("step_{}", fallback_idx + 1)
@@ -733,7 +729,10 @@ retries: 3
         let skill = parse_skill(SAMPLE).expect("parse");
 
         assert_eq!(skill.meta.name, "criar-sistema");
-        assert_eq!(skill.meta.description, "Cria um sistema novo a partir de briefing");
+        assert_eq!(
+            skill.meta.description,
+            "Cria um sistema novo a partir de briefing"
+        );
         assert_eq!(skill.meta.version, "1.0.0");
         assert_eq!(skill.meta.author, "Bethel");
 
@@ -968,7 +967,10 @@ Objetivo: faltou o canal
 Ação: echo hi
 "#;
         let err = parse_skill(content).expect_err("missing canal");
-        assert!(err.to_lowercase().contains("canal"), "unexpected err: {err}");
+        assert!(
+            err.to_lowercase().contains("canal"),
+            "unexpected err: {err}"
+        );
     }
 
     #[test]

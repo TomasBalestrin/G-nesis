@@ -176,11 +176,7 @@ pub fn list_skill_entries(skills_dir: &Path) -> Vec<SkillEntry> {
 /// Path traversal é bloqueado no boundary — `name` não pode conter
 /// `/`, `\` ou `..`.
 pub fn load_skill_folder(skills_dir: &Path, name: &str) -> Result<SkillFolder, String> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-    {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(format!("nome de skill inválido: `{name}`"));
     }
 
@@ -278,7 +274,10 @@ command: echo hi\n";
         assert_eq!(entry.name, "legendar-videos");
         match entry.source {
             SkillSource::Folder {
-                references, scripts, assets, ..
+                references,
+                scripts,
+                assets,
+                ..
             } => {
                 assert!(references.is_some());
                 assert!(scripts.is_some());
@@ -312,7 +311,11 @@ command: echo hi\n";
         fs::write(folder.join("SKILL.md"), SAMPLE_V1).unwrap();
 
         let entries = list_skill_entries(&dir);
-        assert_eq!(entries.len(), 1, "duplicate name should resolve to one entry");
+        assert_eq!(
+            entries.len(),
+            1,
+            "duplicate name should resolve to one entry"
+        );
         match &entries[0].source {
             SkillSource::Folder { .. } => {}
             _ => panic!("v2 folder should win over v1 file"),

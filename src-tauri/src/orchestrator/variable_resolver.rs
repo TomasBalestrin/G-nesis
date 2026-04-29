@@ -249,11 +249,8 @@ mod tests {
 
     #[test]
     fn with_project_seeds_repo_path_and_name_and_id() {
-        let c = ResolveContext::new().with_project(
-            "/Users/me/repos/genesis",
-            "Genesis",
-            "0000-uuid",
-        );
+        let c =
+            ResolveContext::new().with_project("/Users/me/repos/genesis", "Genesis", "0000-uuid");
 
         assert_eq!(
             resolve(
@@ -264,9 +261,6 @@ mod tests {
             "cd /Users/me/repos/genesis && echo Genesis (0000-uuid)",
         );
         // Explicit namespace also works.
-        assert_eq!(
-            resolve("{{inputs.project_name}}", &c).unwrap(),
-            "Genesis",
-        );
+        assert_eq!(resolve("{{inputs.project_name}}", &c).unwrap(), "Genesis",);
     }
 }

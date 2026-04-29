@@ -25,12 +25,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let cfg = config::load_config()
-                .map_err(|e| format!("failed to load config: {e}"))?;
+            let cfg = config::load_config().map_err(|e| format!("failed to load config: {e}"))?;
             if cfg.needs_setup {
-                eprintln!(
-                    "[genesis] OPENAI_API_KEY not set — frontend should show setup screen"
-                );
+                eprintln!("[genesis] OPENAI_API_KEY not set — frontend should show setup screen");
             }
             app.manage(cfg);
 
