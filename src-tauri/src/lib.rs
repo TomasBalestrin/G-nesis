@@ -6,6 +6,7 @@ pub mod channels;
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod integrations;
 pub mod orchestrator;
 
 use channels::terminal::TerminalRegistry;
