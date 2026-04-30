@@ -139,7 +139,7 @@ Sistema visual usado em todas as superfícies do app. Estética minimalista de l
 
 **Fontes de verdade**:
 - `DESIGN.md` — tokens (cores, tipografia, radii, spacing, motion). **Source-of-truth**.
-- `design-system.html` — referência visual renderizável (abrir no browser pra ver os componentes em vivo).
+- `design system.html` — referência visual renderizável (abrir no browser pra ver os componentes em vivo).
 
 **Regra obrigatória**: ANTES de criar ou editar qualquer componente visual (TSX, Tailwind class, CSS), **leia `DESIGN.md`**. Se um token não cobre o caso, abrir issue/discussão antes de inventar — nunca fazer one-off.
 
@@ -177,7 +177,7 @@ Se um componente precisa fugir das constraints (ex: feedback toast com cor crít
 ## Docs Disponíveis
 
 - `DESIGN.md` — tokens do Elite Premium (cores, tipografia, radii, motion). **Ler antes de mexer em UI.**
-- `design-system.html` — referência visual renderizável (abre no browser pra inspecionar componentes em vivo)
+- `design system.html` — referência visual renderizável (abre no browser pra inspecionar componentes em vivo)
 - `docs/PRD.md` — features, modelo de dados, comandos Tauri, integrações
 - `docs/architecture.md` — diretórios, comunicação WebView↔Rust, patterns
 - `docs/ux-flows.md` — rotas, navegação, fluxos
