@@ -15,10 +15,30 @@ use std::fmt;
 use std::time::Duration;
 
 use reqwest::{Client, RequestBuilder, StatusCode};
+use serde::Serialize;
 use serde_json::Value;
 
 const USER_AGENT: &str = "Genesis/1.0";
 const DEFAULT_TIMEOUT_SECS: u64 = 15;
+
+/// Outcome of a server reachability probe. Four orthogonal states
+/// frontend uses to drive the test-connection UX:
+///   - `Connected`         → 2xx, server up and key looks valid.
+///   - `AuthFailed`        → 401/403, server up but key rejected.
+///   - `ServerReachable`   → any other HTTP response (404, 5xx, etc).
+///                           Server is up but the route may be wrong;
+///                           caller can still proceed.
+///   - `Unreachable`       → no HTTP response at all (DNS, connect,
+///                           timeout). Retried once internally before
+///                           reporting (`is_transient`).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthStatus {
+    Connected,
+    AuthFailed,
+    ServerReachable,
+    Unreachable,
+}
 
 /// Runtime auth payload. Mirrors `integrations::config::AuthType` but
 /// carries the resolved api_key alongside, so the client can be built
@@ -185,23 +205,26 @@ impl IntegrationClient {
         Err(map_status_err(status, body))
     }
 
-    /// Reachability probe — any HTTP response (incl. 4xx / 5xx) means
-    /// the server is up; only network / timeout failures surface as `Err`.
-    /// We deliberately do NOT inspect the status code: a bare GET on
-    /// the registered `base_url` is often 404 (root may not be a real
-    /// endpoint) or 401/403 (auth required to even enumerate the
-    /// surface). None of those indicate the server is unreachable —
-    /// they're "server up, your route/key needs attention", which is
-    /// out of scope for a connection probe. Path-validity and
-    /// auth-validity get checked the first time the user actually
-    /// invokes the integration via @-mention.
-    ///
-    /// Returns `Ok(true)` to keep the bool signature stable for the
-    /// existing IPC contract (`test_integration` flips between
-    /// success/failure based on this Result, not the bool value).
-    pub async fn health_check(&self) -> Result<bool, IntegrationError> {
-        self.send_with_retry(&self.base_url, None).await?;
-        Ok(true)
+    /// Reachability + auth probe. Categorizes the outcome into four
+    /// states (see [`HealthStatus`] doc) so the frontend can render
+    /// distinct UX without inspecting raw status codes:
+    ///   - 2xx       → Connected.
+    ///   - 401 / 403 → AuthFailed (server reachable, key rejected).
+    ///   - other HTTP response → ServerReachable (root may be 404,
+    ///     5xx, etc; the server is up, the wizard can still advance).
+    ///   - send error (Network / Timeout, after one retry) → Unreachable.
+    pub async fn health_check(&self) -> HealthStatus {
+        match self.send_with_retry(&self.base_url, None).await {
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                match code {
+                    200..=299 => HealthStatus::Connected,
+                    401 | 403 => HealthStatus::AuthFailed,
+                    _ => HealthStatus::ServerReachable,
+                }
+            }
+            Err(_) => HealthStatus::Unreachable,
+        }
     }
 
     /// Internal: build + fire the request once, retry once on transient
