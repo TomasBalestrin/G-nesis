@@ -21,6 +21,7 @@
    self-contained (.btn, .btn-primary, etc são classes plain CSS,
    não Tailwind utilities). */
 @import '../components/ui/EliteButton.css';
+@import '../components/ui/EliteInput.css';
 
 @tailwind base;
 @tailwind components;
