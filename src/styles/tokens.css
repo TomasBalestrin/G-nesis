@@ -1,0 +1,99 @@
+/* Elite Premium tokens — Genesis OS, herança Bethel Educação.
+   Source-of-truth: ../../DESIGN.md (YAML frontmatter).
+   Visual reference: ../../design system.html.
+
+   Convenções:
+   - Dark mode é o default — :root usa os mesmos valores que
+     [data-theme="dark"] pra cobrir o caso onde nenhum atributo
+     foi setado ainda (boot, SSR-like fallback).
+   - Nomes curtos (--tx, --bg, --gd, --sf...) reduzem ruído nas
+     classes utility de Tailwind quando consumidos via class
+     `bg-[var(--sf)]`, `text-[var(--tx)]`, etc.
+   - Cores são chapadas — DESIGN.md proíbe gradientes, shadows
+     e glow. Accent é gold flat (#B59A5B em dark / #8C7640 em light).
+   - Ordem de import em globals.css coloca este arquivo APÓS o
+     design-system.css legado pra garantir que os tokens novos
+     ganhem em colisões de nome (--bg, --sf, etc).
+*/
+
+:root,
+[data-theme="dark"] {
+  --bg: #0A0A0E;
+  --sf: #0D1117;
+  --sf2: #141820;
+  --sf3: #1A1F28;
+  --tx: #E8E0D4;
+  --tx2: #999999;
+  --tx3: #5E564E;
+  --gd: #B59A5B;
+  --gd-l: #D4B97A;
+  --gd-d: #8C7640;
+  --gd-m: rgba(181, 154, 91, 0.12);
+  --gd-mh: rgba(181, 154, 91, 0.18);
+  --ol: #1E2228;
+  --ol2: #151920;
+  --ok: #5A9E72;
+  --ok-b: rgba(90, 158, 114, 0.1);
+  --wr: #C4A34E;
+  --wr-b: rgba(196, 163, 78, 0.1);
+  --er: #C4453A;
+  --er-b: rgba(196, 69, 58, 0.1);
+  --in: #6A9AB8;
+  --in-b: rgba(106, 154, 184, 0.1);
+  --code-bg: #08080C;
+  --code-bd: #151920;
+}
+
+[data-theme="light"] {
+  --bg: #FFFFFF;
+  --sf: #F7F7F5;
+  --sf2: #F0EFEC;
+  --sf3: #E8E7E3;
+  --tx: #1A1A1A;
+  --tx2: #555555;
+  --tx3: #A0A0A0;
+  --gd: #8C7640;
+  --gd-l: #B59A5B;
+  --gd-d: #6B5A31;
+  --gd-m: rgba(140, 118, 64, 0.08);
+  --gd-mh: rgba(140, 118, 64, 0.12);
+  --ol: #E5E5E2;
+  --ol2: #EDEDEA;
+  --ok: #2D8259;
+  --ok-b: rgba(45, 130, 89, 0.07);
+  --wr: #9E8550;
+  --wr-b: rgba(158, 133, 80, 0.07);
+  --er: #B83A32;
+  --er-b: rgba(184, 58, 50, 0.07);
+  --in: #4A7A9E;
+  --in-b: rgba(74, 122, 158, 0.07);
+  --code-bg: #F5F5F3;
+  --code-bd: #E5E5E2;
+}
+
+/* Tokens estruturais — não dependem de tema (mesmas escalas em
+   dark e light). Mantidos no `:root` global pra leitura natural. */
+:root {
+  /* Spacing scale — base 4px */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 12px;
+  --sp-lg: 16px;
+  --sp-2xl: 24px;
+  --sp-3xl: 32px;
+  --sp-4xl: 40px;
+
+  /* Radius — DESIGN.md §rounded (xl=20px é o padrão de inputs/cards) */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-full: 9999px;
+
+  /* Motion — DESIGN.md §motion (slow é extensão do design system,
+     pra transições de tema body que precisam de mais tempo
+     que micro-interactions) */
+  --motion-fast: 100ms ease;
+  --motion-normal: 180ms ease;
+  --motion-slow: 300ms ease;
+}

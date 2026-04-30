@@ -2,10 +2,16 @@
    (design.md §tipografia). Carregadas antes de tudo para o FOIT mínimo. */
 @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
-/* Design system: tokens semânticos + paleta + tema padrão (Azul Dark em
-   :root, Azul Light em [data-theme="light"]). Único arquivo CSS que define
-   cores. */
+/* Design system legado (Claude Blue) — mantido por enquanto pros
+   componentes que ainda usam --text/--accent. Será aposentado quando
+   a migração pra Elite Premium estiver completa em todas as
+   superfícies. */
 @import './design-system.css';
+
+/* Elite Premium tokens — DESIGN.md source-of-truth. Importado APÓS
+   o design-system.css pra ganhar em colisões de nome (--bg, --sf,
+   --tx, etc). Cobre dark + light + spacing + radius + motion. */
+@import './tokens.css';
 
 @tailwind base;
 @tailwind components;
@@ -31,8 +37,9 @@
 
   body {
     background: var(--bg);
-    color: var(--text);
+    color: var(--tx);
     line-height: var(--leading-normal);
+    transition: background 0.25s, color 0.25s;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
