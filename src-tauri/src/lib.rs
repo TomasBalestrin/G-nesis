@@ -12,7 +12,7 @@ pub mod orchestrator;
 use channels::terminal::TerminalRegistry;
 use commands::{
     app_state, caminhos, capabilities, chat, config as config_cmd, conversations, dependencies,
-    execution, knowledge, projects, skills, workflows,
+    execution, integrations as integrations_cmd, knowledge, projects, skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -78,6 +78,13 @@ pub fn run() {
             capabilities::list_capabilities,
             capabilities::get_capability,
             capabilities::list_capabilities_by_type,
+            // integrations (REST APIs invocadas via @<name>; api_key
+            // mora só no config.toml — nunca cruza o IPC boundary).
+            integrations_cmd::list_integrations,
+            integrations_cmd::add_integration,
+            integrations_cmd::update_integration,
+            integrations_cmd::remove_integration,
+            integrations_cmd::test_integration,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,
