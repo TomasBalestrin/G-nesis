@@ -295,8 +295,18 @@ where
             Err(err) if !err.is_retryable() => return Err(err),
             Err(err) if attempt + 1 == MAX_RETRIES => return Err(err),
             Err(err) => {
+                // 429: backoff flat de 3s — provedores tipicamente
+                // querem que o cliente segure por alguns segundos
+                // antes de tentar de novo, e exponencial agressivo
+                // (1s/2s/4s) já estourou o budget em rajadas curtas.
+                // Outros erros retryáveis (Network/Timeout/5xx)
+                // mantêm exponencial 1s/2s/4s — eles costumam
+                // resolver rápido se o problema for transiente.
+                let delay_ms = match err {
+                    AiError::RateLimited { .. } => 3000u64,
+                    _ => 1000u64 << attempt,
+                };
                 last_err = Some(err);
-                let delay_ms = 1000u64 << attempt; // 1s, 2s, 4s
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
         }
