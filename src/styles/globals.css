@@ -1,6 +1,8 @@
-/* Plus Jakarta Sans + JetBrains Mono — fontes do Claude Design System
-   (design.md §tipografia). Carregadas antes de tudo para o FOIT mínimo. */
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+/* Fontes Elite Premium bundled localmente (B2): Lora display, DM Sans
+   body, JetBrains Mono code. Vem ANTES de tudo pro FOIT mínimo. CDN
+   do Google Fonts foi aposentada — app é desktop (Tauri) e boot
+   offline-first. Ver src/assets/fonts/ pros .woff2. */
+@import './fonts.css';
 
 /* Design system legado (Claude Blue) — mantido por enquanto pros
    componentes que ainda usam --text/--accent. Será aposentado quando
@@ -19,9 +21,15 @@
 
 @layer base {
   html {
-    font-family: var(--font-sans);
+    /* DM Sans é o body default do Elite Premium (DESIGN.md §typography).
+       --font-sans existia no design-system.css legado pro Plus Jakarta;
+       Elite Premium override aqui sobrescreve. */
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
     font-size: var(--text-base);
     color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   html[data-theme="light"] {
@@ -40,8 +48,6 @@
     color: var(--tx);
     line-height: var(--leading-normal);
     transition: background 0.25s, color 0.25s;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
 
   h1,
@@ -50,7 +56,10 @@
   h4,
   h5,
   h6 {
-    font-family: var(--font-sans);
+    /* Headlines em Lora (DESIGN.md §typography: "Lora for headlines
+       only"). Componentes que precisam de sans em h-tags usam a
+       utility .font-body pra override. */
+    font-family: 'Lora', Georgia, serif;
     font-weight: var(--weight-semibold);
     color: var(--text);
   }
@@ -69,7 +78,8 @@
   pre,
   kbd,
   samp {
-    font-family: var(--font-mono);
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular,
+      Consolas, monospace;
   }
 
   /* Scrollbar slim 6px (design.css §13). */
@@ -98,4 +108,11 @@
   .animate-fade-in {
     animation: fade-in 150ms var(--ease-out, ease-out);
   }
+
+  /* Font-family overrides — preferir aqui em vez de inline style.
+     DESIGN.md restringe Lora a headlines mas há casos de uso (ex:
+     hero serif em onboarding) onde o componente precisa explicitar. */
+  .font-display { font-family: 'Lora', Georgia, serif; }
+  .font-body { font-family: 'DM Sans', system-ui, -apple-system, sans-serif; }
+  .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace; }
 }
