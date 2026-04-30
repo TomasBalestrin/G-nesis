@@ -173,6 +173,30 @@ pub struct KnowledgeSummary {
 /// — `type_` is the field, serde's `rename = "type"` keeps the JSON
 /// wire shape and the FromRow column lookup aligned with the
 /// `capabilities.type` column.
+/// Relational mirror of an `[integrations.<name>]` entry in
+/// ~/.genesis/config.toml. Stored separately so the picker / list views
+/// can run as fast SQL queries — but the **api_key never lands here**.
+/// Read keys via `integrations::get_api_key(name)` from the TOML.
+///
+/// `auth_type` holds only the discriminator (`'bearer' | 'header' |
+/// 'query'`); the full payload (header_name, param_name) lives TOML-side
+/// to avoid a schema migration every time the user renames a header.
+///
+/// `enabled` is `i64` because SQLite stores INTEGER as 64-bit; the
+/// CHECK constraint pins it to 0/1 at write time.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct IntegrationRow {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub base_url: String,
+    pub auth_type: String,
+    pub spec_file: String,
+    pub enabled: i64,
+    pub last_used_at: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Capability {
     pub id: String,
