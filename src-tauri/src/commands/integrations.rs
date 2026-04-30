@@ -205,8 +205,14 @@ pub async fn remove_integration(
     queries::delete_integration(&pool, &row.id).await?;
     integrations::remove_integration(&name)?;
     // Best-effort: spec file may not exist (caller skipped step 2 in
-    // the wizard, or row is from pre-A4 era with .yaml extension).
+    // the wizard). delete_spec só limpa <name>.md (convenção atual).
     let _ = integrations::delete_spec(&name);
+    // Orphan cleanup pra registros do era pré-wizard que gravavam
+    // <name>.yaml. Sem isso, recriar com mesmo nome via wizard
+    // gravaria <name>.md NOVO mas o .yaml ficaria gritando como
+    // segundo source-of-truth no diretório de specs.
+    let yaml_orphan = integrations::specs_dir().join(format!("{name}.yaml"));
+    let _ = std::fs::remove_file(&yaml_orphan);
     Ok(())
 }
 

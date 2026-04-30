@@ -88,13 +88,24 @@ pub async fn save_skill(name: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("falha ao salvar skill `{name}`: {e}"))
 }
 
-/// Delete the .md file backing a skill. Refuses to proceed when at least one
-/// execution of the same skill is still pending/running/paused — keeps the
-/// `.md` available to the executor's retry/log path until the job settles.
+/// Delete the on-disk artifact backing a skill — the `.md` for v1
+/// skills, the entire `<name>/` folder for v2 skills (so re-creating
+/// with the same name doesn't fight against an orphan
+/// `<name>/SKILL.md` left over).
+///
+/// Refuses to proceed when at least one execution of the same skill is
+/// still pending/running/paused — the executor's retry/log path may
+/// still reach for the file mid-run.
+///
+/// Idempotent on the v1 side: deleting a v1+v2 dual entry trims both
+/// representations in one call (rare but possible — `list_skill_entries`
+/// prefers folder over file when both exist, so the user might think
+/// they're deleting just one).
 #[tauri::command]
 pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     let dir = skills_dir()?;
-    let path = skill_path(&dir, &name)?;
+    let v1_path = skill_path(&dir, &name)?;
+    let v2_folder = dir.join(&name);
 
     let active = queries::count_active_by_skill_name(&pool, &name).await?;
     if active > 0 {
@@ -104,10 +115,21 @@ pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(
         ));
     }
 
-    if !path.exists() {
+    let mut removed_any = false;
+    if v1_path.exists() {
+        fs::remove_file(&v1_path)
+            .map_err(|e| format!("falha ao deletar skill `{name}` (v1): {e}"))?;
+        removed_any = true;
+    }
+    if v2_folder.is_dir() && v2_folder.join("SKILL.md").is_file() {
+        fs::remove_dir_all(&v2_folder)
+            .map_err(|e| format!("falha ao deletar skill `{name}` (v2): {e}"))?;
+        removed_any = true;
+    }
+
+    if !removed_any {
         return Err(format!("skill `{name}` não encontrada"));
     }
-    fs::remove_file(&path).map_err(|e| format!("falha ao deletar skill `{name}`: {e}"))?;
     Ok(())
 }
 
