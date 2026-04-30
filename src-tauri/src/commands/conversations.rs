@@ -47,6 +47,7 @@ pub async fn create_conversation(
         title: normalize_title(title),
         created_at: now.clone(),
         updated_at: now,
+        active_integration: None,
     };
     queries::insert_conversation(&pool, &conversation).await?;
     Ok(conversation)

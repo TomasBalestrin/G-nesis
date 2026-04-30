@@ -122,6 +122,12 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
         .await
         .map_err(|e| format!("migration 008 failed: {e}"))?;
 
+    // Inline ALTER: conversations.active_integration mantém a última
+    // integração @<name> que o usuário invocou nessa thread. Permite
+    // turnos seguintes herdarem o contexto sem precisar do prefixo
+    // @ a cada mensagem. Mesmo guard pattern dos outros ensure_*.
+    ensure_conversations_active_integration(pool).await?;
+
     Ok(())
 }
 
@@ -234,5 +240,31 @@ async fn ensure_executions_conversation_id(pool: &DbPool) -> Result<(), String> 
         .execute(pool)
         .await
         .map_err(|e| format!("failed to add executions.conversation_id: {e}"))?;
+    Ok(())
+}
+
+/// Adds `conversations.active_integration` (TEXT, nullable). Stores
+/// the @-integration handle that's currently "sticky" pra thread —
+/// turnos seguintes herdam o contexto sem precisar do `@<name>` no
+/// prompt do usuário. NULL = sem integração ativa.
+async fn ensure_conversations_active_integration(pool: &DbPool) -> Result<(), String> {
+    let rows = sqlx::query("SELECT name FROM pragma_table_info('conversations')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("pragma table_info failed: {e}"))?;
+
+    let has_column = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .any(|name| name == "active_integration");
+
+    if has_column {
+        return Ok(());
+    }
+
+    sqlx::query("ALTER TABLE conversations ADD COLUMN active_integration TEXT")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("failed to add conversations.active_integration: {e}"))?;
     Ok(())
 }

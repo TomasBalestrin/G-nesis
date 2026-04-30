@@ -111,6 +111,12 @@ pub struct Conversation {
     pub title: String,
     pub created_at: String,
     pub updated_at: String,
+    /// `@<name>` da última integration invocada nesta thread. Quando
+    /// `Some`, o chat injeta a spec mesmo sem o usuário re-prefixar
+    /// turnos seguintes — sticky até a thread ser arquivada/limpa.
+    /// NULL na criação; preenchido por send_chat_message.
+    #[serde(default)]
+    pub active_integration: Option<String>,
 }
 
 /// Generic single-row-per-key store for UI state that survives between

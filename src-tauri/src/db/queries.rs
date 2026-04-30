@@ -341,26 +341,45 @@ pub async fn insert_message(pool: &SqlitePool, message: &ChatMessage) -> Result<
 
 // ── conversations ───────────────────────────────────────────────────────────
 
+/// Single source of truth for the columns SELECTed into [`Conversation`].
+/// Inclui `active_integration` (sticky @-mention da thread) — drift
+/// quebra `FromRow` porque o derive rejeita rows sem o campo.
+const CONVERSATION_COLUMNS: &str = "id, title, created_at, updated_at, active_integration";
+
 pub async fn list_conversations(pool: &SqlitePool) -> Result<Vec<Conversation>, String> {
-    sqlx::query_as::<_, Conversation>(
-        "SELECT id, title, created_at, updated_at
-         FROM conversations
-         ORDER BY updated_at DESC",
-    )
+    sqlx::query_as::<_, Conversation>(&format!(
+        "SELECT {CONVERSATION_COLUMNS} FROM conversations ORDER BY updated_at DESC"
+    ))
     .fetch_all(pool)
     .await
     .map_err(map_err)
 }
 
 pub async fn get_conversation(pool: &SqlitePool, id: &str) -> Result<Option<Conversation>, String> {
-    sqlx::query_as::<_, Conversation>(
-        "SELECT id, title, created_at, updated_at
-         FROM conversations WHERE id = ?1",
-    )
+    sqlx::query_as::<_, Conversation>(&format!(
+        "SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(map_err)
+}
+
+/// Set or clear `conversations.active_integration` for a thread. `Some`
+/// records the @-handle pra contexto sticky entre turns; `None` limpa
+/// (não em uso ainda — futuro botão "limpar contexto").
+pub async fn set_conversation_active_integration(
+    pool: &SqlitePool,
+    id: &str,
+    integration_name: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query("UPDATE conversations SET active_integration = ?1 WHERE id = ?2")
+        .bind(integration_name)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
+    Ok(())
 }
 
 pub async fn insert_conversation(
