@@ -15,6 +15,13 @@
    --tx, etc). Cobre dark + light + spacing + radius + motion. */
 @import './tokens.css';
 
+/* Elite Premium UI components — pulled here so o bundle sempre
+   contém os estilos mesmo quando nenhum consumer ainda importou o
+   componente TSX correspondente. Cada arquivo abaixo é
+   self-contained (.btn, .btn-primary, etc são classes plain CSS,
+   não Tailwind utilities). */
+@import '../components/ui/EliteButton.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
