@@ -545,10 +545,26 @@ export interface IntegrationRow {
   created_at: string;
 }
 
+/**
+ * Mirrors `integrations::HealthStatus`. Source of truth for the wizard
+ * UX: Connected → advance + green badge; AuthFailed → "API key
+ * inválida" toast; ServerReachable → advance + yellow note (server up
+ * but path/auth may need attention); Unreachable → "Não foi possível
+ * conectar" toast.
+ */
+export type IntegrationHealth =
+  | "connected"
+  | "auth_failed"
+  | "server_reachable"
+  | "unreachable";
+
 export interface TestIntegrationResult {
-  ok: boolean;
-  status: number;
+  /** 4-state outcome — primary signal for the new wizard UX. */
+  health: IntegrationHealth;
   elapsed_ms: number;
+  /** Convenience boolean: `true` for Connected | ServerReachable. */
+  ok: boolean;
+  /** PT-BR human label paired with `health`. */
   message: string;
 }
 
@@ -556,12 +572,17 @@ export function listIntegrations(): Promise<IntegrationRow[]> {
   return invoke("list_integrations");
 }
 
+/**
+ * Add a new integration. Wizard-simplified IPC: only the 4 essentials
+ * cross the boundary. Backend defaults `auth_type` to Bearer and
+ * derives `display_name` by capitalizing the first letter of `name`.
+ * Integrations needing header / query auth must be configured by
+ * editing `~/.genesis/config.toml` directly.
+ */
 export function addIntegration(args: {
   name: string;
-  displayName: string;
   baseUrl: string;
   apiKey: string;
-  authType: IntegrationAuthType;
   specContent?: string;
 }): Promise<IntegrationRow> {
   return invoke("add_integration", args);

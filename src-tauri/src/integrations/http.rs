@@ -15,10 +15,30 @@ use std::fmt;
 use std::time::Duration;
 
 use reqwest::{Client, RequestBuilder, StatusCode};
+use serde::Serialize;
 use serde_json::Value;
 
 const USER_AGENT: &str = "Genesis/1.0";
 const DEFAULT_TIMEOUT_SECS: u64 = 15;
+
+/// Outcome of a server reachability probe. Four orthogonal states
+/// frontend uses to drive the test-connection UX:
+///   - `Connected`         → 2xx, server up and key looks valid.
+///   - `AuthFailed`        → 401/403, server up but key rejected.
+///   - `ServerReachable`   → any other HTTP response (404, 5xx, etc).
+///                           Server is up but the route may be wrong;
+///                           caller can still proceed.
+///   - `Unreachable`       → no HTTP response at all (DNS, connect,
+///                           timeout). Retried once internally before
+///                           reporting (`is_transient`).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthStatus {
+    Connected,
+    AuthFailed,
+    ServerReachable,
+    Unreachable,
+}
 
 /// Runtime auth payload. Mirrors `integrations::config::AuthType` but
 /// carries the resolved api_key alongside, so the client can be built
@@ -185,18 +205,26 @@ impl IntegrationClient {
         Err(map_status_err(status, body))
     }
 
-    /// Lightweight liveness probe — GETs the bare `base_url`. Returns
-    /// `true` only on 2xx; auth/server errors come back as `Err` so
-    /// callers can distinguish "API up but key invalid" from "API
-    /// answered fine". Same single-retry-on-transient policy as `get`.
-    pub async fn health_check(&self) -> Result<bool, IntegrationError> {
-        let resp = self.send_with_retry(&self.base_url, None).await?;
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(true);
+    /// Reachability + auth probe. Categorizes the outcome into four
+    /// states (see [`HealthStatus`] doc) so the frontend can render
+    /// distinct UX without inspecting raw status codes:
+    ///   - 2xx       → Connected.
+    ///   - 401 / 403 → AuthFailed (server reachable, key rejected).
+    ///   - other HTTP response → ServerReachable (root may be 404,
+    ///     5xx, etc; the server is up, the wizard can still advance).
+    ///   - send error (Network / Timeout, after one retry) → Unreachable.
+    pub async fn health_check(&self) -> HealthStatus {
+        match self.send_with_retry(&self.base_url, None).await {
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                match code {
+                    200..=299 => HealthStatus::Connected,
+                    401 | 403 => HealthStatus::AuthFailed,
+                    _ => HealthStatus::ServerReachable,
+                }
+            }
+            Err(_) => HealthStatus::Unreachable,
         }
-        let body = resp.text().await.unwrap_or_default();
-        Err(map_status_err(status, body))
     }
 
     /// Internal: build + fire the request once, retry once on transient

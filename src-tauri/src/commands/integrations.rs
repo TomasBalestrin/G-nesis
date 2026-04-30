@@ -18,8 +18,6 @@
 //! handler — frontend reads/edits it via `add_integration` /
 //! `update_integration` only.
 
-use std::fs;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use serde::Serialize;
@@ -27,10 +25,11 @@ use sqlx::SqlitePool;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::config::config_dir;
 use crate::db::models::IntegrationRow;
 use crate::db::queries;
-use crate::integrations::{self, AuthConfig, AuthType, Integration, IntegrationClient, IntegrationError};
+use crate::integrations::{
+    self, AuthConfig, AuthType, HealthStatus, Integration, IntegrationClient,
+};
 
 /// All enabled integrations, ordered by recency of use. Bare passthrough
 /// to `queries::list_integrations` — kept in this module for symmetry
@@ -43,22 +42,23 @@ pub async fn list_integrations(
     queries::list_integrations(&pool).await
 }
 
-/// Register a new integration. Order of writes:
-///   1. spec file (optional — caller can skip if the integration's API
-///      shape is well known and doesn't need a local spec)
-///   2. config.toml — saves auth payload + api_key
-///   3. SQLite — inserts metadata row
+/// Register a new integration. Wizard-simplified IPC: caller passes
+/// only the 4 essentials — `name`, `base_url`, `api_key`, optional
+/// `spec_content`. Auth defaults to Bearer (the common case);
+/// integrations with header / query auth need to be configured by
+/// editing `~/.genesis/config.toml` directly for now. `display_name`
+/// is derived by capitalizing the first letter of `name`.
 ///
-/// Errors out early if `name` is empty or already in the table. Returns
-/// the freshly-inserted row (re-fetched so `created_at` reflects the
-/// schema's `strftime` default rather than a sentinel).
+/// Order of writes (best-effort consistency on failure):
+///   1. spec file (optional) → `~/.genesis/integrations/<name>.md`
+///      via `specs::save_spec`.
+///   2. config.toml — saves auth payload + api_key.
+///   3. SQLite — inserts metadata row (`spec_file = "<name>.md"`).
 #[tauri::command]
 pub async fn add_integration(
     name: String,
-    display_name: String,
     base_url: String,
     api_key: String,
-    auth_type: AuthType,
     spec_content: Option<String>,
     pool: State<'_, SqlitePool>,
 ) -> Result<IntegrationRow, String> {
@@ -76,12 +76,13 @@ pub async fn add_integration(
         return Err(format!("integration `{name}` já existe"));
     }
 
-    let spec_file = format!("{name}.yaml");
-    if let Some(content) = spec_content.as_deref() {
-        write_spec_file(&spec_file, content)?;
-    }
+    let display_name = capitalize_first(&name);
+    let auth_type = AuthType::Bearer;
+    let spec_file = format!("{name}.md");
 
-    let auth_discriminator = auth_type_discriminator(&auth_type).to_string();
+    if let Some(content) = spec_content.as_deref() {
+        integrations::save_spec(&name, content)?;
+    }
 
     integrations::save_integration(
         Integration {
@@ -100,7 +101,7 @@ pub async fn add_integration(
         name: name.clone(),
         display_name,
         base_url,
-        auth_type: auth_discriminator,
+        auth_type: "bearer".to_string(),
         spec_file,
         enabled: 1,
         last_used_at: None,
@@ -111,6 +112,18 @@ pub async fn add_integration(
     queries::get_integration_by_name(&pool, &name)
         .await?
         .ok_or_else(|| "integration recém-criada não foi encontrada".into())
+}
+
+/// Capitalize só o primeiro caractere ASCII, mantém o resto. Slugs
+/// lowercase virando display names: "perpetuohq" → "Perpetuohq",
+/// "my-api" → "My-api". Sufficient pra label automático sem heurística
+/// de title-case que erraria em nomes técnicos.
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 /// Edit metadata for an existing integration, keyed by id. **Does not
@@ -139,9 +152,9 @@ pub async fn update_integration(
         None => return Err("integration não encontrada — rename não suportado em update".into()),
     }
 
-    let spec_file = format!("{name}.yaml");
+    let spec_file = format!("{name}.md");
     if let Some(content) = spec_content.as_deref() {
-        write_spec_file(&spec_file, content)?;
+        integrations::save_spec(&name, content)?;
     }
 
     let auth_discriminator = auth_type_discriminator(&auth_type).to_string();
@@ -191,26 +204,39 @@ pub async fn remove_integration(
 
     queries::delete_integration(&pool, &row.id).await?;
     integrations::remove_integration(&name)?;
-    let _ = fs::remove_file(spec_path(&row.spec_file));
+    // Best-effort: spec file may not exist (caller skipped step 2 in
+    // the wizard, or row is from pre-A4 era with .yaml extension).
+    let _ = integrations::delete_spec(&name);
     Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TestIntegrationResult {
-    pub ok: bool,
-    pub status: u16,
+    /// 4-state outcome (Connected / AuthFailed / ServerReachable /
+    /// Unreachable). Frontend wizard reads this directly to decide
+    /// whether to advance to step 2, show "API key inválida" toast, or
+    /// "Não foi possível conectar". Discriminated string via serde
+    /// (snake_case): "connected" | "auth_failed" | "server_reachable"
+    /// | "unreachable".
+    pub health: HealthStatus,
     pub elapsed_ms: u128,
+    /// Convenience boolean — `true` for Connected | ServerReachable
+    /// (server is up, can advance), `false` otherwise. Kept for
+    /// pre-existing callers that branched on `.ok` (IntegrationsSection
+    /// card "Testar" button) — they keep working without reading the
+    /// new `health` field.
+    pub ok: bool,
+    /// PT-BR human label paired with `health`. Pre-existing callers
+    /// continue to use this; new wizard prefers the typed `health` enum.
     pub message: String,
 }
 
 /// Smoke-test an integration: lookup row + key, build IntegrationClient,
-/// run `health_check()`. On success bumps `last_used_at` so the picker
-/// surfaces the integration as "verified recently". Always returns
-/// `Ok(TestIntegrationResult)` for reachable integrations — the
-/// `ok` flag tells the frontend whether to render success or a
-/// friendly error toast. `Err` is reserved for "integration not
-/// found" / "api_key ausente" — config-level problems the user
-/// must fix in Settings before retrying.
+/// run `health_check()`. On any reachable outcome (Connected,
+/// AuthFailed, ServerReachable) bumps `last_used_at` — the integration
+/// IS in active use even if the key turned out invalid. `Err` is
+/// reserved for config-level problems the user must fix in Settings
+/// before retrying (integration not found, api_key ausente).
 #[tauri::command]
 pub async fn test_integration(
     name: String,
@@ -219,39 +245,35 @@ pub async fn test_integration(
     let started = Instant::now();
     let (_row, client) = build_client(&name, &pool).await?;
 
-    match client.health_check().await {
-        Ok(_) => {
-            let elapsed = started.elapsed();
-            // Touch is best-effort — failure here doesn't change the
-            // success the user just got from the upstream API.
-            if let Err(err) = queries::touch_integration_last_used(&pool, &name).await {
-                eprintln!("[integrations] touch last_used `{name}` falhou: {err}");
-            }
-            eprintln!(
-                "[integrations] test `{name}` OK em {} ms",
-                elapsed.as_millis()
-            );
-            Ok(TestIntegrationResult {
-                ok: true,
-                status: 200,
-                elapsed_ms: elapsed.as_millis(),
-                message: format!("Conexão OK ({} ms)", elapsed.as_millis()),
-            })
-        }
-        Err(err) => {
-            let elapsed = started.elapsed();
-            eprintln!(
-                "[integrations] test `{name}` falhou em {} ms: {err}",
-                elapsed.as_millis()
-            );
-            Ok(TestIntegrationResult {
-                ok: false,
-                status: status_from_err(&err),
-                elapsed_ms: elapsed.as_millis(),
-                message: friendly_error(&err),
-            })
-        }
+    let health = client.health_check().await;
+    let elapsed = started.elapsed();
+
+    if let Err(err) = queries::touch_integration_last_used(&pool, &name).await {
+        eprintln!("[integrations] touch last_used `{name}` falhou: {err}");
     }
+    eprintln!(
+        "[integrations] test `{name}` → {health:?} em {} ms",
+        elapsed.as_millis()
+    );
+
+    let (ok, message) = match health {
+        HealthStatus::Connected => (true, format!("Conectado! ({} ms)", elapsed.as_millis())),
+        HealthStatus::AuthFailed => (false, "API key inválida.".into()),
+        HealthStatus::ServerReachable => (
+            true,
+            "Servidor responde — endpoints serão validados no primeiro uso.".into(),
+        ),
+        HealthStatus::Unreachable => {
+            (false, "Não foi possível conectar. Verifique a URL.".into())
+        }
+    };
+
+    Ok(TestIntegrationResult {
+        health,
+        elapsed_ms: elapsed.as_millis(),
+        ok,
+        message,
+    })
 }
 
 /// Hard cap on the JSON returned to the chat — bigger payloads OOM
@@ -295,7 +317,8 @@ pub async fn call_integration(
                 "[integrations] call `{name} {endpoint}` falhou em {} ms: {err}",
                 elapsed.as_millis()
             );
-            return Err(friendly_error(&err));
+            // IntegrationError::Display já é PT-BR amigável (F2).
+            return Err(err.to_string());
         }
     };
 
@@ -417,41 +440,6 @@ async fn build_client(
     Ok((row, client))
 }
 
-/// Map an `IntegrationError` to an HTTP-ish status code for the
-/// frontend toast. `0` means "didn't reach the server" (DNS, timeout,
-/// parse) — the UI surfaces those distinctly from real upstream codes.
-fn status_from_err(e: &IntegrationError) -> u16 {
-    match e {
-        IntegrationError::Server { status, .. } => *status,
-        IntegrationError::Auth(_) => 401,
-        IntegrationError::NotFound(_) => 404,
-        IntegrationError::Timeout
-        | IntegrationError::Network(_)
-        | IntegrationError::Parse(_) => 0,
-    }
-}
-
-/// Portuguese, user-actionable error messages. The internal `Display`
-/// of `IntegrationError` is fine for logs but a bit terse for toasts.
-fn friendly_error(e: &IntegrationError) -> String {
-    match e {
-        IntegrationError::Auth(_) => {
-            "API key inválida ou sem permissão pra esse endpoint.".into()
-        }
-        IntegrationError::NotFound(_) => "Endpoint não encontrado (HTTP 404).".into(),
-        IntegrationError::Timeout => "Timeout — a API não respondeu em 15s.".into(),
-        IntegrationError::Network(msg) => format!("Falha de rede: {msg}"),
-        IntegrationError::Server { status, body } => {
-            if body.is_empty() {
-                format!("Servidor retornou erro HTTP {status}.")
-            } else {
-                format!("Servidor retornou HTTP {status}: {body}")
-            }
-        }
-        IntegrationError::Parse(_) => "Resposta da API não é JSON válido.".into(),
-    }
-}
-
 /// Cut a UTF-8 string at byte index `max_bytes` rounded down to the
 /// nearest char boundary, so `String` slicing never panics on a
 /// multi-byte split.
@@ -474,21 +462,6 @@ fn auth_type_discriminator(a: &AuthType) -> &'static str {
     }
 }
 
-fn integrations_dir() -> PathBuf {
-    config_dir().join("integrations")
-}
-
-fn spec_path(spec_file: &str) -> PathBuf {
-    integrations_dir().join(spec_file)
-}
-
-fn write_spec_file(spec_file: &str, content: &str) -> Result<(), String> {
-    let dir = integrations_dir();
-    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let path = dir.join(spec_file);
-    fs::write(&path, content).map_err(|e| format!("failed to write {}: {e}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,40 +482,12 @@ mod tests {
     }
 
     #[test]
-    fn status_from_err_maps_categories() {
-        assert_eq!(
-            status_from_err(&IntegrationError::Auth("x".into())),
-            401
-        );
-        assert_eq!(
-            status_from_err(&IntegrationError::NotFound("x".into())),
-            404
-        );
-        assert_eq!(status_from_err(&IntegrationError::Timeout), 0);
-        assert_eq!(
-            status_from_err(&IntegrationError::Network("x".into())),
-            0
-        );
-        assert_eq!(
-            status_from_err(&IntegrationError::Server {
-                status: 502,
-                body: String::new()
-            }),
-            502
-        );
-    }
-
-    #[test]
-    fn friendly_error_returns_portuguese_strings() {
-        assert!(friendly_error(&IntegrationError::Timeout).contains("15s"));
-        assert!(
-            friendly_error(&IntegrationError::Auth("x".into())).contains("API key")
-        );
-        assert!(friendly_error(&IntegrationError::Server {
-            status: 502,
-            body: "bad gateway".into()
-        })
-        .contains("502"));
+    fn capitalize_first_handles_common_cases() {
+        assert_eq!(capitalize_first("github"), "Github");
+        assert_eq!(capitalize_first("perpetuohq"), "Perpetuohq");
+        assert_eq!(capitalize_first("my-api"), "My-api");
+        assert_eq!(capitalize_first(""), "");
+        assert_eq!(capitalize_first("a"), "A");
     }
 
     #[test]
