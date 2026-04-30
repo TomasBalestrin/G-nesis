@@ -381,20 +381,26 @@ async fn run_integration_request(
 
 /// Apply the integration_call protocol on top of a raw model reply.
 ///
-/// Two pass-through cases (no second GPT call):
+/// Two pass-through cases (no extra GPT call):
 ///   1. `active_integration` is None — user didn't @-prefix the turn.
 ///   2. The reply isn't an `integration_call` envelope — model decided
 ///      it had enough context to answer in text. Surface the raw reply.
 ///
-/// When the envelope is detected:
-///   - Emit `integration:loading` so the UI can show a spinner.
-///   - Run the HTTP call (errors surface to the model as text in the
-///     second prompt, so it can apologize gracefully).
-///   - Emit `integration:loaded` with success=true|false.
-///   - Build a synthetic `user` turn carrying the API result.
-///   - Re-call the model (plain `chat_completion`, no tools) so the
-///     reply IS the interpretation. The first reply (raw JSON) is
-///     never persisted — the user only sees the interpretation.
+/// When the envelope is detected, runs a **loop de até 5 rounds**: cada
+/// round dispara o HTTP, reinjeta o resultado como turn `user`, e chama
+/// o GPT de novo. Sai do loop quando:
+///   - GPT responde sem `integration_call` (resposta final pro usuário).
+///   - HTTP falha (canned PT-BR substitui a resposta).
+///   - Cap de 5 rounds atingido (msg de fallback explica que não foi
+///     possível obter os dados).
+///
+/// Permite chains tipo "GET /perpetuos → pega ID → GET /perpetuos/:id →
+/// pega planilha → GET .../planilhas/:pid" sem o GPT precisar adivinhar
+/// IDs. Eventos `integration:loading`/`loaded` são emitidos uma vez
+/// (no início do round 1 e no fim do loop) — UI mostra spinner único
+/// mesmo durante chains multi-round.
+const MAX_INTEGRATION_ROUNDS: usize = 5;
+
 async fn post_process_integration_call(
     raw: (String, Option<String>, Option<String>),
     active_integration: Option<&IntegrationRow>,
@@ -413,69 +419,110 @@ async fn post_process_integration_call(
         raw.0.len(),
         raw.0
     );
-    let Some(call) = extract_integration_call(&raw.0) else {
+    if extract_integration_call(&raw.0).is_none() {
         println!(
-            ">>> [INTEGRATION] post_process: extract_integration_call=None → texto puro vai pro usuário"
+            ">>> [INTEGRATION] post_process: extract_integration_call=None no round 0 → texto puro vai pro usuário"
         );
         return Ok(raw);
-    };
-    println!(
-        ">>> [INTEGRATION] post_process: integration_call detectado endpoint=`{}` params={:?}",
-        call.endpoint, call.params
-    );
+    }
 
-    let _ = app.emit(
-        "integration:loading",
-        IntegrationLoadingEvent {
-            conversation_id: conversation_id.map(str::to_string),
-            integration_name: integration.name.clone(),
-            endpoint: call.endpoint.clone(),
-        },
-    );
-
-    let api_outcome = run_integration_request(integration, &call, pool).await;
-    let success = api_outcome.is_ok();
-
-    let _ = app.emit(
-        "integration:loaded",
-        IntegrationLoadedEvent {
-            conversation_id: conversation_id.map(str::to_string),
-            integration_name: integration.name.clone(),
-            endpoint: call.endpoint.clone(),
-            success,
-        },
-    );
-
-    // Falha → retorna a msg PT-BR direto (sem 2ª chamada GPT). Display
-    // do IntegrationError já é amigável (401→"key inválida", 404→"não
-    // encontrado", 5xx→"servidor fora", timeout). Economia de tokens +
-    // latência menor pra erro.
-    let json = match api_outcome {
-        Ok(json) => json,
-        Err(err) => {
-            let canned = format!(
-                "Não consegui consultar `@{name}` agora: {err}",
-                name = integration.name,
-            );
-            return Ok((canned, None, None));
-        }
-    };
-
-    let context_msg = format!(
-        "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}`:\n\n```json\n{json}\n```\n\nInterprete o resultado e responda à pergunta original em português conciso. Não devolva o JSON cru.",
-        name = integration.name,
-        endpoint = call.endpoint,
-    );
-
+    // Loading emitido UMA vez no início (igual UX do execução de skill).
+    // Endpoint inicial = primeiro call detectado; rounds subsequentes
+    // mantêm o mesmo spinner ativo até o loaded final.
     let mut next_messages: Vec<Message> = messages.to_vec();
-    next_messages.push(Message::user(context_msg));
+    let mut current_reply = raw.0;
+    let mut last_success = true;
+    let mut emitted_loading = false;
 
-    let interpretation = client
-        .chat_completion(system_prompt, &next_messages)
-        .await
-        .map_err(|e| e.user_message())?;
+    for round in 1..=MAX_INTEGRATION_ROUNDS {
+        let Some(call) = extract_integration_call(&current_reply) else {
+            // GPT respondeu sem envelope → resposta final pro usuário.
+            println!(
+                ">>> [INTEGRATION] post_process: round {round} convergiu (resposta final pro usuário)"
+            );
+            break;
+        };
+        println!(
+            ">>> [INTEGRATION] post_process round {round}: endpoint=`{}` params={:?}",
+            call.endpoint, call.params
+        );
 
-    Ok((interpretation, None, None))
+        if !emitted_loading {
+            let _ = app.emit(
+                "integration:loading",
+                IntegrationLoadingEvent {
+                    conversation_id: conversation_id.map(str::to_string),
+                    integration_name: integration.name.clone(),
+                    endpoint: call.endpoint.clone(),
+                },
+            );
+            emitted_loading = true;
+        }
+
+        match run_integration_request(integration, &call, pool).await {
+            Ok(json) => {
+                last_success = true;
+                // Push assistant turn (envelope JSON) + synthetic user
+                // turn carregando o resultado da API. O prompt do user
+                // turn deixa claro que round adicional é OK se o GPT
+                // ainda precisa de mais dados.
+                next_messages.push(Message::assistant(current_reply.clone()));
+                let context_msg = format!(
+                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe ainda precisar de mais dados (ex: pegar um ID retornado e usar em outro endpoint), responda com OUTRA `integration_call`. Se já tem tudo que precisa, responda ao usuário em português conciso (sem JSON cru, sem devolver os IDs).",
+                    name = integration.name,
+                    endpoint = call.endpoint,
+                );
+                next_messages.push(Message::user(context_msg));
+
+                current_reply = client
+                    .chat_completion(system_prompt, &next_messages)
+                    .await
+                    .map_err(|e| e.user_message())?;
+                println!(
+                    ">>> [INTEGRATION] post_process round {round} → next GPT reply ({} bytes)",
+                    current_reply.len()
+                );
+            }
+            Err(err) => {
+                last_success = false;
+                println!(
+                    ">>> [INTEGRATION] post_process round {round} HTTP falhou: {err}"
+                );
+                current_reply = format!(
+                    "Não consegui consultar `@{name}` agora: {err}",
+                    name = integration.name,
+                );
+                break;
+            }
+        }
+
+        if round == MAX_INTEGRATION_ROUNDS {
+            // O loop fecha naturalmente após esse iteration; se ainda
+            // tem envelope no current_reply, capamos com mensagem
+            // explícita pra não esconder o problema.
+            if extract_integration_call(&current_reply).is_some() {
+                println!(
+                    ">>> [INTEGRATION] post_process atingiu MAX_INTEGRATION_ROUNDS={MAX_INTEGRATION_ROUNDS} sem convergir"
+                );
+                current_reply = "Desculpe, não consegui obter todos os dados necessários em tempo razoável. Tente uma pergunta mais específica.".to_string();
+                last_success = false;
+            }
+        }
+    }
+
+    if emitted_loading {
+        let _ = app.emit(
+            "integration:loaded",
+            IntegrationLoadedEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                integration_name: integration.name.clone(),
+                endpoint: String::new(),
+                success: last_success,
+            },
+        );
+    }
+
+    Ok((current_reply, None, None))
 }
 
 // ── @ and # mention extraction ──────────────────────────────────────────────
