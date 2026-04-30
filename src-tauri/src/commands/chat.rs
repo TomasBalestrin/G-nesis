@@ -30,7 +30,7 @@ use crate::ai::models::{self, ModelConfig};
 // of literal template tokens.
 use crate::ai::prompts;
 use crate::config;
-use crate::db::models::{ChatMessage, Conversation};
+use crate::db::models::{ChatMessage, Conversation, IntegrationRow};
 use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
 use crate::orchestrator::ExecutionRegistry;
@@ -134,6 +134,39 @@ fn extract_slash_command(content: &str) -> Option<&str> {
         None
     } else {
         Some(name)
+    }
+}
+
+/// Extract a turn-level integration invocation from a message that
+/// STARTS with `@`. Returns `(name, query)` where `query` is the rest
+/// of the trimmed message after the first whitespace following the
+/// name (empty when the user typed only `@<name>`).
+///
+/// **Important**: this only fires when `@` is the first non-whitespace
+/// char. Mid-text mentions (`rode @github buscar issues`) are NOT
+/// integration invocations — those flow through `extract_at_mentions`
+/// for system-prompt injection only. The split mirrors how `/skill`
+/// at the start activates a slash-command flow vs. `/path/to/x`
+/// mid-text being plain text.
+fn extract_at_integration(content: &str) -> Option<(&str, &str)> {
+    let trimmed = content.trim();
+    let rest = trimmed.strip_prefix('@')?;
+    match rest.find(char::is_whitespace) {
+        Some(idx) => {
+            let name = &rest[..idx];
+            if name.is_empty() {
+                None
+            } else {
+                Some((name, rest[idx..].trim_start()))
+            }
+        }
+        None => {
+            if rest.is_empty() {
+                None
+            } else {
+                Some((rest, ""))
+            }
+        }
     }
 }
 
@@ -982,8 +1015,35 @@ pub async fn send_chat_message(
         None => true,
     };
 
+    // Turn-level integration invocation. Only checked when there's no
+    // slash-command — `/skill` always wins. Resolves to one of three
+    // states:
+    //   1. user didn't @-prefix this turn → both None.
+    //   2. @<name> matched an enabled row → `active_integration` =
+    //      Some(row), canned = None, AI flow continues with a system
+    //      prompt block describing the integration.
+    //   3. @<name> matched nothing or a disabled row → canned reply
+    //      short-circuits the AI roundtrip.
+    let at_integration = if slash_command.is_none() {
+        extract_at_integration(&content)
+    } else {
+        None
+    };
+    let (active_integration, canned_integration_reply): (
+        Option<IntegrationRow>,
+        Option<String>,
+    ) = match at_integration {
+        None => (None, None),
+        Some((name, _query)) => match queries::get_integration_by_name(&pool, name).await? {
+            Some(row) if row.enabled == 1 => (Some(row), None),
+            _ => (None, Some(format!("Integração @{name} não encontrada"))),
+        },
+    };
+
     let (reply_content, thinking, thinking_summary) =
-        if let (false, Some(skill_name)) = (needs_ai, slash_command.as_deref()) {
+        if let Some(canned) = canned_integration_reply {
+            (canned, None, None)
+        } else if let (false, Some(skill_name)) = (needs_ai, slash_command.as_deref()) {
             (try_slash_reply(skill_name), None, None)
         } else {
             let history =
@@ -1046,6 +1106,29 @@ pub async fn send_chat_message(
             if !mentions_block.is_empty() {
                 system_prompt.push_str("\n\n");
                 system_prompt.push_str(&mentions_block);
+            }
+
+            // Active integration block — when the user prefixed the
+            // turn with @<name> and the row exists+enabled (resolved
+            // above as `active_integration`), surface the metadata so
+            // the model can plan a request. Actual tool routing for
+            // call_integration lands in C2; this block just makes the
+            // model aware that the integration is live for this turn.
+            if let Some(integration) = active_integration.as_ref() {
+                system_prompt.push_str(&format!(
+                    "\n\n## Integração ativa\n\n\
+                     O usuário começou a mensagem com `@{name}`, indicando \
+                     que quer interagir com **{display}**.\n\
+                     - Base URL: `{base}`\n\
+                     - Spec local: `~/.genesis/integrations/{spec}` (consulte \
+                     pra montar o path certo do request)\n\n\
+                     Quando relevante, descreva os endpoints disponíveis e \
+                     proponha o request que faria sentido executar.",
+                    name = integration.name,
+                    display = integration.display_name,
+                    base = integration.base_url,
+                    spec = integration.spec_file,
+                ));
             }
 
             // Skill authoring flow — appended after mentions so the
@@ -1583,6 +1666,57 @@ mod tests {
     fn extract_slash_command_rejects_empty_name() {
         assert_eq!(extract_slash_command("/"), None);
         assert_eq!(extract_slash_command("/   "), None);
+    }
+
+    #[test]
+    fn extract_at_integration_basic_split() {
+        assert_eq!(
+            extract_at_integration("@perpetuohq teste"),
+            Some(("perpetuohq", "teste"))
+        );
+        assert_eq!(
+            extract_at_integration("  @perpetuohq teste  "),
+            Some(("perpetuohq", "teste"))
+        );
+    }
+
+    #[test]
+    fn extract_at_integration_bare_name_has_empty_query() {
+        assert_eq!(extract_at_integration("@github"), Some(("github", "")));
+        assert_eq!(extract_at_integration("  @github  "), Some(("github", "")));
+    }
+
+    #[test]
+    fn extract_at_integration_keeps_full_query() {
+        // Multiple words after the name all live in the `query` slice;
+        // trim_start strips the separating whitespace but keeps inner spaces.
+        assert_eq!(
+            extract_at_integration("@github buscar issues abertas"),
+            Some(("github", "buscar issues abertas"))
+        );
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_bare_at() {
+        assert_eq!(extract_at_integration("@"), None);
+        assert_eq!(extract_at_integration("   @   "), None);
+        // Whitespace immediately after @ → name would be empty, reject.
+        assert_eq!(extract_at_integration("@ teste"), None);
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_mid_text_mention() {
+        // @-mentions in the middle of a message route through
+        // extract_at_mentions, NOT this turn-level extractor.
+        assert_eq!(extract_at_integration("rode @github buscar"), None);
+        assert_eq!(extract_at_integration("oi @github"), None);
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_empty_or_whitespace() {
+        assert_eq!(extract_at_integration(""), None);
+        assert_eq!(extract_at_integration("    "), None);
+        assert_eq!(extract_at_integration("hello world"), None);
     }
 
     #[test]
