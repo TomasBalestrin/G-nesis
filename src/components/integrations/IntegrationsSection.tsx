@@ -23,12 +23,12 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/useToast";
 import {
-  listIntegrations,
   removeIntegration,
   testIntegration,
   updateIntegration,
 } from "@/lib/tauri-bridge";
-import type { IntegrationRow } from "@/lib/tauri-bridge";
+import { useIntegrationsStore } from "@/stores/integrationsStore";
+import type { Integration } from "@/types/integration";
 import { cn } from "@/lib/utils";
 
 /**
@@ -36,32 +36,23 @@ import { cn } from "@/lib/utils";
  * botão "Nova Integração" que abre o modal de criação. Embedado dentro
  * de SettingsConfigSection — não tem rota nem entry no sidebar.
  *
- * O modal de criação completo (form com nome, base_url, auth_type,
- * api_key, spec) chega na D2; aqui é só um stub clicável pra completar
- * o fluxo visual.
+ * **State source**: `useIntegrationsStore` (não local). Garantia de que
+ * mutações via wizard / cards refletem em outras surfaces (ex: o `@`
+ * picker do CommandInput) sem precisar de eventing manual entre
+ * components. `refresh()` aqui é o do store, então quando o wizard
+ * chama `onSuccess`, ambos os places são atualizados.
  */
 export function IntegrationsSection() {
-  const [items, setItems] = useState<IntegrationRow[] | null>(null);
+  const items = useIntegrationsStore((s) => s.items);
+  const loaded = useIntegrationsStore((s) => s.loaded);
+  const loading = useIntegrationsStore((s) => s.loading);
+  const ensureLoaded = useIntegrationsStore((s) => s.ensureLoaded);
+  const refresh = useIntegrationsStore((s) => s.refresh);
   const [creating, setCreating] = useState(false);
-  const { toast } = useToast();
 
   useEffect(() => {
-    void refresh();
-  }, []);
-
-  async function refresh() {
-    try {
-      const list = await listIntegrations();
-      setItems(list);
-    } catch (err) {
-      toast({
-        title: "Falha ao carregar integrations",
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
-      setItems([]);
-    }
-  }
+    void ensureLoaded();
+  }, [ensureLoaded]);
 
   return (
     <div className="space-y-3">
@@ -72,7 +63,7 @@ export function IntegrationsSection() {
         </Button>
       </div>
 
-      {items === null ? (
+      {!loaded && loading ? (
         <p className="text-xs text-[var(--text-2)]">Carregando...</p>
       ) : items.length === 0 ? (
         <p className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-4 py-6 text-center text-xs text-[var(--text-2)]">
@@ -96,7 +87,7 @@ export function IntegrationsSection() {
 }
 
 interface IntegrationCardProps {
-  row: IntegrationRow;
+  row: Integration;
   onChanged: () => Promise<void>;
 }
 
