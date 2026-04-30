@@ -12,7 +12,9 @@
 //!     [`remove_integration`]: CRUD against the on-disk TOML.
 
 pub mod config;
+pub mod specs;
 
 pub use config::{
     AuthType, Integration, get_api_key, load_integrations, remove_integration, save_integration,
 };
+pub use specs::{delete_spec, ensure_specs_dir, load_spec, save_spec, spec_exists, specs_dir};

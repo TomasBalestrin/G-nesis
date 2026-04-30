@@ -32,6 +32,11 @@ pub fn run() {
             }
             app.manage(cfg);
 
+            // ~/.genesis/integrations/ existe a partir do boot, antes que
+            // qualquer add_integration tente escrever spec lá. Idempotente.
+            integrations::ensure_specs_dir()
+                .map_err(|e| format!("failed to ensure integrations dir: {e}"))?;
+
             let pool = tauri::async_runtime::block_on(db::init_db())
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
             app.manage(pool);
