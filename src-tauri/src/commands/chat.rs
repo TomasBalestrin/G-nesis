@@ -365,19 +365,19 @@ async fn post_process_integration_call(
     let Some(integration) = active_integration else {
         return Ok(raw);
     };
-    eprintln!(
-        "[integrations] post_process: GPT raw response (len={}):\n--- BEGIN ---\n{}\n--- END ---",
+    println!(
+        ">>> [INTEGRATION] post_process: GPT raw response (len={}):\n--- BEGIN ---\n{}\n--- END ---",
         raw.0.len(),
         raw.0
     );
     let Some(call) = extract_integration_call(&raw.0) else {
-        eprintln!(
-            "[integrations] post_process: extract_integration_call=None → resposta texto puro vai pro usuário"
+        println!(
+            ">>> [INTEGRATION] post_process: extract_integration_call=None → texto puro vai pro usuário"
         );
         return Ok(raw);
     };
-    eprintln!(
-        "[integrations] post_process: integration_call detectado endpoint=`{}` params={:?}",
+    println!(
+        ">>> [INTEGRATION] post_process: integration_call detectado endpoint=`{}` params={:?}",
         call.endpoint, call.params
     );
 
@@ -1292,37 +1292,105 @@ pub async fn send_chat_message(
     } else {
         None
     };
-    if let Some((name, query)) = at_integration.as_ref() {
-        eprintln!(
-            "[integrations] @-mention detectada: name=`{name}` query=`{query}`"
+    println!(
+        ">>> [INTEGRATION] extract_at_integration result: {:?}",
+        at_integration.as_ref()
+    );
+
+    // Sticky context: se a thread já estava em integration X e o
+    // usuário não @-mencionou nesse turn, herdamos X. @-mention
+    // explícita SEMPRE override. Lookup só roda quando o handler
+    // tem conversation_id (turnos órfãos não têm contexto sticky).
+    let inherited_integration_name: Option<String> = if at_integration.is_none() {
+        match conversation_id.as_deref() {
+            Some(id) => queries::get_conversation(&pool, id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|c| c.active_integration),
+            None => None,
+        }
+    } else {
+        None
+    };
+    if let Some(name) = inherited_integration_name.as_ref() {
+        println!(
+            ">>> [INTEGRATION] herdou active_integration `{name}` do conversation_id"
         );
     }
+
+    let resolve_name: Option<String> = at_integration
+        .as_ref()
+        .map(|(n, _)| n.clone())
+        .or_else(|| inherited_integration_name.clone());
+
     let (active_integration, canned_integration_reply): (
         Option<IntegrationRow>,
         Option<String>,
-    ) = match at_integration {
+    ) = match resolve_name.as_deref() {
         None => (None, None),
-        Some((name, _query)) => match queries::get_integration_by_name(&pool, &name).await? {
+        Some(name) => match queries::get_integration_by_name(&pool, name).await? {
             Some(row) if row.enabled == 1 => {
-                eprintln!(
-                    "[integrations] resolvida: name=`{}` enabled base_url=`{}`",
+                println!(
+                    ">>> [INTEGRATION] resolvida: name=`{}` enabled base_url=`{}`",
                     row.name, row.base_url
                 );
                 (Some(row), None)
             }
             Some(row) => {
-                eprintln!(
-                    "[integrations] `{name}` existe mas enabled={}; tratando como não-encontrada",
+                println!(
+                    ">>> [INTEGRATION] `{name}` existe mas enabled={}; tratando como não-encontrada",
                     row.enabled
                 );
+                // Sticky context com integration disabled: limpa o
+                // sticky pro próximo turno não tropeçar de novo.
+                if at_integration.is_none() {
+                    if let Some(id) = conversation_id.as_deref() {
+                        let _ =
+                            queries::set_conversation_active_integration(&pool, id, None).await;
+                    }
+                }
                 (None, Some(format!("Integração @{name} não encontrada")))
             }
             None => {
-                eprintln!("[integrations] `{name}` não está no SQLite; não-encontrada");
+                println!(">>> [INTEGRATION] `{name}` não está no SQLite; não-encontrada");
+                if at_integration.is_none() {
+                    if let Some(id) = conversation_id.as_deref() {
+                        let _ =
+                            queries::set_conversation_active_integration(&pool, id, None).await;
+                    }
+                }
                 (None, Some(format!("Integração @{name} não encontrada")))
             }
         },
     };
+
+    // Persist sticky context APÓS resolução — só quando o usuário
+    // @-mencionou explicitamente neste turn E a integration resolveu.
+    // Inheritance herda mas não re-grava (idempotente).
+    if at_integration.is_some() {
+        if let (Some(integration), Some(id)) =
+            (active_integration.as_ref(), conversation_id.as_deref())
+        {
+            if let Err(err) = queries::set_conversation_active_integration(
+                &pool,
+                id,
+                Some(&integration.name),
+            )
+            .await
+            {
+                eprintln!(
+                    "[integrations] persistir active_integration `{}` falhou: {err}",
+                    integration.name
+                );
+            } else {
+                println!(
+                    ">>> [INTEGRATION] persisted active_integration=`{}` em conversation `{id}`",
+                    integration.name
+                );
+            }
+        }
+    }
 
     let (reply_content, thinking, thinking_summary) =
         if let Some(canned) = canned_integration_reply {
@@ -1404,8 +1472,8 @@ pub async fn send_chat_message(
                 let spec = crate::integrations::load_spec(&integration.name)
                     .ok()
                     .flatten();
-                eprintln!(
-                    "[integrations] load_spec(`{}`) → {}",
+                println!(
+                    ">>> [INTEGRATION] load_spec(`{}`) → {}",
                     integration.name,
                     match spec.as_deref() {
                         Some(s) => format!("OK ({} bytes)", s.len()),
@@ -1417,9 +1485,12 @@ pub async fn send_chat_message(
                     &integration.name,
                     spec.as_deref(),
                 );
-                eprintln!(
-                    "=== SYSTEM PROMPT COM INTEGRAÇÃO ===\n{}\n=== END ===",
-                    &system_prompt
+                println!(
+                    ">>> [INTEGRATION] system_prompt contains `integration_call`: {}",
+                    system_prompt.contains("integration_call")
+                );
+                println!(
+                    ">>> [INTEGRATION] === SYSTEM PROMPT FINAL ===\n{system_prompt}\n>>> [INTEGRATION] === END SYSTEM PROMPT ==="
                 );
             }
 
@@ -1461,11 +1532,26 @@ pub async fn send_chat_message(
             // post_process_integration_call then parses + dispatches.
             let raw = match &client {
                 AiClient::OpenAi(openai) => {
-                    let tools = if active_integration.is_some() {
-                        Vec::new()
+                    // Integration turns: pula o tool loop completamente.
+                    // O `tools: []` no request OpenAI é ambíguo (alguns
+                    // models 400, outros silenciosamente ignoram), e
+                    // function-calling concorre com o protocolo
+                    // integration_call no prompt. Plain chat_completion
+                    // = uma chamada, sem `tools` field, model lê
+                    // PROMPT_INTEGRATION e responde com JSON envelope.
+                    if active_integration.is_some() {
+                        let content = openai
+                            .chat_completion(&system_prompt, &messages)
+                            .await
+                            .map_err(|e| e.user_message())?;
+                        println!(
+                            ">>> [INTEGRATION] GPT raw (plain): {} bytes\n--- BEGIN ---\n{}\n--- END ---",
+                            content.len(),
+                            &content[..200.min(content.len())]
+                        );
+                        (content, None, None)
                     } else {
-                        genesis_tools()
-                    };
+                    let tools = genesis_tools();
                     let mut loop_messages: Vec<Message> = messages.clone();
                     let mut final_content = String::new();
                     for _ in 0..MAX_TOOL_ITERATIONS {
@@ -1508,6 +1594,7 @@ pub async fn send_chat_message(
                             "Limite de iterações de tools atingido sem resposta final.".to_string();
                     }
                     (final_content, None, None)
+                    }
                 }
                 AiClient::Anthropic(_) => {
                     let ChatOutput {
