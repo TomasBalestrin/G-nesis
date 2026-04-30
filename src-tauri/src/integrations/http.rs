@@ -185,18 +185,23 @@ impl IntegrationClient {
         Err(map_status_err(status, body))
     }
 
-    /// Lightweight liveness probe — GETs the bare `base_url`. Returns
-    /// `true` only on 2xx; auth/server errors come back as `Err` so
-    /// callers can distinguish "API up but key invalid" from "API
-    /// answered fine". Same single-retry-on-transient policy as `get`.
+    /// Reachability probe — any HTTP response (incl. 4xx / 5xx) means
+    /// the server is up; only network / timeout failures surface as `Err`.
+    /// We deliberately do NOT inspect the status code: a bare GET on
+    /// the registered `base_url` is often 404 (root may not be a real
+    /// endpoint) or 401/403 (auth required to even enumerate the
+    /// surface). None of those indicate the server is unreachable —
+    /// they're "server up, your route/key needs attention", which is
+    /// out of scope for a connection probe. Path-validity and
+    /// auth-validity get checked the first time the user actually
+    /// invokes the integration via @-mention.
+    ///
+    /// Returns `Ok(true)` to keep the bool signature stable for the
+    /// existing IPC contract (`test_integration` flips between
+    /// success/failure based on this Result, not the bool value).
     pub async fn health_check(&self) -> Result<bool, IntegrationError> {
-        let resp = self.send_with_retry(&self.base_url, None).await?;
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(true);
-        }
-        let body = resp.text().await.unwrap_or_default();
-        Err(map_status_err(status, body))
+        self.send_with_retry(&self.base_url, None).await?;
+        Ok(true)
     }
 
     /// Internal: build + fire the request once, retry once on transient
