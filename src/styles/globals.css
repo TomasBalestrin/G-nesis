@@ -23,6 +23,7 @@
 @import '../components/ui/EliteButton.css';
 @import '../components/ui/EliteInput.css';
 @import '../components/ui/EliteBadge.css';
+@import '../components/ui/EliteCard.css';
 
 @tailwind base;
 @tailwind components;
