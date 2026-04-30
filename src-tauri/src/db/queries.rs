@@ -4,8 +4,8 @@
 use sqlx::SqlitePool;
 
 use crate::db::models::{
-    AppState, Capability, ChatMessage, Conversation, Execution, ExecutionStep, KnowledgeFile,
-    KnowledgeFileMeta, KnowledgeSummary, Project,
+    AppState, Capability, ChatMessage, Conversation, Execution, ExecutionStep, IntegrationRow,
+    KnowledgeFile, KnowledgeFileMeta, KnowledgeSummary, Project,
 };
 
 fn map_err(e: sqlx::Error) -> String {
@@ -665,4 +665,129 @@ pub async fn list_capabilities_by_type(
     .fetch_all(pool)
     .await
     .map_err(map_err)
+}
+
+// ── integrations ────────────────────────────────────────────────────────────
+
+/// Single source of truth for the columns SELECTed into [`IntegrationRow`].
+/// Drift here breaks `FromRow` (it rejects rows missing a field), so every
+/// SELECT in this section must format with this const.
+const INTEGRATION_COLUMNS: &str = "id, name, display_name, base_url, auth_type, spec_file, \
+     enabled, last_used_at, created_at";
+
+/// Active integrations sorted by recency of use first, then by name.
+/// `last_used_at` is nullable so unused integrations sort to the bottom
+/// via `IS NULL` ordering. Disabled rows are hidden — picker only shows
+/// what the user can invoke right now.
+pub async fn list_integrations(pool: &SqlitePool) -> Result<Vec<IntegrationRow>, String> {
+    sqlx::query_as::<_, IntegrationRow>(&format!(
+        "SELECT {INTEGRATION_COLUMNS} FROM integrations \
+         WHERE enabled = 1 \
+         ORDER BY last_used_at IS NULL, last_used_at DESC, name"
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Fetch by the @-mention handle. Returns `None` for unknown OR disabled
+/// rows; if a caller needs disabled entries (e.g. settings management),
+/// add a flag-bypassing variant.
+pub async fn get_integration_by_name(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<Option<IntegrationRow>, String> {
+    sqlx::query_as::<_, IntegrationRow>(&format!(
+        "SELECT {INTEGRATION_COLUMNS} FROM integrations WHERE name = ?1"
+    ))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Insert a fresh row. `created_at` lets the column default fill in via
+/// the migration's `strftime` so we don't smuggle clock skew across
+/// callers; `last_used_at` is intentionally NULL on insert (set later
+/// by [`touch_integration_last_used`]).
+pub async fn insert_integration(
+    pool: &SqlitePool,
+    integration: &IntegrationRow,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO integrations \
+         (id, name, display_name, base_url, auth_type, spec_file, enabled) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )
+    .bind(&integration.id)
+    .bind(&integration.name)
+    .bind(&integration.display_name)
+    .bind(&integration.base_url)
+    .bind(&integration.auth_type)
+    .bind(&integration.spec_file)
+    .bind(integration.enabled)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+/// Edit metadata in place — keyed by `id` so renaming `name` works
+/// without a separate handler. `created_at` and `last_used_at` are NOT
+/// touched: the first is immutable, the second is bumped only by
+/// [`touch_integration_last_used`].
+pub async fn update_integration(
+    pool: &SqlitePool,
+    integration: &IntegrationRow,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE integrations SET \
+         name = ?2, display_name = ?3, base_url = ?4, auth_type = ?5, \
+         spec_file = ?6, enabled = ?7 \
+         WHERE id = ?1",
+    )
+    .bind(&integration.id)
+    .bind(&integration.name)
+    .bind(&integration.display_name)
+    .bind(&integration.base_url)
+    .bind(&integration.auth_type)
+    .bind(&integration.spec_file)
+    .bind(integration.enabled)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+/// Hard delete by id. The matching `[integrations.<name>]` block in
+/// config.toml is the caller's responsibility (typically
+/// `integrations::remove_integration`) — we don't reach across the
+/// filesystem from here.
+pub async fn delete_integration(pool: &SqlitePool, id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM integrations WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
+/// Bump `last_used_at` to now. Called after a successful integration
+/// invocation so the picker can sort by recency. Keyed by `name`
+/// (not id) because callers usually only have the @-mention handle
+/// at the time of dispatch.
+pub async fn touch_integration_last_used(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE integrations \
+         SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+         WHERE name = ?1",
+    )
+    .bind(name)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
 }

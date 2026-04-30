@@ -6,12 +6,13 @@ pub mod channels;
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod integrations;
 pub mod orchestrator;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
     app_state, caminhos, capabilities, chat, config as config_cmd, conversations, dependencies,
-    execution, knowledge, projects, skills, workflows,
+    execution, integrations as integrations_cmd, knowledge, projects, skills, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -30,6 +31,11 @@ pub fn run() {
                 eprintln!("[genesis] OPENAI_API_KEY not set — frontend should show setup screen");
             }
             app.manage(cfg);
+
+            // ~/.genesis/integrations/ existe a partir do boot, antes que
+            // qualquer add_integration tente escrever spec lá. Idempotente.
+            integrations::ensure_specs_dir()
+                .map_err(|e| format!("failed to ensure integrations dir: {e}"))?;
 
             let pool = tauri::async_runtime::block_on(db::init_db())
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
@@ -77,6 +83,14 @@ pub fn run() {
             capabilities::list_capabilities,
             capabilities::get_capability,
             capabilities::list_capabilities_by_type,
+            // integrations (REST APIs invocadas via @<name>; api_key
+            // mora só no config.toml — nunca cruza o IPC boundary).
+            integrations_cmd::list_integrations,
+            integrations_cmd::add_integration,
+            integrations_cmd::update_integration,
+            integrations_cmd::remove_integration,
+            integrations_cmd::test_integration,
+            integrations_cmd::call_integration,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,

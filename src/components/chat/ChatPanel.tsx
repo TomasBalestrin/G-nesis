@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/tauri-bridge";
 import { useChatStore } from "@/stores/chatStore";
 import { useConversationsStore } from "@/stores/conversationsStore";
+import { useIntegrationsStore } from "@/stores/integrationsStore";
 import type { ChatMessage } from "@/types/chat";
 import type { ChatMessageInsertedEvent } from "@/types/events";
 
@@ -97,6 +98,85 @@ export function ChatPanel() {
     [],
   );
   useTauriEvent("chat:message_inserted", messageInsertedHandler);
+
+  // ── integration loading indicator ─────────────────────────────────────────
+  // Backend (commands/chat.rs::post_process_integration_call) emits
+  // "integration:loading" before firing the HTTP request and
+  // "integration:loaded" after, with `success: bool`. Both carry the
+  // conversation_id so we can filter to the current thread.
+  const integrations = useIntegrationsStore((s) => s.items);
+  const ensureIntegrations = useIntegrationsStore((s) => s.ensureLoaded);
+  const [integrationCall, setIntegrationCall] = useState<{
+    name: string;
+    endpoint: string;
+  } | null>(null);
+
+  // Lazy-hydrate the catalog once so the indicator can resolve
+  // display_name from `integration_name` (the @-mention handle). Without
+  // this, a fresh load that lands directly in a chat with active
+  // integration would only show the slug.
+  useEffect(() => {
+    void ensureIntegrations();
+  }, [ensureIntegrations]);
+
+  const loadingHandler = useRef<
+    (e: {
+      conversation_id: string | null;
+      integration_name: string;
+      endpoint: string;
+    }) => void
+  >(() => {});
+  loadingHandler.current = (event) => {
+    if (event.conversation_id !== conversationId) return;
+    setIntegrationCall({
+      name: event.integration_name,
+      endpoint: event.endpoint,
+    });
+  };
+  const loadingCb = useCallback(
+    (e: {
+      conversation_id: string | null;
+      integration_name: string;
+      endpoint: string;
+    }) => loadingHandler.current(e),
+    [],
+  );
+  useTauriEvent("integration:loading", loadingCb);
+
+  const loadedHandler = useRef<
+    (e: {
+      conversation_id: string | null;
+      integration_name: string;
+      endpoint: string;
+      success: boolean;
+    }) => void
+  >(() => {});
+  loadedHandler.current = (event) => {
+    if (event.conversation_id !== conversationId) return;
+    setIntegrationCall(null);
+    if (!event.success) {
+      const display = displayNameFor(event.integration_name);
+      toast({
+        title: `Falha ao consultar ${display}`,
+        description: `Endpoint: ${event.endpoint}`,
+        variant: "destructive",
+      });
+    }
+  };
+  const loadedCb = useCallback(
+    (e: {
+      conversation_id: string | null;
+      integration_name: string;
+      endpoint: string;
+      success: boolean;
+    }) => loadedHandler.current(e),
+    [],
+  );
+  useTauriEvent("integration:loaded", loadedCb);
+
+  function displayNameFor(name: string): string {
+    return integrations.find((i) => i.name === name)?.display_name ?? name;
+  }
 
   // Read user_name once for the empty-state greeting. Failures are
   // silent — the UI degrades to a generic "Olá!" if the value is missing
@@ -218,7 +298,11 @@ export function ChatPanel() {
           {renderable.map((m) => (
             <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
           ))}
-          {sending && isThinking ? (
+          {sending && integrationCall ? (
+            <IntegrationLoadingIndicator
+              displayName={displayNameFor(integrationCall.name)}
+            />
+          ) : sending && isThinking ? (
             <div className="flex w-full justify-start">
               <article className="max-w-[80%] px-1 py-1">
                 <ThinkingBlock
@@ -293,5 +377,30 @@ function Dot({ delay = 0 }: { delay?: number }) {
       className="h-2 w-2 animate-bounce rounded-full bg-[var(--text-3)]"
       style={{ animationDelay: `${delay}ms` }}
     />
+  );
+}
+
+/**
+ * Inline indicator while an integration HTTP roundtrip is in flight.
+ * Replaces the TypingIndicator while `integration:loading` is active —
+ * gives the user a clear signal that the chat is waiting on an
+ * external API rather than the model.
+ */
+function IntegrationLoadingIndicator({ displayName }: { displayName: string }) {
+  return (
+    <div
+      className="flex w-full justify-start"
+      aria-live="polite"
+      aria-label={`Consultando ${displayName}`}
+    >
+      <article className="rounded-xl border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-[var(--text-2)]">
+          <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
+          <span>
+            Consultando <span className="font-medium">{displayName}</span>...
+          </span>
+        </div>
+      </article>
+    </div>
   );
 }

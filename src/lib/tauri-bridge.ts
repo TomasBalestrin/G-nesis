@@ -510,6 +510,88 @@ export function listCapabilitiesByType(args: {
   return invoke("list_capabilities_by_type", { type_: args.type });
 }
 
+// ── integrations ────────────────────────────────────────────────────────────
+//
+// Mirrors `db::models::IntegrationRow` + the IPC handlers in
+// `commands/integrations.rs`. The api_key NEVER appears in any return
+// type — it lives only in `~/.genesis/config.toml [integrations.<name>]`
+// and is set/cleared exclusively via add/update args (write-only).
+//
+// `auth_type` on the row is the discriminator string only ('bearer' |
+// 'header' | 'query'); the full payload (header_name / param_name)
+// for write paths is `IntegrationAuthType` below.
+
+/// Internally-tagged enum mirroring Rust `integrations::AuthType`. Field
+/// names stay snake_case because serde on the Rust side keeps them as-is
+/// inside the value (Tauri's auto-camelCase only applies to top-level
+/// command args, not nested object payloads).
+export type IntegrationAuthType =
+  | { type: "bearer" }
+  | { type: "header"; header_name: string }
+  | { type: "query"; param_name: string };
+
+export interface IntegrationRow {
+  id: string;
+  name: string;
+  display_name: string;
+  base_url: string;
+  /** Discriminator only ('bearer' | 'header' | 'query'). The full
+   *  payload (with header_name / param_name) lives in config.toml. */
+  auth_type: string;
+  spec_file: string;
+  /** SQLite stores INTEGER 0/1; backend models it as i64. */
+  enabled: number;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface TestIntegrationResult {
+  ok: boolean;
+  status: number;
+  elapsed_ms: number;
+  message: string;
+}
+
+export function listIntegrations(): Promise<IntegrationRow[]> {
+  return invoke("list_integrations");
+}
+
+export function addIntegration(args: {
+  name: string;
+  displayName: string;
+  baseUrl: string;
+  apiKey: string;
+  authType: IntegrationAuthType;
+  specContent?: string;
+}): Promise<IntegrationRow> {
+  return invoke("add_integration", args);
+}
+
+export function updateIntegration(args: {
+  id: string;
+  name: string;
+  displayName: string;
+  baseUrl: string;
+  /** Pass to overwrite the stored key; omit to preserve the existing
+   *  key on disk (useful when toggling `enabled` without retyping). */
+  apiKey?: string;
+  authType: IntegrationAuthType;
+  enabled: boolean;
+  specContent?: string;
+}): Promise<IntegrationRow> {
+  return invoke("update_integration", args);
+}
+
+export function removeIntegration(args: { name: string }): Promise<void> {
+  return invoke("remove_integration", args);
+}
+
+export function testIntegration(args: {
+  name: string;
+}): Promise<TestIntegrationResult> {
+  return invoke("test_integration", args);
+}
+
 // ── placeholders for types not yet returned by backend ──────────────────────
 //
 // Re-export the row types so consumers can import from a single place when

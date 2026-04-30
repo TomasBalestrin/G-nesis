@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  Cable,
   CheckCircle2,
   Download,
   Eye,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { IntegrationsSection } from "@/components/integrations/IntegrationsSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/useToast";
@@ -278,6 +280,16 @@ export function SettingsConfigSection() {
             onRefresh={() => void refreshDeps()}
             onInstall={handleInstallDep}
           />
+
+          <hr className="border-[var(--border-sub)]" />
+
+          <Section
+            icon={<Cable className="h-4 w-4" />}
+            title="Integrações"
+            description="APIs REST que o chat acessa via @<nome>. A api_key fica só em ~/.genesis/config.toml — nunca cruza o IPC boundary."
+          >
+            <IntegrationsSection />
+          </Section>
         </div>
       </div>
     </div>

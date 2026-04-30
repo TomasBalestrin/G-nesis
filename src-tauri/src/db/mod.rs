@@ -27,6 +27,7 @@ const MIGRATION_003: &str = include_str!("../../migrations/003_app_state.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_workflows.sql");
 const MIGRATION_006: &str = include_str!("../../migrations/006_knowledge.sql");
 const MIGRATION_007: &str = include_str!("../../migrations/007_capabilities.sql");
+const MIGRATION_008: &str = include_str!("../../migrations/008_integrations.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -113,6 +114,13 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
     pool.execute(MIGRATION_007)
         .await
         .map_err(|e| format!("migration 007 failed: {e}"))?;
+
+    // 008 — integrations table. Index relacional dos REST APIs que o
+    // chat acessa via @<name>. Auth payload + api_key continuam no
+    // config.toml; esta tabela é só metadata pra listagem rápida.
+    pool.execute(MIGRATION_008)
+        .await
+        .map_err(|e| format!("migration 008 failed: {e}"))?;
 
     Ok(())
 }

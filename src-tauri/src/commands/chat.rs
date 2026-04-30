@@ -13,8 +13,9 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 
@@ -30,7 +31,7 @@ use crate::ai::models::{self, ModelConfig};
 // of literal template tokens.
 use crate::ai::prompts;
 use crate::config;
-use crate::db::models::{ChatMessage, Conversation};
+use crate::db::models::{ChatMessage, Conversation, IntegrationRow};
 use crate::db::queries;
 use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta, SkillStep};
 use crate::orchestrator::ExecutionRegistry;
@@ -137,9 +138,291 @@ fn extract_slash_command(content: &str) -> Option<&str> {
     }
 }
 
-// ── @ and # mention extraction ──────────────────────────────────────────────
+/// Extract a turn-level integration invocation from a message that
+/// STARTS with `@`. Returns `(name, query)` where `query` is the rest
+/// of the trimmed message after the first whitespace following the
+/// name (empty when the user typed only `@<name>`).
+///
+/// **Important**: this only fires when `@` is the first non-whitespace
+/// char. Mid-text mentions (`rode @github buscar issues`) are NOT
+/// integration invocations — those flow through `extract_at_mentions`
+/// for system-prompt injection only. The split mirrors how `/skill`
+/// at the start activates a slash-command flow vs. `/path/to/x`
+/// mid-text being plain text.
+fn extract_at_integration(content: &str) -> Option<(&str, &str)> {
+    let trimmed = content.trim();
+    let rest = trimmed.strip_prefix('@')?;
+    match rest.find(char::is_whitespace) {
+        Some(idx) => {
+            let name = &rest[..idx];
+            if name.is_empty() {
+                None
+            } else {
+                Some((name, rest[idx..].trim_start()))
+            }
+        }
+        None => {
+            if rest.is_empty() {
+                None
+            } else {
+                Some((rest, ""))
+            }
+        }
+    }
+}
 
-use std::sync::OnceLock;
+// ── integration_call extraction & dispatch ──────────────────────────────────
+
+/// Parsed `{"integration_call": {...}}` envelope. Lives only inside
+/// the chat post-processing path; the `commands/integrations.rs`
+/// crate has its own (different) IntegrationCallRequest if/when it
+/// needs one.
+#[derive(Debug, Clone)]
+struct IntegrationCallRequest {
+    endpoint: String,
+    /// Resolved query params. Stringified at extraction time so the
+    /// HTTP layer can drop them straight into reqwest's `.query()`.
+    params: Option<Vec<(String, String)>>,
+}
+
+#[derive(Deserialize)]
+struct CallEnvelope {
+    integration_call: CallInner,
+}
+
+#[derive(Deserialize)]
+struct CallInner {
+    endpoint: String,
+    #[serde(default)]
+    params: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Detect the integration_call protocol in a model response. Accepts
+/// pure JSON (`{"integration_call": ...}`) or fenced JSON (with or
+/// without the `json` lang tag). Returns `None` for plain text or
+/// JSON that doesn't carry the envelope key — those flow through to
+/// the user as the regular reply.
+fn extract_integration_call(response: &str) -> Option<IntegrationCallRequest> {
+    let cleaned = strip_code_fence(response);
+    let envelope: CallEnvelope = serde_json::from_str(cleaned).ok()?;
+    Some(IntegrationCallRequest {
+        endpoint: envelope.integration_call.endpoint,
+        params: envelope.integration_call.params.map(|m| {
+            m.into_iter()
+                .map(|(k, v)| (k, json_value_to_param(v)))
+                .collect()
+        }),
+    })
+}
+
+/// Strip an opening triple-backtick fence (with optional lang tag) and
+/// the closing fence. Falls back to the trimmed input when no fence
+/// is detected. Pure helper so `extract_integration_call` doesn't need
+/// to special-case the markdown formatting GPT may emit.
+fn strip_code_fence(s: &str) -> &str {
+    let trimmed = s.trim();
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        let after_first_line = match rest.find('\n') {
+            Some(idx) => &rest[idx + 1..],
+            None => rest,
+        };
+        if let Some(end_idx) = after_first_line.rfind("```") {
+            return after_first_line[..end_idx].trim();
+        }
+    }
+    trimmed
+}
+
+/// Stringify a JSON value for use as a query-string param. Strings
+/// pass through verbatim; null becomes empty; numbers/bools/objects
+/// fall back to JSON encoding so the model can pass nested structures
+/// when the API expects them serialized.
+fn json_value_to_param(v: serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct IntegrationLoadingEvent {
+    conversation_id: Option<String>,
+    integration_name: String,
+    endpoint: String,
+}
+
+#[derive(Clone, Serialize)]
+struct IntegrationLoadedEvent {
+    conversation_id: Option<String>,
+    integration_name: String,
+    endpoint: String,
+    success: bool,
+}
+
+/// Soft cap on the API JSON dropped into the second GPT call. Same
+/// 50 KiB limit used by `commands::integrations::call_integration` —
+/// keeping the two in sync prevents the chat path from accidentally
+/// exposing more bytes to the model than the IPC handler does.
+const INTEGRATION_RESPONSE_MAX_BYTES: usize = 50 * 1024;
+
+/// Execute the integration_call HTTP request, mirroring the build
+/// path used by `commands::integrations::call_integration` (B2):
+/// resolve api_key + auth from the TOML, build IntegrationClient,
+/// GET the endpoint, truncate at 50 KiB, bump last_used_at on success.
+///
+/// Lives in chat.rs (rather than reusing the IPC handler) because
+/// `#[tauri::command]` handlers take `State<'_, _>` which doesn't
+/// compose well outside the IPC boundary; the duplication is
+/// intentional and small.
+async fn run_integration_request(
+    integration: &IntegrationRow,
+    call: &IntegrationCallRequest,
+    pool: &SqlitePool,
+) -> Result<String, String> {
+    use crate::integrations::{self, AuthConfig, AuthType, IntegrationClient};
+
+    let api_key = integrations::get_api_key(&integration.name)?
+        .ok_or_else(|| format!("api_key ausente pra `{}`", integration.name))?;
+    let full = integrations::load_integrations()?
+        .into_iter()
+        .find(|i| i.name == integration.name)
+        .ok_or_else(|| {
+            format!(
+                "integration `{}` não está em config.toml",
+                integration.name
+            )
+        })?;
+
+    let auth = match full.auth_type {
+        AuthType::Bearer => AuthConfig::Bearer(api_key),
+        AuthType::Header { header_name } => AuthConfig::Header {
+            name: header_name,
+            value: api_key,
+        },
+        AuthType::Query { param_name } => AuthConfig::Query {
+            param: param_name,
+            value: api_key,
+        },
+    };
+
+    let client = IntegrationClient::new(&integration.base_url, auth)
+        .map_err(|e| format!("HTTP client: {e}"))?;
+
+    // IntegrationError já tem Display em PT-BR (B1+F2) — passa direto
+    // pra String pra surface do chat usar como canned reply.
+    let value = client
+        .get(&call.endpoint, call.params.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let _ = queries::touch_integration_last_used(pool, &integration.name).await;
+
+    let json = serde_json::to_string(&value)
+        .map_err(|e| format!("serialize JSON: {e}"))?;
+    let raw_len = json.len();
+    if raw_len > INTEGRATION_RESPONSE_MAX_BYTES {
+        let mut end = INTEGRATION_RESPONSE_MAX_BYTES;
+        while end > 0 && !json.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(format!(
+            "{}\n... [truncated; full was {raw_len} bytes]",
+            &json[..end]
+        ))
+    } else {
+        Ok(json)
+    }
+}
+
+/// Apply the integration_call protocol on top of a raw model reply.
+///
+/// Two pass-through cases (no second GPT call):
+///   1. `active_integration` is None — user didn't @-prefix the turn.
+///   2. The reply isn't an `integration_call` envelope — model decided
+///      it had enough context to answer in text. Surface the raw reply.
+///
+/// When the envelope is detected:
+///   - Emit `integration:loading` so the UI can show a spinner.
+///   - Run the HTTP call (errors surface to the model as text in the
+///     second prompt, so it can apologize gracefully).
+///   - Emit `integration:loaded` with success=true|false.
+///   - Build a synthetic `user` turn carrying the API result.
+///   - Re-call the model (plain `chat_completion`, no tools) so the
+///     reply IS the interpretation. The first reply (raw JSON) is
+///     never persisted — the user only sees the interpretation.
+async fn post_process_integration_call(
+    raw: (String, Option<String>, Option<String>),
+    active_integration: Option<&IntegrationRow>,
+    client: &AiClient,
+    system_prompt: &str,
+    messages: &[Message],
+    pool: &SqlitePool,
+    app: &AppHandle,
+    conversation_id: Option<&str>,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    let Some(integration) = active_integration else {
+        return Ok(raw);
+    };
+    let Some(call) = extract_integration_call(&raw.0) else {
+        return Ok(raw);
+    };
+
+    let _ = app.emit(
+        "integration:loading",
+        IntegrationLoadingEvent {
+            conversation_id: conversation_id.map(str::to_string),
+            integration_name: integration.name.clone(),
+            endpoint: call.endpoint.clone(),
+        },
+    );
+
+    let api_outcome = run_integration_request(integration, &call, pool).await;
+    let success = api_outcome.is_ok();
+
+    let _ = app.emit(
+        "integration:loaded",
+        IntegrationLoadedEvent {
+            conversation_id: conversation_id.map(str::to_string),
+            integration_name: integration.name.clone(),
+            endpoint: call.endpoint.clone(),
+            success,
+        },
+    );
+
+    // Falha → retorna a msg PT-BR direto (sem 2ª chamada GPT). Display
+    // do IntegrationError já é amigável (401→"key inválida", 404→"não
+    // encontrado", 5xx→"servidor fora", timeout). Economia de tokens +
+    // latência menor pra erro.
+    let json = match api_outcome {
+        Ok(json) => json,
+        Err(err) => {
+            let canned = format!(
+                "Não consegui consultar `@{name}` agora: {err}",
+                name = integration.name,
+            );
+            return Ok((canned, None, None));
+        }
+    };
+
+    let context_msg = format!(
+        "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}`:\n\n```json\n{json}\n```\n\nInterprete o resultado e responda à pergunta original em português conciso. Não devolva o JSON cru.",
+        name = integration.name,
+        endpoint = call.endpoint,
+    );
+
+    let mut next_messages: Vec<Message> = messages.to_vec();
+    next_messages.push(Message::user(context_msg));
+
+    let interpretation = client
+        .chat_completion(system_prompt, &next_messages)
+        .await
+        .map_err(|e| e.user_message())?;
+
+    Ok((interpretation, None, None))
+}
+
+// ── @ and # mention extraction ──────────────────────────────────────────────
 
 /// Lazy compile and cache the @-mention regex. Pattern: a word boundary
 /// (start of string OR a whitespace) followed by `@` and a name made
@@ -982,8 +1265,35 @@ pub async fn send_chat_message(
         None => true,
     };
 
+    // Turn-level integration invocation. Only checked when there's no
+    // slash-command — `/skill` always wins. Resolves to one of three
+    // states:
+    //   1. user didn't @-prefix this turn → both None.
+    //   2. @<name> matched an enabled row → `active_integration` =
+    //      Some(row), canned = None, AI flow continues with a system
+    //      prompt block describing the integration.
+    //   3. @<name> matched nothing or a disabled row → canned reply
+    //      short-circuits the AI roundtrip.
+    let at_integration = if slash_command.is_none() {
+        extract_at_integration(&content)
+    } else {
+        None
+    };
+    let (active_integration, canned_integration_reply): (
+        Option<IntegrationRow>,
+        Option<String>,
+    ) = match at_integration {
+        None => (None, None),
+        Some((name, _query)) => match queries::get_integration_by_name(&pool, name).await? {
+            Some(row) if row.enabled == 1 => (Some(row), None),
+            _ => (None, Some(format!("Integração @{name} não encontrada"))),
+        },
+    };
+
     let (reply_content, thinking, thinking_summary) =
-        if let (false, Some(skill_name)) = (needs_ai, slash_command.as_deref()) {
+        if let Some(canned) = canned_integration_reply {
+            (canned, None, None)
+        } else if let (false, Some(skill_name)) = (needs_ai, slash_command.as_deref()) {
             (try_slash_reply(skill_name), None, None)
         } else {
             let history =
@@ -1048,6 +1358,25 @@ pub async fn send_chat_message(
                 system_prompt.push_str(&mentions_block);
             }
 
+            // Active integration block — when the user prefixed the
+            // turn with @<name> and the row exists+enabled (resolved
+            // above as `active_integration`), inject PROMPT_INTEGRATION
+            // with the spec content. Spec read errors fall through to
+            // None → the prompt's fallback note tells GPT to ask for
+            // endpoints. The integration_call JSON protocol is fully
+            // documented inside PROMPT_INTEGRATION; orchestrator-side
+            // execution is wired separately.
+            if let Some(integration) = active_integration.as_ref() {
+                let spec = crate::integrations::load_spec(&integration.name)
+                    .ok()
+                    .flatten();
+                system_prompt = prompts::with_integration_context(
+                    &system_prompt,
+                    &integration.name,
+                    spec.as_deref(),
+                );
+            }
+
             // Skill authoring flow — appended after mentions so the
             // agent rules (etapas 1-6, regras de criação, etc.) sit
             // closest to the user message and bias the next reply.
@@ -1072,8 +1401,9 @@ pub async fn send_chat_message(
             // on the existing thinking/streaming path — its native tool
             // protocol differs from OpenAI's and lands in a separate
             // task. Both branches converge on (content, thinking,
-            // thinking_summary) so the persistence below stays uniform.
-            match &client {
+            // thinking_summary) which then flows through
+            // `post_process_integration_call` for the @<name> protocol.
+            let raw = match &client {
                 AiClient::OpenAi(openai) => {
                     let tools = genesis_tools();
                     let mut loop_messages: Vec<Message> = messages.clone();
@@ -1130,7 +1460,19 @@ pub async fn send_chat_message(
                         .map_err(|e| e.user_message())?;
                     (content, thinking, thinking_summary)
                 }
-            }
+            };
+
+            post_process_integration_call(
+                raw,
+                active_integration.as_ref(),
+                &client,
+                &system_prompt,
+                &messages,
+                &pool,
+                &app,
+                conversation_id.as_deref(),
+            )
+            .await?
         };
 
     let assistant_msg = ChatMessage {
@@ -1583,6 +1925,118 @@ mod tests {
     fn extract_slash_command_rejects_empty_name() {
         assert_eq!(extract_slash_command("/"), None);
         assert_eq!(extract_slash_command("/   "), None);
+    }
+
+    #[test]
+    fn extract_at_integration_basic_split() {
+        assert_eq!(
+            extract_at_integration("@perpetuohq teste"),
+            Some(("perpetuohq", "teste"))
+        );
+        assert_eq!(
+            extract_at_integration("  @perpetuohq teste  "),
+            Some(("perpetuohq", "teste"))
+        );
+    }
+
+    #[test]
+    fn extract_at_integration_bare_name_has_empty_query() {
+        assert_eq!(extract_at_integration("@github"), Some(("github", "")));
+        assert_eq!(extract_at_integration("  @github  "), Some(("github", "")));
+    }
+
+    #[test]
+    fn extract_at_integration_keeps_full_query() {
+        // Multiple words after the name all live in the `query` slice;
+        // trim_start strips the separating whitespace but keeps inner spaces.
+        assert_eq!(
+            extract_at_integration("@github buscar issues abertas"),
+            Some(("github", "buscar issues abertas"))
+        );
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_bare_at() {
+        assert_eq!(extract_at_integration("@"), None);
+        assert_eq!(extract_at_integration("   @   "), None);
+        // Whitespace immediately after @ → name would be empty, reject.
+        assert_eq!(extract_at_integration("@ teste"), None);
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_mid_text_mention() {
+        // @-mentions in the middle of a message route through
+        // extract_at_mentions, NOT this turn-level extractor.
+        assert_eq!(extract_at_integration("rode @github buscar"), None);
+        assert_eq!(extract_at_integration("oi @github"), None);
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_empty_or_whitespace() {
+        assert_eq!(extract_at_integration(""), None);
+        assert_eq!(extract_at_integration("    "), None);
+        assert_eq!(extract_at_integration("hello world"), None);
+    }
+
+    #[test]
+    fn extract_integration_call_pure_json() {
+        let r = r#"{"integration_call":{"endpoint":"/issues","params":{"state":"open"}}}"#;
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/issues");
+        let params = call.params.unwrap();
+        assert!(params.iter().any(|(k, v)| k == "state" && v == "open"));
+    }
+
+    #[test]
+    fn extract_integration_call_fenced_with_lang_tag() {
+        let r = "```json\n{\"integration_call\":{\"endpoint\":\"/users/42\"}}\n```";
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/users/42");
+        assert!(call.params.is_none());
+    }
+
+    #[test]
+    fn extract_integration_call_fenced_no_lang_tag() {
+        let r = "```\n{\"integration_call\":{\"endpoint\":\"/me\"}}\n```";
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/me");
+    }
+
+    #[test]
+    fn extract_integration_call_returns_none_for_plain_text() {
+        assert!(extract_integration_call("Olá! Aqui vai o resumo: ...").is_none());
+        assert!(extract_integration_call("").is_none());
+    }
+
+    #[test]
+    fn extract_integration_call_returns_none_without_envelope_key() {
+        // Valid JSON but no integration_call key.
+        assert!(extract_integration_call(r#"{"foo":"bar"}"#).is_none());
+        // Different envelope shape.
+        assert!(extract_integration_call(r#"{"endpoint":"/x"}"#).is_none());
+    }
+
+    #[test]
+    fn extract_integration_call_stringifies_non_string_params() {
+        let r = r#"{"integration_call":{"endpoint":"/x","params":{"page":3,"flag":true}}}"#;
+        let call = extract_integration_call(r).unwrap();
+        let params = call.params.unwrap();
+        // Numbers and booleans get JSON-encoded so reqwest can pass
+        // them as-is in the query string.
+        assert!(params.iter().any(|(k, v)| k == "page" && v == "3"));
+        assert!(params.iter().any(|(k, v)| k == "flag" && v == "true"));
+    }
+
+    #[test]
+    fn strip_code_fence_pass_through_unfenced() {
+        assert_eq!(strip_code_fence("plain text"), "plain text");
+        assert_eq!(strip_code_fence("  spaced  "), "spaced");
+    }
+
+    #[test]
+    fn strip_code_fence_strips_lang_and_close() {
+        assert_eq!(strip_code_fence("```json\nbody\n```"), "body");
+        assert_eq!(strip_code_fence("```\nbody\n```"), "body");
     }
 
     #[test]
