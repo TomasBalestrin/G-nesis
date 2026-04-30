@@ -11,6 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 
+import { AddIntegrationModal } from "@/components/integrations/AddIntegrationModal";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -85,23 +86,11 @@ export function IntegrationsSection() {
         </ul>
       )}
 
-      {/* Stub pro modal de criação — D2 substitui pelo form completo. */}
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Nova Integração</DialogTitle>
-            <DialogDescription>
-              O formulário de criação será adicionado em D2 (nome, base
-              URL, auth, api key, spec).
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreating(false)}>
-              Fechar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AddIntegrationModal
+        open={creating}
+        onOpenChange={setCreating}
+        onSuccess={() => void refresh()}
+      />
     </div>
   );
 }
