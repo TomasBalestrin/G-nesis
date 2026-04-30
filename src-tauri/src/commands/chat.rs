@@ -198,14 +198,26 @@ struct CallInner {
     params: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Detect the integration_call protocol in a model response. Accepts
-/// pure JSON (`{"integration_call": ...}`) or fenced JSON (with or
-/// without the `json` lang tag). Returns `None` for plain text or
-/// JSON that doesn't carry the envelope key — those flow through to
-/// the user as the regular reply.
+/// Detect the integration_call protocol in a model response. Aceita
+/// 4 formatos comuns que o GPT emite na prática:
+///   - JSON puro:      `{"integration_call": {...}}`
+///   - Fenced:         `` ```json\n{"integration_call":...}\n``` ``
+///   - Texto + JSON:   `"Vou providenciar... {"integration_call":...}"`
+///   - JSON + texto:   `"{"integration_call":...} Conferindo agora."`
+///
+/// Estratégia: localizar o substring `"integration_call"`, andar pra
+/// trás até a `{` mais próxima (a abertura do envelope), depois fazer
+/// um scan forward com depth + estado de string-literal (com `\`
+/// escapes) pra achar o `}` de fechamento correto. Esse path lida com
+/// `{` / `}` dentro de strings JSON (ex: `"endpoint": "/path/{id}"`)
+/// sem desbalancear a contagem.
+///
+/// `None` quando não há marker, JSON malformado ou shape errada
+/// (`integration_call` precisa apontar pra um objeto com `endpoint`
+/// string).
 fn extract_integration_call(response: &str) -> Option<IntegrationCallRequest> {
-    let cleaned = strip_code_fence(response);
-    let envelope: CallEnvelope = serde_json::from_str(cleaned).ok()?;
+    let json_str = find_envelope(response)?;
+    let envelope: CallEnvelope = serde_json::from_str(json_str).ok()?;
     Some(IntegrationCallRequest {
         endpoint: envelope.integration_call.endpoint,
         params: envelope.integration_call.params.map(|m| {
@@ -216,22 +228,53 @@ fn extract_integration_call(response: &str) -> Option<IntegrationCallRequest> {
     })
 }
 
-/// Strip an opening triple-backtick fence (with optional lang tag) and
-/// the closing fence. Falls back to the trimmed input when no fence
-/// is detected. Pure helper so `extract_integration_call` doesn't need
-/// to special-case the markdown formatting GPT may emit.
-fn strip_code_fence(s: &str) -> &str {
-    let trimmed = s.trim();
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        let after_first_line = match rest.find('\n') {
-            Some(idx) => &rest[idx + 1..],
-            None => rest,
-        };
-        if let Some(end_idx) = after_first_line.rfind("```") {
-            return after_first_line[..end_idx].trim();
+/// Find the substring of `response` that brackets a balanced
+/// `{ ... "integration_call" ... }` envelope. ASCII-byte scan with
+/// string-literal awareness (so `{` / `}` inside `"..."` don't
+/// mis-balance). Returns `None` quando não há marker ou quando o
+/// envelope não fecha corretamente.
+fn find_envelope(response: &str) -> Option<&str> {
+    const MARKER: &str = "\"integration_call\"";
+    let marker_pos = response.find(MARKER)?;
+    let prefix = &response[..marker_pos];
+    let start = prefix.rfind('{')?;
+
+    let bytes = response.as_bytes();
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+    let mut end: Option<usize> = None;
+
+    for i in start..bytes.len() {
+        let b = bytes[i];
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if in_string {
+            match b {
+                b'\\' => escape_next = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i + 1);
+                    break;
+                }
+            }
+            _ => {}
         }
     }
-    trimmed
+
+    let end = end?;
+    Some(&response[start..end])
 }
 
 /// Stringify a JSON value for use as a query-string param. Strings
@@ -2207,15 +2250,52 @@ mod tests {
     }
 
     #[test]
-    fn strip_code_fence_pass_through_unfenced() {
-        assert_eq!(strip_code_fence("plain text"), "plain text");
-        assert_eq!(strip_code_fence("  spaced  "), "spaced");
+    fn extract_integration_call_handles_text_before_json() {
+        // O GPT às vezes prefixa o envelope com prosa apesar do
+        // PROMPT_INTEGRATION pedir JSON puro. O scan precisa pegar
+        // mesmo assim — caso real do bug report.
+        let r = "Para buscar o faturamento... Vou providenciar agora.\n\
+                 {\"integration_call\": {\"endpoint\": \"/perpetuos\", \"params\": {}}}";
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/perpetuos");
     }
 
     #[test]
-    fn strip_code_fence_strips_lang_and_close() {
-        assert_eq!(strip_code_fence("```json\nbody\n```"), "body");
-        assert_eq!(strip_code_fence("```\nbody\n```"), "body");
+    fn extract_integration_call_handles_text_after_json() {
+        let r = "{\"integration_call\":{\"endpoint\":\"/x\"}} Conferindo agora.";
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/x");
+    }
+
+    #[test]
+    fn extract_integration_call_handles_braces_inside_strings() {
+        // `{` / `}` dentro de strings JSON não devem desbalancear o
+        // depth count — string-aware scan.
+        let r = "{\"integration_call\":{\"endpoint\":\"/path/{id}/sub\",\"params\":{}}}";
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/path/{id}/sub");
+    }
+
+    #[test]
+    fn extract_integration_call_handles_escaped_quote_inside_string() {
+        // `\"` dentro de string JSON não fecha o string state
+        // prematuramente.
+        let r = r#"{"integration_call":{"endpoint":"/q","params":{"k":"a\"b"}}}"#;
+        let call = extract_integration_call(r).unwrap();
+        assert_eq!(call.endpoint, "/q");
+        let params = call.params.unwrap();
+        assert!(params.iter().any(|(k, v)| k == "k" && v == "a\"b"));
+    }
+
+    #[test]
+    fn extract_integration_call_returns_none_for_unbalanced() {
+        // Marker presente mas envelope não fecha → None (não tenta
+        // adivinhar).
+        assert!(extract_integration_call("{\"integration_call\":").is_none());
+        assert!(
+            extract_integration_call("texto e {\"integration_call\":{\"endpoint\":\"/x\"")
+                .is_none()
+        );
     }
 
     #[test]
