@@ -115,4 +115,59 @@
   .font-display { font-family: 'Lora', Georgia, serif; }
   .font-body { font-family: 'DM Sans', system-ui, -apple-system, sans-serif; }
   .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+  /* Escala tipográfica do Elite Premium (B3). Cada `.type-*` é uma
+     receita completa (font-family + size + weight + cor quando
+     relevante) pra evitar mix-and-match acidental.
+     CONSTRAINT: body text ≤ 15px. As 4 classes de body (.type-body
+     14px, .type-label 13px, .type-meta 11px, .type-brand 14px)
+     respeitam o limite; .type-hero/.type-h1/.type-h2/.type-value
+     são display e podem ultrapassar (DESIGN.md §typography).
+     Display em Lora; body em DM Sans — nunca misturar. */
+  .type-hero {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .type-h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .type-h2 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--gd);
+  }
+  .type-body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .type-label {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--tx2);
+  }
+  .type-meta {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    color: var(--tx3);
+  }
+  .type-value {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--gd);
+  }
+  .type-brand {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--gd);
+  }
 }
