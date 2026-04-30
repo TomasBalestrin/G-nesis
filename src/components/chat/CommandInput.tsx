@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useCaminhosStore } from "@/stores/caminhosStore";
 import { useCapabilitiesStore } from "@/stores/capabilitiesStore";
+import { useIntegrationsStore } from "@/stores/integrationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 
 import { AtCommandModal, filterCapabilities } from "./AtCommandModal";
+import { AtIntegrationModal, filterIntegrations } from "./AtIntegrationModal";
 import { CaminhoSelector } from "./CaminhoSelector";
 import { HashCommandModal, filterCaminhos } from "./HashCommandModal";
 import { ModelSelector } from "./ModelSelector";
@@ -26,25 +28,38 @@ type Trigger = "/" | "@" | "#";
 
 interface MentionState {
   trigger: Trigger | null;
+  /** "start" → trigger char is the first non-whitespace of the input
+   *  (turn-level command — slash for skills, `@` for integrations).
+   *  "inline" → trigger char is mid-text (mention markers — `@` for
+   *  capabilities, `#` for caminhos). */
+  position: "start" | "inline";
   /** Text after the trigger char up to the cursor. */
   query: string;
   /** Index of the trigger char in `value` (start of the partial mention). */
   startIndex: number;
 }
 
-const NO_MENTION: MentionState = { trigger: null, query: "", startIndex: -1 };
+const NO_MENTION: MentionState = {
+  trigger: null,
+  position: "inline",
+  query: "",
+  startIndex: -1,
+};
 
 /**
- * Chat input with three autocomplete popups:
- *   - `/skill-name`  at the start of the input → submits on select
- *     (slash commands still bypass the GPT roundtrip when matched).
- *   - `@capability`  anywhere mid-text → inserts `@name ` at the cursor.
- *   - `#caminho`     anywhere mid-text → inserts `#name ` at the cursor.
+ * Chat input with four autocomplete popups, gated by trigger char +
+ * position (start-of-input vs mid-text):
+ *   - `/skill-name`     start  → submits on select.
+ *   - `@<integration>`  start  → inserts `@name ` (turn-level command,
+ *                                detected by `extract_at_integration`).
+ *   - `@capability`     inline → inserts `@name ` (mention; system
+ *                                prompt injection via extract_at_mentions).
+ *   - `#caminho`        inline → inserts `#name `.
  *
  * Detection runs against the current word (last whitespace before the
- * cursor → cursor position). `/` is gated to start-of-input so plain
- * sentences with a slash mid-text don't pop the menu. `@` and `#`
- * fire in any position because they're mention markers, not commands.
+ * cursor → cursor position). The `position` flag in MentionState
+ * disambiguates the two `@` paths: same trigger char, different
+ * popup + filter list + downstream backend semantics.
  *
  * One highlight state, shared across modals — resets when the trigger
  * or query changes. Keyboard handling is owned here so the textarea's
@@ -72,13 +87,17 @@ export function CommandInput({
   const caminhosLoaded = useCaminhosStore((s) => s.loaded);
   const ensureCaminhos = useCaminhosStore((s) => s.ensureLoaded);
 
+  const integrations = useIntegrationsStore((s) => s.items);
+  const integrationsLoaded = useIntegrationsStore((s) => s.loaded);
+  const ensureIntegrations = useIntegrationsStore((s) => s.ensureLoaded);
+
   const mention = useMemo(
     () => (disabled ? NO_MENTION : detectMention(value, cursor)),
     [value, cursor, disabled],
   );
 
-  // Filtered candidates per trigger. Only the active modal renders, so
-  // the inactive arrays are essentially free (empty).
+  // Filtered candidates per (trigger, position). Only the active modal
+  // renders, so the inactive arrays are essentially free (empty).
   const filteredSkills = useMemo(
     () =>
       mention.trigger === "/" && skillsLoaded
@@ -88,7 +107,7 @@ export function CommandInput({
   );
   const filteredCaps = useMemo(
     () =>
-      mention.trigger === "@" && capsLoaded
+      mention.trigger === "@" && mention.position === "inline" && capsLoaded
         ? filterCapabilities(capabilities, mention.query)
         : [],
     [mention, capabilities, capsLoaded],
@@ -100,13 +119,33 @@ export function CommandInput({
         : [],
     [mention, caminhos, caminhosLoaded],
   );
+  const filteredIntegrations = useMemo(
+    () =>
+      mention.trigger === "@" &&
+      mention.position === "start" &&
+      integrationsLoaded
+        ? filterIntegrations(integrations, mention.query)
+        : [],
+    [mention, integrations, integrationsLoaded],
+  );
 
   // Hydrate the matching catalog the first time the user triggers it.
+  // `@` at start-of-input → integrations; mid-text → capabilities.
   useEffect(() => {
     if (mention.trigger === "/") void ensureSkills();
-    if (mention.trigger === "@") void ensureCaps();
+    if (mention.trigger === "@" && mention.position === "start")
+      void ensureIntegrations();
+    if (mention.trigger === "@" && mention.position === "inline")
+      void ensureCaps();
     if (mention.trigger === "#") void ensureCaminhos();
-  }, [mention.trigger, ensureSkills, ensureCaps, ensureCaminhos]);
+  }, [
+    mention.trigger,
+    mention.position,
+    ensureSkills,
+    ensureCaps,
+    ensureCaminhos,
+    ensureIntegrations,
+  ]);
 
   // Reset highlight when the trigger or query changes.
   useEffect(() => {
@@ -172,16 +211,18 @@ export function CommandInput({
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // Active list for the current trigger. The branches below only run
-    // when one is non-empty so navigation keys are safe to intercept.
+    // Active list for the current (trigger, position). Branches below
+    // only run when one is non-empty so navigation keys are safe.
     const active =
       mention.trigger === "/"
         ? filteredSkills.map((s) => s.name)
-        : mention.trigger === "@"
-          ? filteredCaps.map((c) => c.name)
-          : mention.trigger === "#"
-            ? filteredCaminhos.map((c) => c.name)
-            : [];
+        : mention.trigger === "@" && mention.position === "start"
+          ? filteredIntegrations.map((i) => i.name)
+          : mention.trigger === "@"
+            ? filteredCaps.map((c) => c.name)
+            : mention.trigger === "#"
+              ? filteredCaminhos.map((c) => c.name)
+              : [];
 
     if (mention.trigger && active.length > 0) {
       if (e.key === "ArrowDown") {
@@ -229,6 +270,9 @@ export function CommandInput({
 
   function commitMention(name: string) {
     if (mention.trigger === "/") return selectSlash(name);
+    // Both `@` paths insert "@name " — only the source list differs
+    // (start → integrations, inline → capabilities). Backend
+    // disambiguates via extract_at_integration vs extract_at_mentions.
     if (mention.trigger === "@") return selectInline("@", name);
     if (mention.trigger === "#") return selectInline("#", name);
   }
@@ -265,8 +309,23 @@ export function CommandInput({
           setCursor(0);
         }}
       />
+      <AtIntegrationModal
+        open={
+          mention.trigger === "@" && mention.position === "start" && !disabled
+        }
+        query={mention.query}
+        integrations={integrations ?? []}
+        highlight={highlight}
+        onHighlightChange={setHighlight}
+        onSelect={(name) => selectInline("@", name)}
+        onClose={() => {
+          // Same dismiss-without-clearing pattern as the inline modals.
+        }}
+      />
       <AtCommandModal
-        open={mention.trigger === "@" && !disabled}
+        open={
+          mention.trigger === "@" && mention.position === "inline" && !disabled
+        }
         query={mention.query}
         capabilities={capabilities ?? []}
         highlight={highlight}
@@ -365,17 +424,35 @@ function detectMention(text: string, cursor: number): MentionState {
   const word = text.slice(i, cursor);
   if (word.length === 0) return NO_MENTION;
   const head = word[0];
+  const atStart = text.slice(0, i).trim() === "";
   if (head === "/") {
-    if (text.slice(0, i).trim() === "") {
-      return { trigger: "/", query: word.slice(1), startIndex: i };
+    if (atStart) {
+      return {
+        trigger: "/",
+        position: "start",
+        query: word.slice(1),
+        startIndex: i,
+      };
     }
     return NO_MENTION;
   }
   if (head === "@") {
-    return { trigger: "@", query: word.slice(1), startIndex: i };
+    // Start-of-input → integration (turn-level command).
+    // Mid-text → capability mention (system-prompt injection).
+    return {
+      trigger: "@",
+      position: atStart ? "start" : "inline",
+      query: word.slice(1),
+      startIndex: i,
+    };
   }
   if (head === "#") {
-    return { trigger: "#", query: word.slice(1), startIndex: i };
+    return {
+      trigger: "#",
+      position: "inline",
+      query: word.slice(1),
+      startIndex: i,
+    };
   }
   return NO_MENTION;
 }
