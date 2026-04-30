@@ -628,6 +628,7 @@ Regras críticas:
 - `params` é OPCIONAL (omita ou `{}` quando não precisar). Quando incluir, vira query string. **NÃO inclua `api_key`** — o orquestrador injeta.
 - NÃO escreva NENHUM texto explicativo, comentário ou markdown ao redor do JSON. Só o bloco JSON puro.
 - **NUNCA invente IDs (UUIDs, slugs, identificadores).** Você NÃO sabe os IDs dos recursos do usuário. Se a spec mostra um endpoint tipo `/perpetuos/:id/...`, primeiro chame o endpoint de listagem (ex: `GET /perpetuos`) pra obter os IDs reais; só DEPOIS, no próximo turn, faça a chamada com o ID que apareceu na resposta. Inventar UUIDs gera 404 e queima o turno.
+- **OTIMIZAÇÃO:** Se precisar de múltiplos dados, resolva no MENOR número de chamadas possível. Exemplos: depois de receber a lista com IDs, vá DIRETO pro endpoint final relevante — não faça chamadas intermediárias só "por garantia". Cada chain consecutiva tem cap de 3 rounds e 1s de delay entre chamadas — gaste o budget em hops que de fato precisam acontecer.
 - A ÚNICA exceção pra responder em texto: se a pergunta do usuário NÃO precisa da API (perguntou só sobre a spec, ou você já tem a resposta no histórico do chat), responda em texto. Mas no caso de "@nome <pergunta sobre dados>" SEMPRE faça `integration_call`.
 
 ### Quando o resultado chegar
