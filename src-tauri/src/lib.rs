@@ -90,6 +90,7 @@ pub fn run() {
             integrations_cmd::update_integration,
             integrations_cmd::remove_integration,
             integrations_cmd::test_integration,
+            integrations_cmd::call_integration,
             // conversations
             conversations::list_conversations,
             conversations::create_conversation,
