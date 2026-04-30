@@ -70,19 +70,38 @@ pub enum IntegrationError {
 impl fmt::Display for IntegrationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Network(msg) => write!(f, "network error: {msg}"),
-            Self::Auth(msg) => write!(f, "auth error: {msg}"),
-            Self::NotFound(msg) => write!(f, "not found: {msg}"),
+            Self::Network(msg) => write!(f, "Falha de rede: {msg}"),
+            Self::Auth(msg) => write!(
+                f,
+                "API key inválida ou sem permissão pra esse endpoint ({msg})"
+            ),
+            Self::NotFound(msg) => write!(f, "Endpoint não encontrado ({msg})"),
             Self::Server { status, body } => {
-                write!(f, "server error: HTTP {status}: {}", truncate_body(body))
+                if body.is_empty() {
+                    write!(f, "Servidor retornou erro HTTP {status}")
+                } else {
+                    write!(
+                        f,
+                        "Servidor retornou HTTP {status}: {}",
+                        truncate_body(body)
+                    )
+                }
             }
-            Self::Parse(msg) => write!(f, "parse error: {msg}"),
-            Self::Timeout => write!(f, "request timed out after {DEFAULT_TIMEOUT_SECS}s"),
+            Self::Parse(msg) => write!(f, "Resposta da API não é JSON válido: {msg}"),
+            Self::Timeout => write!(f, "A API não respondeu em {DEFAULT_TIMEOUT_SECS}s"),
         }
     }
 }
 
 impl std::error::Error for IntegrationError {}
+
+/// True when the failure is worth retrying once (transient network /
+/// timeout). Auth and 4xx/5xx upstream responses indicate a real
+/// problem that won't fix itself with another attempt — those propagate
+/// straight through.
+fn is_transient(err: &IntegrationError) -> bool {
+    matches!(err, IntegrationError::Network(_) | IntegrationError::Timeout)
+}
 
 /// Long upstream error bodies (HTML 500 pages, big JSON payloads) make
 /// for noisy chat replies. 200 chars is enough to convey what happened
@@ -141,19 +160,18 @@ impl IntegrationClient {
     /// (fully-qualified URL — useful for follow-up links returned by
     /// the API). Optional `query` is appended to the URL via reqwest's
     /// builder so values are URL-encoded.
+    ///
+    /// Network / timeout failures get retried once internally — those
+    /// are usually transient (DNS hiccup, idle connection close). 4xx
+    /// and 5xx responses propagate immediately; retrying them just
+    /// burns the upstream's rate budget.
     pub async fn get(
         &self,
         path: &str,
         query: Option<&[(String, String)]>,
     ) -> Result<Value, IntegrationError> {
         let url = self.join(path);
-        let mut req = self.client.get(&url);
-        if let Some(qs) = query {
-            req = req.query(qs);
-        }
-        req = self.apply_auth(req);
-
-        let resp = req.send().await.map_err(map_send_err)?;
+        let resp = self.send_with_retry(&url, query).await?;
         let status = resp.status();
 
         if status.is_success() {
@@ -170,18 +188,44 @@ impl IntegrationClient {
     /// Lightweight liveness probe — GETs the bare `base_url`. Returns
     /// `true` only on 2xx; auth/server errors come back as `Err` so
     /// callers can distinguish "API up but key invalid" from "API
-    /// answered fine".
+    /// answered fine". Same single-retry-on-transient policy as `get`.
     pub async fn health_check(&self) -> Result<bool, IntegrationError> {
-        let mut req = self.client.get(&self.base_url);
-        req = self.apply_auth(req);
-
-        let resp = req.send().await.map_err(map_send_err)?;
+        let resp = self.send_with_retry(&self.base_url, None).await?;
         let status = resp.status();
         if status.is_success() {
             return Ok(true);
         }
         let body = resp.text().await.unwrap_or_default();
         Err(map_status_err(status, body))
+    }
+
+    /// Internal: build + fire the request once, retry once on transient
+    /// failure. Reqwest's `Client` is cheap to clone (Arc-backed) and
+    /// `RequestBuilder` doesn't implement Clone, so the request is
+    /// re-built per attempt instead of cloned.
+    async fn send_with_retry(
+        &self,
+        url: &str,
+        query: Option<&[(String, String)]>,
+    ) -> Result<reqwest::Response, IntegrationError> {
+        match self.send_once(url, query).await {
+            Ok(resp) => Ok(resp),
+            Err(err) if is_transient(&err) => self.send_once(url, query).await,
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn send_once(
+        &self,
+        url: &str,
+        query: Option<&[(String, String)]>,
+    ) -> Result<reqwest::Response, IntegrationError> {
+        let mut req = self.client.get(url);
+        if let Some(qs) = query {
+            req = req.query(qs);
+        }
+        req = self.apply_auth(req);
+        req.send().await.map_err(map_send_err)
     }
 
     fn apply_auth(&self, req: RequestBuilder) -> RequestBuilder {
@@ -341,15 +385,44 @@ mod tests {
     }
 
     #[test]
-    fn integration_error_display() {
-        let e = IntegrationError::Timeout;
-        assert!(e.to_string().contains("timed out"));
-        let e = IntegrationError::Server {
+    fn integration_error_display_pt_br() {
+        // Display agora é PT-BR pra reuso direto na surface do chat
+        // (post_process_integration_call retorna a String como canned
+        // reply quando a chamada falha).
+        assert!(IntegrationError::Timeout.to_string().contains("não respondeu"));
+        assert!(IntegrationError::Auth("401".into())
+            .to_string()
+            .contains("API key inválida"));
+        assert!(IntegrationError::NotFound("404".into())
+            .to_string()
+            .contains("Endpoint não encontrado"));
+        assert!(IntegrationError::Network("dns".into())
+            .to_string()
+            .contains("Falha de rede"));
+        let server = IntegrationError::Server {
             status: 502,
             body: "bad gateway".into(),
         };
-        let s = e.to_string();
+        let s = server.to_string();
         assert!(s.contains("502"));
         assert!(s.contains("bad gateway"));
+        let server_empty = IntegrationError::Server {
+            status: 503,
+            body: String::new(),
+        };
+        assert!(server_empty.to_string().contains("503"));
+    }
+
+    #[test]
+    fn is_transient_only_network_and_timeout() {
+        assert!(is_transient(&IntegrationError::Timeout));
+        assert!(is_transient(&IntegrationError::Network("x".into())));
+        assert!(!is_transient(&IntegrationError::Auth("x".into())));
+        assert!(!is_transient(&IntegrationError::NotFound("x".into())));
+        assert!(!is_transient(&IntegrationError::Server {
+            status: 500,
+            body: String::new()
+        }));
+        assert!(!is_transient(&IntegrationError::Parse("x".into())));
     }
 }

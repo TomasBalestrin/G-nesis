@@ -63,8 +63,11 @@ pub async fn add_integration(
     pool: State<'_, SqlitePool>,
 ) -> Result<IntegrationRow, String> {
     let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("nome não pode ser vazio".into());
+    let base_url = base_url.trim().to_string();
+    validate_slug(&name)?;
+    validate_https_url(&base_url)?;
+    if api_key.trim().is_empty() {
+        return Err("api_key não pode ser vazio".into());
     }
     if queries::get_integration_by_name(&pool, &name)
         .await?
@@ -325,6 +328,58 @@ pub async fn call_integration(
     Ok(body)
 }
 
+// ── input validation ────────────────────────────────────────────────────────
+
+/// Slug rules pro `name` (handle do `@`-mention): primeiro char
+/// alfanumérico, depois letras minúsculas / dígitos / hífens. Espelha
+/// a regex que o frontend AddIntegrationModal usa — defesa em profundidade.
+fn validate_slug(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("nome não pode ser vazio".into());
+    }
+    let first = name.chars().next().unwrap();
+    if !(first.is_ascii_alphanumeric() && first.is_ascii_lowercase()
+        || first.is_ascii_digit())
+    {
+        return Err(format!(
+            "nome inválido: `{name}` precisa começar com letra minúscula ou dígito"
+        ));
+    }
+    let valid = name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        return Err(format!(
+            "nome inválido: `{name}` aceita só letras minúsculas, dígitos e hífens"
+        ));
+    }
+    Ok(())
+}
+
+/// `base_url` precisa ser absoluto e começar com `https://` (ou `http://`
+/// pra dev local). Match com o frontend AddIntegrationModal — backend
+/// rejeita o resto pra evitar storage de URLs malformadas que iam
+/// quebrar o IntegrationClient depois.
+fn validate_https_url(url: &str) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("base_url não pode ser vazia".into());
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!(
+            "base_url inválida: `{url}` precisa começar com https:// (http:// só pra dev)"
+        ));
+    }
+    // Sanity: garante que tem hostname depois do protocolo.
+    let after_proto = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or("");
+    if after_proto.trim().is_empty() || after_proto.starts_with('/') {
+        return Err(format!("base_url inválida: `{url}` sem hostname"));
+    }
+    Ok(())
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 /// Resolve `name` → (DB row, ready-to-use `IntegrationClient`). The TOML
@@ -488,5 +543,40 @@ mod tests {
             body: "bad gateway".into()
         })
         .contains("502"));
+    }
+
+    #[test]
+    fn validate_slug_accepts_lowercase_alnum_hyphen() {
+        assert!(validate_slug("github").is_ok());
+        assert!(validate_slug("perpetuohq").is_ok());
+        assert!(validate_slug("my-api-v2").is_ok());
+        assert!(validate_slug("api2").is_ok());
+        assert!(validate_slug("0nine").is_ok());
+    }
+
+    #[test]
+    fn validate_slug_rejects_invalid() {
+        assert!(validate_slug("").is_err());
+        assert!(validate_slug("GitHub").is_err()); // uppercase
+        assert!(validate_slug("-leading").is_err()); // hyphen first
+        assert!(validate_slug("inv@lid").is_err()); // special char
+        assert!(validate_slug("with space").is_err());
+        assert!(validate_slug("under_score").is_err());
+    }
+
+    #[test]
+    fn validate_https_url_accepts_https_and_http() {
+        assert!(validate_https_url("https://api.github.com").is_ok());
+        assert!(validate_https_url("https://api.github.com/v3").is_ok());
+        assert!(validate_https_url("http://localhost:8080").is_ok());
+    }
+
+    #[test]
+    fn validate_https_url_rejects_invalid() {
+        assert!(validate_https_url("").is_err());
+        assert!(validate_https_url("api.github.com").is_err()); // sem protocol
+        assert!(validate_https_url("ftp://x").is_err());
+        assert!(validate_https_url("https://").is_err()); // sem hostname
+        assert!(validate_https_url("https:///path").is_err()); // sem hostname
     }
 }

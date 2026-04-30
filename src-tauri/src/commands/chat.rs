@@ -309,10 +309,12 @@ async fn run_integration_request(
     let client = IntegrationClient::new(&integration.base_url, auth)
         .map_err(|e| format!("HTTP client: {e}"))?;
 
+    // IntegrationError já tem Display em PT-BR (B1+F2) — passa direto
+    // pra String pra surface do chat usar como canned reply.
     let value = client
         .get(&call.endpoint, call.params.as_deref())
         .await
-        .map_err(|e| format!("integration error: {e}"))?;
+        .map_err(|e| e.to_string())?;
 
     let _ = queries::touch_integration_last_used(pool, &integration.name).await;
 
@@ -388,15 +390,23 @@ async fn post_process_integration_call(
         },
     );
 
-    let result_block = match api_outcome {
-        Ok(json) => format!("```json\n{json}\n```"),
-        Err(err) => format!(
-            "ERRO ao chamar a API: `{err}`. Avise o usuário do erro de forma clara, sem JSON cru."
-        ),
+    // Falha → retorna a msg PT-BR direto (sem 2ª chamada GPT). Display
+    // do IntegrationError já é amigável (401→"key inválida", 404→"não
+    // encontrado", 5xx→"servidor fora", timeout). Economia de tokens +
+    // latência menor pra erro.
+    let json = match api_outcome {
+        Ok(json) => json,
+        Err(err) => {
+            let canned = format!(
+                "Não consegui consultar `@{name}` agora: {err}",
+                name = integration.name,
+            );
+            return Ok((canned, None, None));
+        }
     };
 
     let context_msg = format!(
-        "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}`:\n\n{result_block}\n\nInterprete o resultado e responda à pergunta original em português conciso. Não devolva o JSON cru.",
+        "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}`:\n\n```json\n{json}\n```\n\nInterprete o resultado e responda à pergunta original em português conciso. Não devolva o JSON cru.",
         name = integration.name,
         endpoint = call.endpoint,
     );
