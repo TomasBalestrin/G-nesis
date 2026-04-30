@@ -26,6 +26,7 @@ import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
 import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
+import { EliteToaster } from "@/components/ui/EliteToast";
 import { Toaster } from "@/components/ui/toaster";
 import ErrorBoundary from "@/components/ui/ErrorBoundary";
 import { useToast } from "@/hooks/useToast";
@@ -141,6 +142,7 @@ function App() {
             onComplete={completeOnboarding}
           />
           <Toaster />
+          <EliteToaster />
         </ErrorBoundary>
         <FatalErrorDialog />
       </>
@@ -205,6 +207,7 @@ function App() {
             </Route>
           </Routes>
           <Toaster />
+          <EliteToaster />
         </BrowserRouter>
       </ErrorBoundary>
       <FatalErrorDialog />

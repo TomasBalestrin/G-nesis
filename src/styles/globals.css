@@ -24,6 +24,7 @@
 @import '../components/ui/EliteInput.css';
 @import '../components/ui/EliteBadge.css';
 @import '../components/ui/EliteCard.css';
+@import '../components/ui/EliteToast.css';
 
 @tailwind base;
 @tailwind components;
