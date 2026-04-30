@@ -189,10 +189,13 @@ pub async fn update_integration(
         .ok_or_else(|| "integration atualizada não foi encontrada".into())
 }
 
-/// Idempotent removal: drops the SQLite row, the `[integrations.<name>]`
-/// TOML block, and the on-disk spec file. Failures on the spec unlink
-/// are swallowed — the file may not exist, and the rest of the cleanup
-/// has already succeeded by then.
+/// Idempotent best-effort removal — limpa **todos** os 3 storages em
+/// que uma integration vive, na ordem files → TOML → SQLite (do menos
+/// pro mais autoritativo). Cada etapa que falhar é logada em stderr
+/// mas NÃO bloqueia as próximas — a meta é que o usuário consiga
+/// re-criar com o mesmo nome mesmo se um dos artefatos ficou trancado
+/// (permissão, FS read-only, etc.). Só erro de SQLite (o último passo)
+/// vira `Err` — aí o row ainda está lá pra retry.
 #[tauri::command]
 pub async fn remove_integration(
     name: String,
@@ -202,17 +205,33 @@ pub async fn remove_integration(
         return Ok(());
     };
 
-    queries::delete_integration(&pool, &row.id).await?;
-    integrations::remove_integration(&name)?;
-    // Best-effort: spec file may not exist (caller skipped step 2 in
-    // the wizard). delete_spec só limpa <name>.md (convenção atual).
-    let _ = integrations::delete_spec(&name);
-    // Orphan cleanup pra registros do era pré-wizard que gravavam
-    // <name>.yaml. Sem isso, recriar com mesmo nome via wizard
-    // gravaria <name>.md NOVO mas o .yaml ficaria gritando como
-    // segundo source-of-truth no diretório de specs.
+    // 1) Spec file (.md — convenção pós-wizard).
+    if let Err(err) = integrations::delete_spec(&name) {
+        eprintln!("[integrations] remove `{name}`: delete_spec falhou: {err}");
+    }
+    // 1a) Orphan .yaml de antes do wizard (A3 inline write_spec_file).
+    //     Best-effort: arquivo pode não existir (caso normal pós-wizard).
     let yaml_orphan = integrations::specs_dir().join(format!("{name}.yaml"));
-    let _ = std::fs::remove_file(&yaml_orphan);
+    if yaml_orphan.exists() {
+        if let Err(err) = std::fs::remove_file(&yaml_orphan) {
+            eprintln!(
+                "[integrations] remove `{name}`: cleanup .yaml órfão em {} falhou: {err}",
+                yaml_orphan.display()
+            );
+        }
+    }
+
+    // 2) Bloco [integrations.<name>] do config.toml (inclui api_key).
+    if let Err(err) = integrations::remove_integration(&name) {
+        eprintln!(
+            "[integrations] remove `{name}`: limpeza do config.toml falhou: {err}"
+        );
+    }
+
+    // 3) SQLite (ÚLTIMO — se algo acima falhou, o row ainda está lá
+    //    pra ser retentado; quando este passo falha, propagamos Err
+    //    pro frontend re-tentar).
+    queries::delete_integration(&pool, &row.id).await?;
     Ok(())
 }
 

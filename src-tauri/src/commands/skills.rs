@@ -88,19 +88,18 @@ pub async fn save_skill(name: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("falha ao salvar skill `{name}`: {e}"))
 }
 
-/// Delete the on-disk artifact backing a skill — the `.md` for v1
-/// skills, the entire `<name>/` folder for v2 skills (so re-creating
-/// with the same name doesn't fight against an orphan
-/// `<name>/SKILL.md` left over).
+/// Delete the on-disk artifact backing a skill — `.md` para v1, pasta
+/// `<name>/` inteira (incluindo `scripts/`, `references/`, `assets/`)
+/// para v2. Skills não têm linha em SQLite (executions referenciam
+/// `skill_name` por string, sem FK), então o cleanup é puramente FS.
 ///
-/// Refuses to proceed when at least one execution of the same skill is
-/// still pending/running/paused — the executor's retry/log path may
-/// still reach for the file mid-run.
+/// Best-effort: se v1 e v2 coexistirem (dual layout, raro), tenta os
+/// dois e loga falhas individuais sem bloquear o outro. Erro só
+/// quando NENHUM dos dois layouts foi tocado com sucesso (nada
+/// existia OU ambas remoções falharam).
 ///
-/// Idempotent on the v1 side: deleting a v1+v2 dual entry trims both
-/// representations in one call (rare but possible — `list_skill_entries`
-/// prefers folder over file when both exist, so the user might think
-/// they're deleting just one).
+/// Bloqueio mantido: execuções em andamento da skill abortam o
+/// delete — o executor ainda pode precisar do arquivo.
 #[tauri::command]
 pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     let dir = skills_dir()?;
@@ -115,20 +114,41 @@ pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(
         ));
     }
 
+    let mut existed = false;
     let mut removed_any = false;
+    let mut errors: Vec<String> = Vec::new();
+
     if v1_path.exists() {
-        fs::remove_file(&v1_path)
-            .map_err(|e| format!("falha ao deletar skill `{name}` (v1): {e}"))?;
-        removed_any = true;
+        existed = true;
+        match fs::remove_file(&v1_path) {
+            Ok(()) => removed_any = true,
+            Err(e) => {
+                let msg = format!("v1 file {}: {e}", v1_path.display());
+                eprintln!("[skills] delete `{name}` falhou em {msg}");
+                errors.push(msg);
+            }
+        }
     }
     if v2_folder.is_dir() && v2_folder.join("SKILL.md").is_file() {
-        fs::remove_dir_all(&v2_folder)
-            .map_err(|e| format!("falha ao deletar skill `{name}` (v2): {e}"))?;
-        removed_any = true;
+        existed = true;
+        match fs::remove_dir_all(&v2_folder) {
+            Ok(()) => removed_any = true,
+            Err(e) => {
+                let msg = format!("v2 folder {}: {e}", v2_folder.display());
+                eprintln!("[skills] delete `{name}` falhou em {msg}");
+                errors.push(msg);
+            }
+        }
     }
 
-    if !removed_any {
+    if !existed {
         return Err(format!("skill `{name}` não encontrada"));
+    }
+    if !removed_any {
+        return Err(format!(
+            "falha ao deletar skill `{name}` ({})",
+            errors.join("; ")
+        ));
     }
     Ok(())
 }
