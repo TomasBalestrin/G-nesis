@@ -587,6 +587,52 @@ pub fn compose_system_prompt() -> String {
         .join("\n\n")
 }
 
+/// Active-integration block. Injected into the system prompt only
+/// when the user prefixed the turn with `@<name>` and the row exists
+/// + is enabled. Substitutes:
+///   - `{{integration_name}}` → integration handle (the @-mention)
+///   - `{{integration_spec}}` → markdown content from
+///     `~/.genesis/integrations/<name>.md`, or a fallback note when
+///     the spec file is missing.
+///
+/// Output protocol: when GPT decides it needs upstream data, it MUST
+/// reply with a single fenced JSON object `{"integration_call": {...}}`
+/// and nothing else. The chat router parses that, dispatches
+/// `call_integration`, and returns the JSON result on the next turn so
+/// the model can compose a natural-language reply. Plain text
+/// responses are reserved for "no API call needed" turns.
+pub const PROMPT_INTEGRATION: &str = r##"## Integração ativa: `@{{integration_name}}`
+
+O usuário invocou a integração `@{{integration_name}}` neste turno. A spec abaixo descreve como a API funciona — endpoints, auth, exemplos. Use ela pra montar o request certo.
+
+### Spec da API
+
+{{integration_spec}}
+
+### Como você responde
+
+Quando precisar BUSCAR DADOS na API pra responder a pergunta do usuário, **responda APENAS com um bloco JSON nesse formato**, sem texto antes ou depois:
+
+```json
+{
+  "integration_call": {
+    "endpoint": "/path/relativo",
+    "params": { "chave": "valor" }
+  }
+}
+```
+
+Regras:
+- `endpoint` é o path relativo ao `base_url` cadastrado (ex: `/users/123`, `/repos/foo/bar/issues`). Pode ser uma URL absoluta quando a spec indicar.
+- `params` é OPCIONAL. Quando incluído, vira query string codificada. **NÃO inclua `api_key` aí** — o orquestrador injeta automaticamente conforme o `auth_type` cadastrado.
+- NÃO escreva texto explicativo no mesmo turno do `integration_call`. O orquestrador executa o request, retorna o JSON da resposta no próximo turno e aí você compõe a resposta em linguagem natural.
+- Se a tarefa NÃO precisar de chamada à API (o usuário só perguntou sobre a integração, ou você já tem a resposta no contexto), responda em texto normal — sem o bloco JSON.
+
+Quando o resultado do `integration_call` chegar:
+- Leia o JSON, extraia o que importa pra pergunta original.
+- Responda em português conciso.
+- NÃO devolva o JSON cru pro usuário — interprete e resuma."##;
+
 pub const SKILL_SELECTION_PROMPT: &str = r#"A partir da mensagem do usuário, escolha qual skill melhor se aplica.
 Retorne APENAS JSON neste formato, sem texto adicional:
 {"skill": "nome-exato-ou-null", "confidence": 0.0, "reason": "explicação curta"}
@@ -659,6 +705,40 @@ pub async fn build_capabilities_prompt(pool: &SqlitePool) -> String {
 /// natural" rules in the base prompt, this lets the model spot when the
 /// user's free-form message matches a skill and suggest activation
 /// (`/skill-name`) without auto-executing.
+/// Append an active-integration section to `base` and return the
+/// concatenated prompt. Substitutes [`PROMPT_INTEGRATION`]'s placeholders
+/// with the runtime values:
+///   - `{{integration_name}}` → `name`
+///   - `{{integration_spec}}` → `spec` content, OR a fallback note
+///     when `spec` is `None` / blank so GPT can advise the user to
+///     fill the spec in Settings instead of hallucinating endpoints.
+///
+/// Spec content is dropped into a markdown body block — callers don't
+/// need to escape anything; the prompt template uses fenced examples
+/// only AFTER the spec, so a spec ending mid-fence won't bleed into
+/// the JSON instructions section.
+///
+/// `base` empty → returns the integration block alone (caller may use
+/// this for log inspection / unit tests). Normal use is to chain after
+/// [`build_system_prompt`].
+pub fn with_integration_context(base: &str, name: &str, spec: Option<&str>) -> String {
+    let resolved_spec = match spec {
+        Some(s) if !s.trim().is_empty() => s.to_string(),
+        _ => format!(
+            "_(Nenhuma spec local em `~/.genesis/integrations/{name}.md`. Use o `base_url` \
+             cadastrado e peça ao usuário endpoints específicos quando necessário.)_"
+        ),
+    };
+    let block = PROMPT_INTEGRATION
+        .replace("{{integration_name}}", name)
+        .replace("{{integration_spec}}", &resolved_spec);
+    if base.is_empty() {
+        block
+    } else {
+        format!("{base}\n\n{block}")
+    }
+}
+
 pub fn with_skill_catalog(base: &str, skills: &[SkillMeta]) -> String {
     if skills.is_empty() {
         return base.to_string();
@@ -1095,5 +1175,39 @@ mod tests {
             !out.contains("{{INJECT:SYSTEM_STATE}}"),
             "SYSTEM_STATE placeholder leaked when caller passed None: {out}",
         );
+    }
+
+    #[test]
+    fn with_integration_context_substitutes_name_and_spec() {
+        let out = with_integration_context("BASE", "github", Some("# GitHub API\n- /users"));
+        assert!(out.starts_with("BASE\n\n"));
+        assert!(out.contains("`@github`"));
+        assert!(out.contains("# GitHub API"));
+        assert!(out.contains("/users"));
+        // Placeholders fully substituted.
+        assert!(!out.contains("{{integration_name}}"));
+        assert!(!out.contains("{{integration_spec}}"));
+        // The integration_call protocol is part of the section.
+        assert!(out.contains("integration_call"));
+    }
+
+    #[test]
+    fn with_integration_context_uses_fallback_when_spec_missing() {
+        let out = with_integration_context("BASE", "slack", None);
+        assert!(out.contains("Nenhuma spec local"));
+        assert!(out.contains("slack.md"));
+        assert!(!out.contains("{{integration_spec}}"));
+    }
+
+    #[test]
+    fn with_integration_context_treats_blank_spec_as_missing() {
+        let out = with_integration_context("BASE", "notion", Some("   \n  "));
+        assert!(out.contains("Nenhuma spec local"));
+    }
+
+    #[test]
+    fn with_integration_context_returns_block_alone_when_base_empty() {
+        let out = with_integration_context("", "trello", Some("# Trello"));
+        assert!(out.starts_with("## Integração ativa"));
     }
 }

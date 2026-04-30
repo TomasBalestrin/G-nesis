@@ -1110,25 +1110,21 @@ pub async fn send_chat_message(
 
             // Active integration block — when the user prefixed the
             // turn with @<name> and the row exists+enabled (resolved
-            // above as `active_integration`), surface the metadata so
-            // the model can plan a request. Actual tool routing for
-            // call_integration lands in C2; this block just makes the
-            // model aware that the integration is live for this turn.
+            // above as `active_integration`), inject PROMPT_INTEGRATION
+            // with the spec content. Spec read errors fall through to
+            // None → the prompt's fallback note tells GPT to ask for
+            // endpoints. The integration_call JSON protocol is fully
+            // documented inside PROMPT_INTEGRATION; orchestrator-side
+            // execution is wired separately.
             if let Some(integration) = active_integration.as_ref() {
-                system_prompt.push_str(&format!(
-                    "\n\n## Integração ativa\n\n\
-                     O usuário começou a mensagem com `@{name}`, indicando \
-                     que quer interagir com **{display}**.\n\
-                     - Base URL: `{base}`\n\
-                     - Spec local: `~/.genesis/integrations/{spec}` (consulte \
-                     pra montar o path certo do request)\n\n\
-                     Quando relevante, descreva os endpoints disponíveis e \
-                     proponha o request que faria sentido executar.",
-                    name = integration.name,
-                    display = integration.display_name,
-                    base = integration.base_url,
-                    spec = integration.spec_file,
-                ));
+                let spec = crate::integrations::load_spec(&integration.name)
+                    .ok()
+                    .flatten();
+                system_prompt = prompts::with_integration_context(
+                    &system_prompt,
+                    &integration.name,
+                    spec.as_deref(),
+                );
             }
 
             // Skill authoring flow — appended after mentions so the
