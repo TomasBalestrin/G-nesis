@@ -138,37 +138,38 @@ fn extract_slash_command(content: &str) -> Option<&str> {
     }
 }
 
-/// Extract a turn-level integration invocation from a message that
-/// STARTS with `@`. Returns `(name, query)` where `query` is the rest
-/// of the trimmed message after the first whitespace following the
-/// name (empty when the user typed only `@<name>`).
+/// Find an integration invocation anywhere in the message — Slack /
+/// Discord-style mention. Returns `(name, query)` where `name` is the
+/// matched slug and `query` is the message with the `@<name>` token
+/// stripped (so the model receives a clean question).
 ///
-/// **Important**: this only fires when `@` is the first non-whitespace
-/// char. Mid-text mentions (`rode @github buscar issues`) are NOT
-/// integration invocations — those flow through `extract_at_mentions`
-/// for system-prompt injection only. The split mirrors how `/skill`
-/// at the start activates a slash-command flow vs. `/path/to/x`
-/// mid-text being plain text.
-fn extract_at_integration(content: &str) -> Option<(&str, &str)> {
-    let trimmed = content.trim();
-    let rest = trimmed.strip_prefix('@')?;
-    match rest.find(char::is_whitespace) {
-        Some(idx) => {
-            let name = &rest[..idx];
-            if name.is_empty() {
-                None
-            } else {
-                Some((name, rest[idx..].trim_start()))
-            }
-        }
-        None => {
-            if rest.is_empty() {
-                None
-            } else {
-                Some((rest, ""))
-            }
-        }
-    }
+/// Pattern: `(?:^|\s)@([a-z0-9-]+)`. The look-behind on whitespace OR
+/// start-of-string blocks false positives like `email@host` (no
+/// whitespace before `@`) — same anchoring used by `at_mention_re`
+/// for capability mentions.
+///
+/// Returns the FIRST match. Multi-mention messages
+/// (`@github @perpetuohq foo`) collapse to the first; the second
+/// integration is left in the query as plain text. Multi-integration
+/// support would need a different protocol.
+fn extract_at_integration(content: &str) -> Option<(String, String)> {
+    let caps = at_integration_re().captures(content)?;
+    let name = caps.get(1)?.as_str().to_string();
+    let full = caps.get(0)?;
+    let before = content[..full.start()].trim();
+    let after = content[full.end()..].trim();
+    let query = match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => before.to_string(),
+        (true, false) => after.to_string(),
+        (false, false) => format!("{before} {after}"),
+    };
+    Some((name, query))
+}
+
+fn at_integration_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?:^|\s)@([a-z0-9-]+)").unwrap())
 }
 
 // ── integration_call extraction & dispatch ──────────────────────────────────
@@ -1286,14 +1287,14 @@ pub async fn send_chat_message(
     //      prompt block describing the integration.
     //   3. @<name> matched nothing or a disabled row → canned reply
     //      short-circuits the AI roundtrip.
-    let at_integration = if slash_command.is_none() {
+    let at_integration: Option<(String, String)> = if slash_command.is_none() {
         extract_at_integration(&content)
     } else {
         None
     };
-    if let Some((name, query)) = at_integration {
+    if let Some((name, query)) = at_integration.as_ref() {
         eprintln!(
-            "[integrations] @-prefix detectado: name=`{name}` query=`{query}`"
+            "[integrations] @-mention detectada: name=`{name}` query=`{query}`"
         );
     }
     let (active_integration, canned_integration_reply): (
@@ -1301,7 +1302,7 @@ pub async fn send_chat_message(
         Option<String>,
     ) = match at_integration {
         None => (None, None),
-        Some((name, _query)) => match queries::get_integration_by_name(&pool, name).await? {
+        Some((name, _query)) => match queries::get_integration_by_name(&pool, &name).await? {
             Some(row) if row.enabled == 1 => {
                 eprintln!(
                     "[integrations] resolvida: name=`{}` enabled base_url=`{}`",
@@ -1986,55 +1987,87 @@ mod tests {
         assert_eq!(extract_slash_command("/   "), None);
     }
 
+    fn ai(s: &str) -> Option<(String, String)> {
+        extract_at_integration(s)
+    }
+
     #[test]
-    fn extract_at_integration_basic_split() {
+    fn extract_at_integration_at_start() {
         assert_eq!(
-            extract_at_integration("@perpetuohq teste"),
-            Some(("perpetuohq", "teste"))
+            ai("@perpetuohq teste"),
+            Some(("perpetuohq".into(), "teste".into()))
         );
         assert_eq!(
-            extract_at_integration("  @perpetuohq teste  "),
-            Some(("perpetuohq", "teste"))
+            ai("  @perpetuohq teste  "),
+            Some(("perpetuohq".into(), "teste".into()))
         );
     }
 
     #[test]
     fn extract_at_integration_bare_name_has_empty_query() {
-        assert_eq!(extract_at_integration("@github"), Some(("github", "")));
-        assert_eq!(extract_at_integration("  @github  "), Some(("github", "")));
+        assert_eq!(ai("@github"), Some(("github".into(), "".into())));
+        assert_eq!(ai("  @github  "), Some(("github".into(), "".into())));
     }
 
     #[test]
-    fn extract_at_integration_keeps_full_query() {
-        // Multiple words after the name all live in the `query` slice;
-        // trim_start strips the separating whitespace but keeps inner spaces.
+    fn extract_at_integration_keeps_words_after_name() {
         assert_eq!(
-            extract_at_integration("@github buscar issues abertas"),
-            Some(("github", "buscar issues abertas"))
+            ai("@github buscar issues abertas"),
+            Some(("github".into(), "buscar issues abertas".into()))
         );
     }
 
     #[test]
+    fn extract_at_integration_finds_mid_text_and_strips_token() {
+        // `@<name>` em qualquer posição: o token é removido da query
+        // pra GPT receber só a pergunta limpa.
+        assert_eq!(
+            ai("rode @github buscar"),
+            Some(("github".into(), "rode buscar".into()))
+        );
+        assert_eq!(ai("oi @github"), Some(("github".into(), "oi".into())));
+        assert_eq!(
+            ai("quanto lucrei @perpetuohq em março"),
+            Some(("perpetuohq".into(), "quanto lucrei em março".into()))
+        );
+        assert_eq!(
+            ai("mostra dados @perpetuohq"),
+            Some(("perpetuohq".into(), "mostra dados".into()))
+        );
+    }
+
+    #[test]
+    fn extract_at_integration_first_match_wins() {
+        // Multi-mention: a primeira `@<name>` ganha; segunda fica
+        // como texto na query (não há protocolo multi-integration).
+        assert_eq!(
+            ai("@github @perpetuohq foo"),
+            Some(("github".into(), "@perpetuohq foo".into()))
+        );
+    }
+
+    #[test]
+    fn extract_at_integration_rejects_email_and_no_boundary() {
+        // `email@host`: `@` sem whitespace/start atrás → não é mention.
+        assert_eq!(ai("email@host"), None);
+        assert_eq!(ai("user.name@example.com"), None);
+    }
+
+    #[test]
     fn extract_at_integration_rejects_bare_at() {
-        assert_eq!(extract_at_integration("@"), None);
-        assert_eq!(extract_at_integration("   @   "), None);
-        // Whitespace immediately after @ → name would be empty, reject.
-        assert_eq!(extract_at_integration("@ teste"), None);
+        assert_eq!(ai("@"), None);
+        assert_eq!(ai("   @   "), None);
+        // Whitespace imediatamente depois de @ → nome capturado seria
+        // vazio, regex falha.
+        assert_eq!(ai("@ teste"), None);
+        assert_eq!(ai("oi @ teste"), None);
     }
 
     #[test]
-    fn extract_at_integration_rejects_mid_text_mention() {
-        // @-mentions in the middle of a message route through
-        // extract_at_mentions, NOT this turn-level extractor.
-        assert_eq!(extract_at_integration("rode @github buscar"), None);
-        assert_eq!(extract_at_integration("oi @github"), None);
-    }
-
-    #[test]
-    fn extract_at_integration_rejects_empty_or_whitespace() {
-        assert_eq!(extract_at_integration(""), None);
-        assert_eq!(extract_at_integration("    "), None);
-        assert_eq!(extract_at_integration("hello world"), None);
+    fn extract_at_integration_rejects_empty_or_no_mention() {
+        assert_eq!(ai(""), None);
+        assert_eq!(ai("    "), None);
+        assert_eq!(ai("hello world"), None);
     }
 
     #[test]
