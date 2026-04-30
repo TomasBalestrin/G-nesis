@@ -399,7 +399,15 @@ async fn run_integration_request(
 /// IDs. Eventos `integration:loading`/`loaded` são emitidos uma vez
 /// (no início do round 1 e no fim do loop) — UI mostra spinner único
 /// mesmo durante chains multi-round.
-const MAX_INTEGRATION_ROUNDS: usize = 5;
+/// Cap em 3 rounds: cobre o caso típico de chain (lista → detail →
+/// sub-recurso) mantendo budget contra rate limit. APIs que exigem
+/// mais hops esbarram no fallback "não consegui obter todos os dados".
+const MAX_INTEGRATION_ROUNDS: usize = 3;
+
+/// Delay entre rounds pra suavizar o burst de calls que estourava o
+/// rate limit da OpenAI quando o GPT fazia chain de 3 integration_calls
+/// consecutivas.
+const ROUND_DELAY_SECS: u64 = 1;
 
 async fn post_process_integration_call(
     raw: (String, Option<String>, Option<String>),
@@ -473,6 +481,15 @@ async fn post_process_integration_call(
                     endpoint = call.endpoint,
                 );
                 next_messages.push(Message::user(context_msg));
+
+                // Throttle entre GPT calls pra suavizar o burst que
+                // estourava rate limit da OpenAI em chains de 3
+                // rounds. O 1s é entre o GPT inicial e o round 1
+                // também (o burst começa aí).
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    ROUND_DELAY_SECS,
+                ))
+                .await;
 
                 current_reply = client
                     .chat_completion(system_prompt, &next_messages)
