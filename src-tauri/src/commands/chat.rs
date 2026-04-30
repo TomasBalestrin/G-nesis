@@ -364,9 +364,21 @@ async fn post_process_integration_call(
     let Some(integration) = active_integration else {
         return Ok(raw);
     };
+    eprintln!(
+        "[integrations] post_process: GPT raw response (len={}):\n--- BEGIN ---\n{}\n--- END ---",
+        raw.0.len(),
+        raw.0
+    );
     let Some(call) = extract_integration_call(&raw.0) else {
+        eprintln!(
+            "[integrations] post_process: extract_integration_call=None → resposta texto puro vai pro usuário"
+        );
         return Ok(raw);
     };
+    eprintln!(
+        "[integrations] post_process: integration_call detectado endpoint=`{}` params={:?}",
+        call.endpoint, call.params
+    );
 
     let _ = app.emit(
         "integration:loading",
@@ -1279,14 +1291,35 @@ pub async fn send_chat_message(
     } else {
         None
     };
+    if let Some((name, query)) = at_integration {
+        eprintln!(
+            "[integrations] @-prefix detectado: name=`{name}` query=`{query}`"
+        );
+    }
     let (active_integration, canned_integration_reply): (
         Option<IntegrationRow>,
         Option<String>,
     ) = match at_integration {
         None => (None, None),
         Some((name, _query)) => match queries::get_integration_by_name(&pool, name).await? {
-            Some(row) if row.enabled == 1 => (Some(row), None),
-            _ => (None, Some(format!("Integração @{name} não encontrada"))),
+            Some(row) if row.enabled == 1 => {
+                eprintln!(
+                    "[integrations] resolvida: name=`{}` enabled base_url=`{}`",
+                    row.name, row.base_url
+                );
+                (Some(row), None)
+            }
+            Some(row) => {
+                eprintln!(
+                    "[integrations] `{name}` existe mas enabled={}; tratando como não-encontrada",
+                    row.enabled
+                );
+                (None, Some(format!("Integração @{name} não encontrada")))
+            }
+            None => {
+                eprintln!("[integrations] `{name}` não está no SQLite; não-encontrada");
+                (None, Some(format!("Integração @{name} não encontrada")))
+            }
         },
     };
 
@@ -1370,10 +1403,22 @@ pub async fn send_chat_message(
                 let spec = crate::integrations::load_spec(&integration.name)
                     .ok()
                     .flatten();
+                eprintln!(
+                    "[integrations] load_spec(`{}`) → {}",
+                    integration.name,
+                    match spec.as_deref() {
+                        Some(s) => format!("OK ({} bytes)", s.len()),
+                        None => "None (fallback prompt vai dizer 'spec não encontrada')".to_string(),
+                    }
+                );
                 system_prompt = prompts::with_integration_context(
                     &system_prompt,
                     &integration.name,
                     spec.as_deref(),
+                );
+                eprintln!(
+                    "=== SYSTEM PROMPT COM INTEGRAÇÃO ===\n{}\n=== END ===",
+                    &system_prompt
                 );
             }
 
@@ -1403,9 +1448,23 @@ pub async fn send_chat_message(
             // task. Both branches converge on (content, thinking,
             // thinking_summary) which then flows through
             // `post_process_integration_call` for the @<name> protocol.
+            //
+            // **Integration turns disable function-calling tools.** When
+            // `active_integration` is Some, the model has two ways to
+            // produce output: (a) a function call against `genesis_tools`
+            // or (b) the JSON-in-text `integration_call` envelope from
+            // PROMPT_INTEGRATION. Trained behavior heavily prefers (a)
+            // when tools are visible, so the model often emits a tool
+            // call (or text "no acesso") instead of the JSON envelope.
+            // Hiding the tools forces it down the JSON path, which
+            // post_process_integration_call then parses + dispatches.
             let raw = match &client {
                 AiClient::OpenAi(openai) => {
-                    let tools = genesis_tools();
+                    let tools = if active_integration.is_some() {
+                        Vec::new()
+                    } else {
+                        genesis_tools()
+                    };
                     let mut loop_messages: Vec<Message> = messages.clone();
                     let mut final_content = String::new();
                     for _ in 0..MAX_TOOL_ITERATIONS {
