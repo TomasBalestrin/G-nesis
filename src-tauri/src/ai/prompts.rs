@@ -818,7 +818,16 @@ pub fn build_system_prompt(
 ) -> String {
     let mut sections: Vec<String> = Vec::with_capacity(9);
 
-    sections.push(PROMPT_CORE.to_string());
+    // CORE carrega `{{company_name}}` na linha de identidade (linha
+    // ~33). Sem substituição o GPT vê e às vezes ecoa o placeholder
+    // cru pro usuário ("dos funcionários da {{company_name}}"). Quando
+    // `company_name` é None (onboarding incompleto) usa "sua empresa"
+    // como fallback genérico — neutro e gramatical em PT-BR.
+    let core = PROMPT_CORE.replace(
+        "{{company_name}}",
+        company_name.unwrap_or("sua empresa"),
+    );
+    sections.push(core);
 
     if let (Some(name), Some(company)) = (user_name, company_name) {
         let summary = knowledge_summary.unwrap_or("Nenhum documento fornecido ainda.");
@@ -1097,6 +1106,44 @@ mod tests {
     /// `compose_skips_user_context_and_has_no_blank_gaps` for why we
     /// anchor on the labelled forms instead of bare `{{user_name}}`,
     /// which appears legitimately in PROMPT_SKILLS and PROMPT_CORE).
+    #[test]
+    fn build_prompt_substitutes_company_name_in_core() {
+        // Com company_name presente → linha de identidade do CORE
+        // resolve pra "dos funcionários da Bethel".
+        let out = build_system_prompt(
+            Some("João"),
+            Some("Bethel"),
+            None,
+            None,
+            None,
+            &[],
+        );
+        assert!(
+            out.contains("dos funcionários da Bethel"),
+            "esperado company_name resolvido em PROMPT_CORE: {out}"
+        );
+        // Placeholder cru NUNCA pode aparecer após o build.
+        assert!(
+            !out.contains("{{company_name}}"),
+            "placeholder cru vazou após build: {out}"
+        );
+    }
+
+    #[test]
+    fn build_prompt_falls_back_to_generic_when_no_company() {
+        // Sem company_name → fallback "sua empresa" no CORE, sem
+        // expor o placeholder cru.
+        let out = build_system_prompt(None, None, None, None, None, &[]);
+        assert!(
+            out.contains("dos funcionários da sua empresa"),
+            "esperado fallback `sua empresa` em PROMPT_CORE: {out}"
+        );
+        assert!(
+            !out.contains("{{company_name}}"),
+            "placeholder cru vazou no fallback: {out}"
+        );
+    }
+
     #[test]
     fn build_prompt_without_user_skips_context() {
         let out = build_system_prompt(None, None, None, None, None, &[]);
