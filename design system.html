@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Elite Premium — Design System</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+body{font-family:'DM Sans',sans-serif;overflow-x:hidden}
+a{text-decoration:none;color:inherit}
+button{cursor:pointer;border:none;background:none;font-family:inherit}
+input,select,textarea{font-family:inherit;outline:none;border:none;background:none}
+code{font-family:'JetBrains Mono',monospace}
+::selection{background:rgba(181,154,91,.25)}
+
+[data-theme="dark"]{
+  --bg:#0A0A0E;--sf:#0D1117;--sf2:#141820;--sf3:#1A1F28;
+  --tx:#E8E0D4;--tx2:#999999;--tx3:#5E564E;
+  --gd:#B59A5B;--gd-l:#D4B97A;--gd-d:#8C7640;
+  --gd-m:rgba(181,154,91,.12);--gd-mh:rgba(181,154,91,.18);
+  --ol:#1E2228;--ol2:#151920;
+  --ok:#5A9E72;--ok-b:rgba(90,158,114,.1);
+  --wr:#C4A34E;--wr-b:rgba(196,163,78,.1);
+  --er:#C4453A;--er-b:rgba(196,69,58,.1);
+  --in:#6A9AB8;--in-b:rgba(106,154,184,.1);
+  --code-bg:#08080C;--code-bd:#151920;
+}
+[data-theme="light"]{
+  --bg:#FFFFFF;--sf:#F7F7F5;--sf2:#F0EFEC;--sf3:#E8E7E3;
+  --tx:#1A1A1A;--tx2:#555555;--tx3:#A0A0A0;
+  --gd:#8C7640;--gd-l:#B59A5B;--gd-d:#6B5A31;
+  --gd-m:rgba(140,118,64,.08);--gd-mh:rgba(140,118,64,.12);
+  --ol:#E5E5E2;--ol2:#EDEDEA;
+  --ok:#2D8259;--ok-b:rgba(45,130,89,.07);
+  --wr:#9E8550;--wr-b:rgba(158,133,80,.07);
+  --er:#B83A32;--er-b:rgba(184,58,50,.07);
+  --in:#4A7A9E;--in-b:rgba(74,122,158,.07);
+  --code-bg:#F5F5F3;--code-bd:#E5E5E2;
+}
+body{background:var(--bg);color:var(--tx);transition:background .25s,color .25s}
+
+/* ══════════════════════════════════════ */
+/*  SIDEBAR — GENESIS OS STYLE          */
+/* ══════════════════════════════════════ */
+.ds{display:flex;min-height:100vh}
+.sb{width:248px;position:fixed;top:0;left:0;bottom:0;background:var(--bg);border-right:1px solid var(--ol2);display:flex;flex-direction:column;z-index:20;transition:background .25s,border-color .25s}
+
+/* Brand bar */
+.sb-top{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 14px}
+.sb-brand{font-family:'Lora',serif;font-size:15px;font-weight:700;color:var(--gd);letter-spacing:.06em}
+.sb-panel-btn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--tx3);border-radius:6px;transition:all .1s}
+.sb-panel-btn:hover{color:var(--tx2);background:var(--sf)}
+.sb-panel-btn svg{width:16px;height:16px;stroke-width:1.5}
+
+/* New button */
+.sb-new{margin:0 14px 14px;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 0;border:1px solid var(--gd);border-radius:10px;color:var(--gd);font-size:13px;font-weight:600;transition:background .1s}
+.sb-new:hover{background:var(--gd-m)}
+.sb-new svg{width:14px;height:14px;stroke-width:2}
+
+/* Nav */
+.sb-nav{flex:1;padding:0 10px;overflow-y:auto}
+
+/* Collapsible section header */
+.sb-sec{display:flex;align-items:center;justify-content:space-between;padding:12px 8px 5px;cursor:default}
+.sb-sec-left{display:flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--tx2)}
+.sb-sec-left svg{width:12px;height:12px;stroke-width:2;color:var(--tx3);transition:transform .15s}
+.sb-sec-left.collapsed svg{transform:rotate(-90deg)}
+.sb-sec-btn{width:20px;height:20px;display:flex;align-items:center;justify-content:center;color:var(--tx3);border-radius:4px;transition:all .1s}
+.sb-sec-btn:hover{color:var(--gd);background:var(--gd-m)}
+.sb-sec-btn svg{width:13px;height:13px;stroke-width:2}
+
+/* Nav item */
+.sb-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;font-size:13.5px;font-weight:500;color:var(--tx2);transition:all .1s;margin-bottom:1px;position:relative}
+.sb-item:hover{color:var(--tx);background:var(--sf)}
+.sb-item.on{background:var(--gd-m);color:var(--gd)}
+.sb-item svg{width:16px;height:16px;stroke-width:1.5;flex-shrink:0}
+.sb-item .sb-more{margin-left:auto;width:20px;height:20px;display:flex;align-items:center;justify-content:center;color:var(--tx3);border-radius:4px;opacity:0;transition:opacity .1s}
+.sb-item:hover .sb-more,.sb-item.on .sb-more{opacity:1}
+.sb-item .sb-more:hover{background:var(--sf2);color:var(--tx2)}
+.sb-item .sb-more svg{width:15px;height:15px;stroke-width:2}
+
+/* Quote footer */
+.sb-foot{padding:14px 16px;border-top:1px solid var(--ol2)}
+.sb-quote{font-size:12px;color:var(--tx3);line-height:1.55;font-style:italic}
+.sb-quote-author{font-size:11px;color:var(--tx3);font-style:normal;margin-top:4px;font-weight:500}
+
+/* ══════════════════════════════════════ */
+/*  MAIN AREA                           */
+/* ══════════════════════════════════════ */
+.main{margin-left:248px;flex:1;max-width:860px;padding:40px 48px 100px}
+
+.hero{margin-bottom:48px}
+.hero h1{font-family:'Lora',serif;font-size:32px;font-weight:700;line-height:1.2;margin-bottom:8px}
+.hero p{font-size:15px;color:var(--tx2);line-height:1.6;max-width:560px}
+.hero-meta{display:flex;gap:16px;margin-top:14px;font-size:11.5px;color:var(--tx3)}
+
+.sec{margin-top:56px;scroll-margin-top:32px}
+.sec-num{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;color:var(--gd);margin-bottom:4px}
+.sec h2{font-family:'Lora',serif;font-size:22px;font-weight:700;margin-bottom:6px}
+.sec-desc{font-size:14px;color:var(--tx2);line-height:1.6;margin-bottom:24px;max-width:600px}
+.sub{margin-top:28px}
+.sub h3{font-size:14px;font-weight:600;margin-bottom:4px}
+.sub-desc{font-size:13px;color:var(--tx2);line-height:1.55;margin-bottom:16px}
+.divider{height:1px;background:var(--ol2);margin:48px 0 0}
+
+/* Spec tables */
+.stw{border:1px solid var(--ol2);border-radius:10px;overflow:hidden;margin-bottom:20px}
+.st{width:100%;border-collapse:collapse;font-size:13px}
+.st th{text-align:left;padding:7px 14px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3);border-bottom:1px solid var(--ol2);background:var(--sf)}
+.st td{padding:8px 14px;border-bottom:1px solid var(--ol2);vertical-align:middle}
+.st tr:last-child td{border-bottom:none}
+.st-tok{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--gd)}
+.st-val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--tx2)}
+.st-desc{font-size:12.5px;color:var(--tx2)}
+
+/* Swatches */
+.swg{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;margin-bottom:20px}
+.sw{border:1px solid var(--ol2);border-radius:10px;overflow:hidden;transition:border-color .1s}
+.sw:hover{border-color:var(--ol)}
+.sw-c{height:56px;position:relative}
+.sw-c span{position:absolute;bottom:4px;right:6px;font-family:'JetBrains Mono',monospace;font-size:8.5px;padding:1px 5px;border-radius:4px;background:rgba(0,0,0,.5);color:#fff}
+.sw-i{padding:10px 12px}
+.sw-n{font-size:12px;font-weight:600}
+.sw-h{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--tx2);margin-top:1px}
+.sw-p{font-size:10px;color:var(--tx3);margin-top:1px}
+.sw-u{font-size:10.5px;color:var(--tx3);margin-top:3px;line-height:1.4}
+
+/* Preview */
+.pv{background:var(--sf);border:1px solid var(--ol2);border-radius:12px;padding:24px;margin-bottom:16px}
+.pv-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.pv-col{display:flex;flex-direction:column;gap:10px}
+.pv-lb{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--tx3);margin-bottom:6px}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;border-radius:10px;font-size:13px;font-weight:600;height:34px;padding:0 16px;transition:all .12s}
+.btn svg{width:15px;height:15px}
+.btn-p{background:var(--gd);color:#0A0A0E}.btn-p:hover{background:var(--gd-l)}
+.btn-o{border:1px solid var(--gd);color:var(--gd)}.btn-o:hover{background:var(--gd-m)}
+.btn-s{border:1px solid var(--ol);color:var(--tx2)}.btn-s:hover{background:var(--sf2);color:var(--tx)}
+.btn-g{color:var(--tx2);padding:0 10px}.btn-g:hover{color:var(--tx);background:var(--sf2)}
+.btn-d{background:var(--er);color:#fff}.btn-d:hover{opacity:.9}
+.btn-xs{height:28px;padding:0 12px;font-size:12px;border-radius:8px}
+
+/* Badges */
+.bg{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px}
+.bg::before{content:'';width:5px;height:5px;border-radius:99px;flex-shrink:0}
+.bg-ok{background:var(--ok-b);color:var(--ok)}.bg-ok::before{background:var(--ok)}
+.bg-wr{background:var(--wr-b);color:var(--wr)}.bg-wr::before{background:var(--wr)}
+.bg-er{background:var(--er-b);color:var(--er)}.bg-er::before{background:var(--er)}
+.bg-in{background:var(--in-b);color:var(--in)}.bg-in::before{background:var(--in)}
+.bg-gd{background:var(--gd-m);color:var(--gd)}.bg-gd::before{background:var(--gd)}
+
+/* Inputs */
+.fi{border:1px solid var(--ol);border-radius:20px;padding:9px 16px;font-size:14px;color:var(--tx);height:38px;transition:border-color .12s;background:transparent;width:100%}
+.fi:focus{border-color:var(--gd)}
+.fi.fi-err{border-color:var(--er)}
+.fi-lb{font-size:12px;font-weight:500;color:var(--tx2);margin-bottom:4px;display:block}
+.fi-em{font-size:11px;color:var(--er);margin-top:3px}
+textarea.fi{height:80px;resize:vertical;border-radius:14px}
+
+/* Card, Toast, Avatar, Nav demo, Tabs, Pill, Progress */
+.cd{background:var(--sf);border:1px solid var(--ol2);border-radius:14px;padding:20px;max-width:280px}
+.cd-t{font-family:'Lora',serif;font-size:15px;font-weight:700;margin-bottom:4px}
+.cd-d{font-size:13px;color:var(--tx2);line-height:1.5}
+.toast{background:var(--sf);border:1px solid var(--ol2);border-radius:10px;padding:10px 14px;display:flex;gap:8px;max-width:340px}
+.toast-bar{width:3px;border-radius:2px;align-self:stretch;flex-shrink:0}
+.toast-ok .toast-bar{background:var(--ok)}.toast-er .toast-bar{background:var(--er)}.toast-wr .toast-bar{background:var(--wr)}
+.toast-tt{font-weight:600;font-size:12px}.toast-msg{color:var(--tx2);font-size:11.5px;margin-top:1px}
+.av{border-radius:99px;display:flex;align-items:center;justify-content:center;font-family:'Lora',serif;font-weight:700;flex-shrink:0;background:var(--gd-m);color:var(--gd)}
+.nd{display:flex;flex-direction:column;gap:2px;max-width:220px}
+.nd-i{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13.5px;font-weight:500;color:var(--tx2);transition:all .1s}
+.nd-i:hover{color:var(--tx);background:var(--sf2)}
+.nd-i.on{background:var(--gd-m);color:var(--gd)}
+.nd-i svg{width:16px;height:16px;stroke-width:1.5}
+.tb{display:flex;gap:2px}.tb-i{font-size:12.5px;font-weight:500;color:var(--tx3);padding:5px 12px;border-radius:6px;transition:all .1s;cursor:pointer}.tb-i:hover{color:var(--tx2)}.tb-i.on{color:var(--tx);background:var(--sf2)}
+.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--ol);border-radius:20px;padding:7px 14px;font-size:13px;color:var(--tx2);transition:all .1s;cursor:pointer}.pill:hover{background:var(--sf2);color:var(--tx)}.pill svg{width:14px;height:14px;stroke-width:1.5}
+.pr-tr{height:4px;background:var(--sf2);border-radius:99px;overflow:hidden}.pr-fi{height:100%;background:var(--gd);border-radius:99px}
+.pr-lb{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px}.pr-lb span:first-child{color:var(--tx2)}.pr-lb span:last-child{color:var(--gd);font-weight:600}
+
+/* Spacing vis */
+.sp-vis{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.sp-b{display:flex;flex-direction:column;align-items:center;gap:4px}
+.sp-bar{background:var(--gd-m);border:1px solid var(--gd);border-radius:3px}
+.sp-v{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--tx2)}
+.sp-nm{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--tx3)}
+
+/* Radius vis */
+.rd-vis{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+.rd-b{display:flex;flex-direction:column;align-items:center;gap:6px}
+.rd-box{width:56px;height:56px;border:2px solid var(--gd);background:var(--gd-m)}
+.rd-v{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--tx2)}
+.rd-nm{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--tx3)}
+
+/* Type row */
+.tr{display:flex;align-items:baseline;gap:20px;padding:14px 0;border-bottom:1px solid var(--ol2)}
+.tr:last-child{border-bottom:none}
+.tr-s{flex:1;min-width:0}
+.tr-m{width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:2px}
+.tr-ml{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--tx3);line-height:1.4}
+.tr-ml.tok{color:var(--gd)}
+
+/* Do/Dont */
+.dd{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+.dd-c{border-radius:10px;overflow:hidden;border:1px solid var(--ol2)}
+.dd-h{padding:8px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.dd-do .dd-h{background:var(--ok-b);color:var(--ok)}
+.dd-dont .dd-h{background:var(--er-b);color:var(--er)}
+.dd-body{padding:14px;font-size:12.5px;color:var(--tx2);line-height:1.55}
+.dd-body ul{padding-left:16px;list-style:disc}.dd-body li{margin-bottom:4px}
+
+/* ══════════════════════════════════════ */
+/*  ICON GRID                           */
+/* ══════════════════════════════════════ */
+.ico-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;margin-bottom:20px}
+.ico-cell{display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 8px;border-radius:10px;border:1px solid var(--ol2);transition:all .1s}
+.ico-cell:hover{border-color:var(--ol);background:var(--sf)}
+.ico-cell svg{color:var(--tx)}
+.ico-cell span{font-size:10px;color:var(--tx3);text-align:center;line-height:1.3}
+.ico-size-row{display:flex;align-items:flex-end;gap:20px;margin-bottom:20px}
+.ico-size-item{display:flex;flex-direction:column;align-items:center;gap:6px}
+.ico-size-item span{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--tx3)}
+.ico-stroke-row{display:flex;gap:24px;align-items:center;margin-bottom:20px}
+.ico-stroke-item{display:flex;flex-direction:column;align-items:center;gap:6px}
+.ico-stroke-item span{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--tx3)}
+
+@media(max-width:900px){.sb{display:none}.main{margin-left:0;padding:28px 20px 80px}.swg{grid-template-columns:repeat(2,1fr)}.dd{grid-template-columns:1fr}.tr{flex-direction:column;gap:6px}.tr-m{width:100%}.ico-grid{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<div class="ds">
+
+<!-- ══════════════════════════════════════ -->
+<!--  SIDEBAR — GENESIS OS STYLE          -->
+<!-- ══════════════════════════════════════ -->
+<aside class="sb">
+  <div class="sb-top">
+    <div class="sb-brand">Elite Premium</div>
+    <button class="sb-panel-btn" title="Painel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+  </div>
+
+  <button class="sb-new" onclick="location.href='#'">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Design System
+  </button>
+
+  <nav class="sb-nav">
+    <!-- Foundations -->
+    <div class="sb-sec">
+      <div class="sb-sec-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg>Foundations</div>
+    </div>
+    <a class="sb-item on" href="#colors">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/></svg>Cores
+      <span class="sb-more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </a>
+    <a class="sb-item" href="#typography">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>Tipografia
+    </a>
+    <a class="sb-item" href="#icons">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Ícones
+    </a>
+    <a class="sb-item" href="#spacing">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Espaçamento
+    </a>
+    <a class="sb-item" href="#radius">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 019-9"/><line x1="3" y1="3" x2="3" y2="12"/><line x1="3" y1="3" x2="12" y2="3"/></svg>Radius
+    </a>
+    <a class="sb-item" href="#motion">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>Motion
+    </a>
+
+    <!-- Componentes -->
+    <div class="sb-sec">
+      <div class="sb-sec-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg>Componentes</div>
+      <button class="sb-sec-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    </div>
+    <a class="sb-item" href="#buttons">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="8" width="18" height="8" rx="4"/></svg>Botões
+    </a>
+    <a class="sb-item" href="#inputs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="6" width="18" height="12" rx="6"/><line x1="8" y1="12" x2="8" y2="12.01"/></svg>Inputs
+    </a>
+    <a class="sb-item" href="#badges">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="4"/></svg>Badges
+    </a>
+    <a class="sb-item" href="#cards">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>Cards
+    </a>
+    <a class="sb-item" href="#navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="15" y2="18"/></svg>Navegação
+    </a>
+    <a class="sb-item" href="#toasts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="14" width="18" height="7" rx="2"/><line x1="7" y1="17.5" x2="7" y2="17.51"/></svg>Toasts
+    </a>
+
+    <!-- Guia -->
+    <div class="sb-sec">
+      <div class="sb-sec-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg>Guia</div>
+    </div>
+    <a class="sb-item" href="#constraints">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Constraints
+    </a>
+  </nav>
+
+  <div class="sb-foot">
+    <div class="sb-quote">"A melhor maneira de começar alguma coisa é parar de falar e dar o primeiro passo."</div>
+    <div class="sb-quote-author">Walt Disney</div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════════════════ -->
+<!--  MAIN                                -->
+<!-- ══════════════════════════════════════ -->
+<main class="main">
+
+<div class="hero">
+  <h1>Elite Premium</h1>
+  <p>Design System para os sistemas internos da mentoria. Deep black com ouro antigo, herdado do Genesis OS.</p>
+  <div class="hero-meta"><span>v1.0</span><span>Abril 2026</span><span>Bethel Educação / MV4 Digital</span></div>
+</div>
+
+<!-- ═══ 01 COLORS ═══ -->
+<section class="sec" id="colors">
+<div class="sec-num">01</div><h2>Cores</h2>
+<p class="sec-desc">Preto Elite (#0A0A0E) como base. Dark Navy (#0D1117) para superfícies. Ouro Elite (#B59A5B) como único accent.</p>
+<div class="sub"><h3>Primárias</h3></div>
+<div class="swg">
+  <div class="sw"><div class="sw-c" style="background:#0A0A0E"><span>Pantone Black 6 C</span></div><div class="sw-i"><div class="sw-n">Preto Elite</div><div class="sw-h">#0A0A0E</div><div class="sw-p">--bg</div><div class="sw-u">Fundos principais</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#0D1117"><span>Pantone 5395 C</span></div><div class="sw-i"><div class="sw-n">Dark Navy</div><div class="sw-h">#0D1117</div><div class="sw-p">--sf</div><div class="sw-u">Cards, sidebar</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#B59A5B"><span>Pantone 7556 C</span></div><div class="sw-i"><div class="sw-n">Ouro Elite</div><div class="sw-h">#B59A5B</div><div class="sw-p">--gd</div><div class="sw-u">Logo, títulos, ícones, bordas</div></div></div>
+</div>
+<div class="sub"><h3>Secundárias</h3></div>
+<div class="swg">
+  <div class="sw"><div class="sw-c" style="background:#D4B97A"><span>Pantone 7562 C</span></div><div class="sw-i"><div class="sw-n">Ouro Claro</div><div class="sw-h">#D4B97A</div><div class="sw-p">--gd-l</div><div class="sw-u">Hover, highlights</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#8C7640"><span>Pantone 7557 C</span></div><div class="sw-i"><div class="sw-n">Ouro Escuro</div><div class="sw-h">#8C7640</div><div class="sw-p">--gd-d</div><div class="sw-u">Gold em light mode</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#FFFFFF;border:1px solid #E5E5E2"><span>—</span></div><div class="sw-i"><div class="sw-n">White</div><div class="sw-h">#FFFFFF</div><div class="sw-p">--bg (light)</div><div class="sw-u">Fundo light mode</div></div></div>
+</div>
+<div class="sub"><h3>Texto e Apoio</h3></div>
+<div class="swg">
+  <div class="sw"><div class="sw-c" style="background:#E8E0D4"></div><div class="sw-i"><div class="sw-n">Parchment</div><div class="sw-h">#E8E0D4</div><div class="sw-p">--tx</div><div class="sw-u">Texto primário (dark)</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#999999"></div><div class="sw-i"><div class="sw-n">Cinza Médio</div><div class="sw-h">#999999</div><div class="sw-p">--tx2</div><div class="sw-u">Labels, descrições</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#444444"></div><div class="sw-i"><div class="sw-n">Cinza Escuro</div><div class="sw-h">#444444</div><div class="sw-p">--tx2 (light)</div><div class="sw-u">Corpo em fundo claro</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#5E564E"></div><div class="sw-i"><div class="sw-n">Faint</div><div class="sw-h">#5E564E</div><div class="sw-p">--tx3</div><div class="sw-u">Timestamps, meta</div></div></div>
+</div>
+<div class="sub"><h3>Semânticas</h3></div>
+<div class="swg">
+  <div class="sw"><div class="sw-c" style="background:#5A9E72"></div><div class="sw-i"><div class="sw-n">Success</div><div class="sw-h">#5A9E72</div><div class="sw-p">--ok</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#C4A34E"></div><div class="sw-i"><div class="sw-n">Warning</div><div class="sw-h">#C4A34E</div><div class="sw-p">--wr</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#C4453A"></div><div class="sw-i"><div class="sw-n">Error</div><div class="sw-h">#C4453A</div><div class="sw-p">--er</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#6A9AB8"></div><div class="sw-i"><div class="sw-n">Info</div><div class="sw-h">#6A9AB8</div><div class="sw-p">--in</div></div></div>
+</div>
+
+<div class="sub"><h3>Superfícies (Light Mode)</h3></div>
+<div class="swg">
+  <div class="sw"><div class="sw-c" style="background:#FFFFFF;border:1px solid #E5E5E2"></div><div class="sw-i"><div class="sw-n">Background</div><div class="sw-h">#FFFFFF</div><div class="sw-p">--bg</div><div class="sw-u">Fundo principal</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#F7F7F5"></div><div class="sw-i"><div class="sw-n">Surface</div><div class="sw-h">#F7F7F5</div><div class="sw-p">--sf</div><div class="sw-u">Cards, sidebar, painéis</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#F0EFEC"></div><div class="sw-i"><div class="sw-n">Surface 2</div><div class="sw-h">#F0EFEC</div><div class="sw-p">--sf2</div><div class="sw-u">Hover, item selecionado</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#E8E7E3"></div><div class="sw-i"><div class="sw-n">Surface 3</div><div class="sw-h">#E8E7E3</div><div class="sw-p">--sf3</div><div class="sw-u">Dropdown, popover</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#E5E5E2"></div><div class="sw-i"><div class="sw-n">Outline</div><div class="sw-h">#E5E5E2</div><div class="sw-p">--ol</div><div class="sw-u">Bordas, separadores</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#1A1A1A"></div><div class="sw-i"><div class="sw-n">Text</div><div class="sw-h">#1A1A1A</div><div class="sw-p">--tx</div><div class="sw-u">Texto primário</div></div></div>
+  <div class="sw"><div class="sw-c" style="background:#8C7640"></div><div class="sw-i"><div class="sw-n">Gold (Light)</div><div class="sw-h">#8C7640</div><div class="sw-p">--gd</div><div class="sw-u">Accent em fundo claro</div></div></div>
+</div>
+</section><div class="divider"></div>
+
+<!-- ═══ 02 TYPOGRAPHY ═══ -->
+<section class="sec" id="typography">
+<div class="sec-num">02</div><h2>Tipografia</h2>
+<p class="sec-desc">Lora (serif) para display. DM Sans para funcional. JetBrains Mono para código.</p>
+<div class="tr"><div class="tr-s" style="font-family:'Lora',serif;font-size:36px;font-weight:700;line-height:1.2">Olá, tudo bem?</div><div class="tr-m"><div class="tr-ml tok">hero</div><div class="tr-ml">Lora Bold · 36px</div><div class="tr-ml">Hero único por tela</div></div></div>
+<div class="tr"><div class="tr-s" style="font-family:'Lora',serif;font-size:22px;font-weight:700">Título de Página</div><div class="tr-m"><div class="tr-ml tok">heading-1</div><div class="tr-ml">Lora Bold · 22px</div></div></div>
+<div class="tr"><div class="tr-s" style="font-family:'Lora',serif;font-size:15px;font-weight:700;color:var(--gd)">Subtítulo de Card</div><div class="tr-m"><div class="tr-ml tok">heading-2</div><div class="tr-ml">Lora Bold · 15px · gold</div></div></div>
+<div class="tr"><div class="tr-s" style="font-size:14px;line-height:1.6">Corpo de texto padrão para leitura contínua em descrições e parágrafos.</div><div class="tr-m"><div class="tr-ml tok">body</div><div class="tr-ml">DM Sans 400 · 14px</div></div></div>
+<div class="tr"><div class="tr-s" style="font-size:13px;font-weight:500;color:var(--tx2)">Label ou item de navegação</div><div class="tr-m"><div class="tr-ml tok">label</div><div class="tr-ml">DM Sans 500 · 13px</div></div></div>
+<div class="tr"><div class="tr-s" style="font-size:11px;color:var(--tx3)">Ontem, 15:30 · Há 2h</div><div class="tr-m"><div class="tr-ml tok">meta</div><div class="tr-ml">DM Sans 400 · 11px · faint</div></div></div>
+<div class="tr"><div class="tr-s" style="font-family:'Lora',serif;font-size:26px;font-weight:700;color:var(--gd)">R$ 4.200.000</div><div class="tr-m"><div class="tr-ml tok">display-value</div><div class="tr-ml">Lora Bold · 26px · gold</div></div></div>
+<div class="tr" style="border-bottom:none"><div class="tr-s" style="font-family:'Lora',serif;font-size:14px;font-weight:700;letter-spacing:.1em;color:var(--gd)">Elite Premium</div><div class="tr-m"><div class="tr-ml tok">brand</div><div class="tr-ml">Lora Bold · 14px · .1em</div></div></div>
+</section><div class="divider"></div>
+
+<!-- ═══ 03 ICONS ═══ -->
+<section class="sec" id="icons">
+<div class="sec-num">03</div><h2>Ícones</h2>
+<p class="sec-desc">Estilo minimalista outline com stroke de 1.5px. Sem fill. Cantos arredondados (round linecap/linejoin). Herdam a cor do texto pai.</p>
+
+<div class="sub"><h3>Tamanhos</h3>
+<p class="sub-desc">Ícones seguem escala fixa. Nunca alterar o stroke-width ao escalar.</p></div>
+<div class="pv">
+  <div class="ico-size-row">
+    <div class="ico-size-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg><span>14px</span><span>inline</span></div>
+    <div class="ico-size-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg><span>16px</span><span>nav</span></div>
+    <div class="ico-size-item"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg><span>20px</span><span>default</span></div>
+    <div class="ico-size-item"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg><span>24px</span><span>feature</span></div>
+    <div class="ico-size-item"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg><span>32px</span><span>hero</span></div>
+  </div>
+</div>
+
+<div class="sub"><h3>Stroke Weight</h3>
+<p class="sub-desc">Padrão: 1.5px. Nunca usar 1px (fino demais) ou 2px+ (pesado demais).</p></div>
+<div class="pv">
+  <div class="ico-stroke-row">
+    <div class="ico-stroke-item"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--er)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span style="color:var(--er)">1.0 ✗</span></div>
+    <div class="ico-stroke-item"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span style="color:var(--ok)">1.5 ✓</span></div>
+    <div class="ico-stroke-item"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--er)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span style="color:var(--er)">2.5 ✗</span></div>
+  </div>
+</div>
+
+<div class="sub"><h3>Navegação</h3></div>
+<div class="ico-grid">
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Dashboard</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><span>Mentorados</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span>Sessões</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span>Resultados</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09"/></svg><span>Config</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>Buscar</span></div>
+</div>
+
+<div class="sub"><h3>Ações</h3></div>
+<div class="ico-grid">
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Adicionar</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Editar</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span>Excluir</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Download</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg><span>Upload</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg><span>Mais</span></div>
+</div>
+
+<div class="sub"><h3>Status e Feedback</h3></div>
+<div class="ico-grid">
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span>Sucesso</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Alerta</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><span>Erro</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Info</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>Favorito</span></div>
+  <div class="ico-cell"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg><span>Seguro</span></div>
+</div>
+
+<div class="sub"><h3>Pilares da Mentoria</h3></div>
+<div class="ico-grid">
+  <div class="ico-cell" style="border-color:var(--gd-m)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gd)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>Branding</span></div>
+  <div class="ico-cell" style="border-color:var(--gd-m)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gd)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span>Marketing</span></div>
+  <div class="ico-cell" style="border-color:var(--gd-m)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gd)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg><span>Comercial</span></div>
+  <div class="ico-cell" style="border-color:var(--gd-m)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gd)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><span>Liderança</span></div>
+  <div class="ico-cell" style="border-color:var(--gd-m)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gd)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg><span>Gestão</span></div>
+  <div class="ico-cell" style="border-color:var(--gd-m)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gd)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg><span>Mentalidade</span></div>
+</div>
+
+<div class="stw"><table class="st"><thead><tr><th>Propriedade</th><th>Valor</th></tr></thead><tbody>
+<tr><td>Estilo</td><td class="st-val">Outline only. Nunca filled.</td></tr>
+<tr><td>Stroke width</td><td class="st-val">1.5px</td></tr>
+<tr><td>Linecap</td><td class="st-val">round</td></tr>
+<tr><td>Linejoin</td><td class="st-val">round</td></tr>
+<tr><td>Cor padrão</td><td class="st-val">Herda do texto pai (currentColor)</td></tr>
+<tr><td>Cor pilar</td><td class="st-val">--gd (gold)</td></tr>
+<tr><td>Tamanho nav</td><td class="st-val">16px</td></tr>
+<tr><td>Tamanho padrão</td><td class="st-val">20px</td></tr>
+<tr><td>Tamanho feature</td><td class="st-val">24px</td></tr>
+<tr><td>ViewBox</td><td class="st-val">0 0 24 24 (sempre)</td></tr>
+</tbody></table></div>
+</section><div class="divider"></div>
+
+<!-- ═══ 04+ REMAINING SECTIONS ═══ -->
+<section class="sec" id="spacing"><div class="sec-num">04</div><h2>Espaçamento</h2><p class="sec-desc">Base grid 4px. Densidade baixa.</p>
+<div class="sp-vis"><div class="sp-b"><div class="sp-bar" style="width:4px;height:24px"></div><div class="sp-v">4</div><div class="sp-nm">xs</div></div><div class="sp-b"><div class="sp-bar" style="width:8px;height:24px"></div><div class="sp-v">8</div><div class="sp-nm">sm</div></div><div class="sp-b"><div class="sp-bar" style="width:12px;height:24px"></div><div class="sp-v">12</div><div class="sp-nm">md</div></div><div class="sp-b"><div class="sp-bar" style="width:16px;height:24px"></div><div class="sp-v">16</div><div class="sp-nm">lg</div></div><div class="sp-b"><div class="sp-bar" style="width:24px;height:24px"></div><div class="sp-v">24</div><div class="sp-nm">2xl</div></div><div class="sp-b"><div class="sp-bar" style="width:32px;height:24px"></div><div class="sp-v">32</div><div class="sp-nm">3xl</div></div><div class="sp-b"><div class="sp-bar" style="width:40px;height:24px"></div><div class="sp-v">40</div><div class="sp-nm">4xl</div></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="radius"><div class="sec-num">05</div><h2>Border Radius</h2><p class="sec-desc">Inputs: 20px. Cards: 14px. Botões: 10px.</p>
+<div class="rd-vis"><div class="rd-b"><div class="rd-box" style="border-radius:6px"></div><div class="rd-v">6px</div><div class="rd-nm">sm</div></div><div class="rd-b"><div class="rd-box" style="border-radius:10px"></div><div class="rd-v">10px</div><div class="rd-nm">md</div></div><div class="rd-b"><div class="rd-box" style="border-radius:14px"></div><div class="rd-v">14px</div><div class="rd-nm">lg</div></div><div class="rd-b"><div class="rd-box" style="border-radius:20px"></div><div class="rd-v">20px</div><div class="rd-nm">xl</div></div><div class="rd-b"><div class="rd-box" style="border-radius:9999px"></div><div class="rd-v">full</div><div class="rd-nm">full</div></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="motion"><div class="sec-num">06</div><h2>Motion</h2><p class="sec-desc">Sóbrio. Sem spring, bounce.</p>
+<div class="stw"><table class="st"><thead><tr><th>Token</th><th>Valor</th><th>Uso</th></tr></thead><tbody><tr><td class="st-tok">fast</td><td class="st-val">100ms ease</td><td class="st-desc">Hovers</td></tr><tr><td class="st-tok">normal</td><td class="st-val">180ms ease</td><td class="st-desc">Modais</td></tr><tr><td class="st-tok">slow</td><td class="st-val">300ms ease</td><td class="st-desc">Page transitions</td></tr></tbody></table></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="buttons"><div class="sec-num">07</div><h2>Botões</h2><p class="sec-desc">34px, sem shadow.</p>
+<div class="pv"><div class="pv-lb">Variantes</div><div class="pv-row"><button class="btn btn-p">Primário</button><button class="btn btn-o">Outline Gold</button><button class="btn btn-s">Secundário</button><button class="btn btn-g">Ghost</button><button class="btn btn-d">Destrutivo</button></div></div>
+<div class="pv"><div class="pv-lb">Tamanhos</div><div class="pv-row"><button class="btn btn-p">Default 34px</button><button class="btn btn-p btn-xs">Small 28px</button></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="inputs"><div class="sec-num">08</div><h2>Inputs</h2><p class="sec-desc">Pill shape (20px). Focus = gold.</p>
+<div class="pv"><div class="pv-col" style="max-width:360px;width:100%;gap:16px"><div><span class="fi-lb">Default</span><input class="fi" placeholder="Nome"></div><div><span class="fi-lb">Error</span><input class="fi fi-err" value="abc"><div class="fi-em">Valor inválido.</div></div><div><span class="fi-lb">Textarea</span><textarea class="fi" placeholder="Notas..."></textarea></div></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="badges"><div class="sec-num">09</div><h2>Badges</h2><p class="sec-desc">Dot + label, translúcido.</p>
+<div class="pv"><div class="pv-row"><span class="bg bg-ok">Ativo</span><span class="bg bg-wr">Onboarding</span><span class="bg bg-er">Cancelado</span><span class="bg bg-in">Pausado</span><span class="bg bg-gd">Premium</span></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="cards"><div class="sec-num">10</div><h2>Cards</h2><p class="sec-desc">Sem shadow. Borda sutil.</p>
+<div class="pv"><div class="pv-row" style="gap:14px"><div class="cd"><div class="cd-t">Card Padrão</div><div class="cd-d">Borda --ol2, bg --sf.</div></div><div class="cd" style="border-color:var(--gd)"><div class="cd-t" style="color:var(--gd)">Card Destaque</div><div class="cd-d">Borda --gd.</div></div></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="navigation"><div class="sec-num">11</div><h2>Navegação</h2><p class="sec-desc">Ativo = gold wash. Sem left-border.</p>
+<div class="pv"><div class="nd"><div class="nd-i on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Dashboard</div><div class="nd-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Mentorados</div><div class="nd-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Sessões</div></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="toasts"><div class="sec-num">12</div><h2>Toasts</h2><p class="sec-desc">Barra 3px indica tipo.</p>
+<div class="pv"><div class="pv-col" style="gap:8px;max-width:340px"><div class="toast toast-ok"><div class="toast-bar"></div><div><div class="toast-tt">Sessão agendada</div><div class="toast-msg">Hotseat confirmado.</div></div></div><div class="toast toast-er"><div class="toast-bar"></div><div><div class="toast-tt">Erro ao salvar</div><div class="toast-msg">Verifique os campos.</div></div></div><div class="toast toast-wr"><div class="toast-bar"></div><div><div class="toast-tt">Pendente</div><div class="toast-msg">3 sem confirmação.</div></div></div></div></div>
+</section><div class="divider"></div>
+
+<section class="sec" id="constraints"><div class="sec-num">13</div><h2>Constraints</h2><p class="sec-desc">Regras invioláveis.</p>
+<div class="dd"><div class="dd-c dd-do"><div class="dd-h">Faça</div><div class="dd-body"><ul><li>Background #0A0A0E (Preto Elite)</li><li>Surfaces em Dark Navy (#0D1117)</li><li>Texto parchment (#E8E0D4)</li><li>Gold (#B59A5B) como único accent</li><li>Active = gold wash 12%</li><li>Inputs radius 20px</li><li>Ícones outline 1.5px stroke</li><li>Lora só headlines</li></ul></div></div><div class="dd-c dd-dont"><div class="dd-h">Não faça</div><div class="dd-body"><ul><li>Shadows, glow, box-shadow</li><li>Ícones filled/solid</li><li>Stroke weight != 1.5px</li><li>Gradientes em UI</li><li>Left-border como active</li><li>Tons frios</li><li>Body text > 15px</li><li>Gold como fundo de áreas grandes</li></ul></div></div></div>
+</section>
+
+<div style="margin-top:56px;padding-top:24px;border-top:1px solid var(--ol2);display:flex;justify-content:space-between;align-items:center">
+  <div><div style="font-family:'Lora',serif;font-size:13px;font-weight:700;letter-spacing:.1em;color:var(--gd)">Elite Premium</div><div style="font-size:11px;color:var(--tx3);margin-top:2px">Design System v1.0 · Abril 2026</div></div>
+  <div style="font-size:11px;color:var(--tx3)">Bethel Educação · MV4 Digital</div>
+</div>
+
+</main>
+</div>
+
+<script>
+function toggleTheme(){const h=document.documentElement,d=h.dataset.theme==='dark';h.dataset.theme=d?'light':'dark';document.getElementById('nS').style.display=d?'block':'none';document.getElementById('nM').style.display=d?'none':'block';document.getElementById('tL').textContent=d?'Modo escuro':'Modo claro'}
+const secs=document.querySelectorAll('.sec'),lnks=document.querySelectorAll('.sb-item');
+window.addEventListener('scroll',()=>{let c='';secs.forEach(s=>{if(scrollY>=s.offsetTop-80)c=s.id});lnks.forEach(l=>{l.classList.toggle('on',l.getAttribute('href')==='#'+c)})},{passive:true});
+</script>
+</body>
+</html>
