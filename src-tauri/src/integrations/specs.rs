@@ -41,16 +41,27 @@ pub fn save_spec(name: &str, content: &str) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
-/// Returns the spec content for `name`, or `None` when the file is
-/// absent. Other I/O errors (permission denied, invalid UTF-8) bubble
-/// up as `Err` so the caller can distinguish "not configured" from
+/// Returns the spec content for `name`, or `None` when no file is on
+/// disk under either the canonical `<name>.md` path or the legacy
+/// `<name>.yaml` path (records criados antes do wizard refactor
+/// gravavam .yaml — sem fallback aqui o GPT não enxerga a spec dessas
+/// integrations e responde como se elas não tivessem documentação).
+/// Other I/O errors (permission denied, invalid UTF-8) bubble up as
+/// `Err` so the caller can distinguish "not configured" from
 /// "configured but unreadable".
 pub fn load_spec(name: &str) -> Result<Option<String>, String> {
-    let path = spec_path(name);
-    match fs::read_to_string(&path) {
+    let primary = spec_path(name);
+    match fs::read_to_string(&primary) {
+        Ok(s) => return Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("cannot read {}: {e}", primary.display())),
+    }
+    // Legacy fallback: pre-wizard add_integration wrote `.yaml`.
+    let legacy = specs_dir().join(format!("{name}.yaml"));
+    match fs::read_to_string(&legacy) {
         Ok(s) => Ok(Some(s)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+        Err(e) => Err(format!("cannot read {}: {e}", legacy.display())),
     }
 }
 

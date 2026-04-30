@@ -603,15 +603,15 @@ pub fn compose_system_prompt() -> String {
 /// responses are reserved for "no API call needed" turns.
 pub const PROMPT_INTEGRATION: &str = r##"## Integração ativa: `@{{integration_name}}`
 
-O usuário invocou a integração `@{{integration_name}}` neste turno. A spec abaixo descreve como a API funciona — endpoints, auth, exemplos. Use ela pra montar o request certo.
+O usuário INVOCOU EXPLICITAMENTE a integração `@{{integration_name}}` neste turno. Você TEM ACESSO a essa API. A autenticação (api_key) é injetada automaticamente pelo orquestrador — você só precisa decidir o endpoint certo e os params.
 
 ### Spec da API
 
 {{integration_spec}}
 
-### Como você responde
+### Como você responde — PROTOCOLO OBRIGATÓRIO
 
-Quando precisar BUSCAR DADOS na API pra responder a pergunta do usuário, **responda APENAS com um bloco JSON nesse formato**, sem texto antes ou depois:
+Pra qualquer pergunta que precise de DADOS da API, sua resposta DEVE ser EXATAMENTE este JSON, sem nenhum texto antes ou depois:
 
 ```json
 {
@@ -622,16 +622,19 @@ Quando precisar BUSCAR DADOS na API pra responder a pergunta do usuário, **resp
 }
 ```
 
-Regras:
-- `endpoint` é o path relativo ao `base_url` cadastrado (ex: `/users/123`, `/repos/foo/bar/issues`). Pode ser uma URL absoluta quando a spec indicar.
-- `params` é OPCIONAL. Quando incluído, vira query string codificada. **NÃO inclua `api_key` aí** — o orquestrador injeta automaticamente conforme o `auth_type` cadastrado.
-- NÃO escreva texto explicativo no mesmo turno do `integration_call`. O orquestrador executa o request, retorna o JSON da resposta no próximo turno e aí você compõe a resposta em linguagem natural.
-- Se a tarefa NÃO precisar de chamada à API (o usuário só perguntou sobre a integração, ou você já tem a resposta no contexto), responda em texto normal — sem o bloco JSON.
+Regras críticas:
+- **NUNCA diga "não tenho acesso" — você tem.** O orquestrador faz o request real assim que recebe o JSON.
+- `endpoint` é o path relativo ao `base_url` cadastrado (ex: `/users/123`, `/perpetuos`). Pode ser absoluto quando a spec indicar.
+- `params` é OPCIONAL (omita ou `{}` quando não precisar). Quando incluir, vira query string. **NÃO inclua `api_key`** — o orquestrador injeta.
+- NÃO escreva NENHUM texto explicativo, comentário ou markdown ao redor do JSON. Só o bloco JSON puro.
+- A ÚNICA exceção: se a pergunta do usuário NÃO precisa da API (perguntou só sobre a spec, ou você já tem a resposta no histórico do chat), responda em texto. Mas no caso de "@nome <pergunta sobre dados>" SEMPRE faça `integration_call`.
 
-Quando o resultado do `integration_call` chegar:
+### Quando o resultado chegar
+
+No turno seguinte você recebe o JSON da resposta da API. Aí sim:
 - Leia o JSON, extraia o que importa pra pergunta original.
-- Responda em português conciso.
-- NÃO devolva o JSON cru pro usuário — interprete e resuma."##;
+- Responda em português conciso, em linguagem natural.
+- NÃO devolva o JSON cru — interprete e resuma os números/dados de forma útil."##;
 
 pub const SKILL_SELECTION_PROMPT: &str = r#"A partir da mensagem do usuário, escolha qual skill melhor se aplica.
 Retorne APENAS JSON neste formato, sem texto adicional:

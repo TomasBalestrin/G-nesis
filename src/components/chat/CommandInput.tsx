@@ -5,11 +5,9 @@ import { SendHorizontal, Slash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useCaminhosStore } from "@/stores/caminhosStore";
-import { useCapabilitiesStore } from "@/stores/capabilitiesStore";
 import { useIntegrationsStore } from "@/stores/integrationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 
-import { AtCommandModal, filterCapabilities } from "./AtCommandModal";
 import { AtIntegrationModal, filterIntegrations } from "./AtIntegrationModal";
 import { CaminhoSelector } from "./CaminhoSelector";
 import { HashCommandModal, filterCaminhos } from "./HashCommandModal";
@@ -47,19 +45,19 @@ const NO_MENTION: MentionState = {
 };
 
 /**
- * Chat input with four autocomplete popups, gated by trigger char +
- * position (start-of-input vs mid-text):
- *   - `/skill-name`     start  → submits on select.
- *   - `@<integration>`  start  → inserts `@name ` (turn-level command,
- *                                detected by `extract_at_integration`).
- *   - `@capability`     inline → inserts `@name ` (mention; system
- *                                prompt injection via extract_at_mentions).
- *   - `#caminho`        inline → inserts `#name `.
+ * Chat input com 3 popups de autocomplete, todos disparados pelo
+ * caractere atual sob o cursor:
+ *   - `/skill-name`     APENAS start-of-input → submete on select.
+ *   - `@integration`    QUALQUER posição (Slack/Discord-style) →
+ *                       insere `@name ` (turn-level integration call;
+ *                       backend `extract_at_integration` detecta o
+ *                       padrão em qualquer posição da mensagem).
+ *   - `#caminho`        mid-text → insere `#name `.
  *
- * Detection runs against the current word (last whitespace before the
- * cursor → cursor position). The `position` flag in MentionState
- * disambiguates the two `@` paths: same trigger char, different
- * popup + filter list + downstream backend semantics.
+ * Detection é por palavra: olha do cursor pra trás até achar
+ * whitespace e checa o primeiro caractere. `/` é gateado por
+ * start-of-input pra não confundir com path strings; `@` e `#` não
+ * têm gating de posição.
  *
  * One highlight state, shared across modals — resets when the trigger
  * or query changes. Keyboard handling is owned here so the textarea's
@@ -79,10 +77,6 @@ export function CommandInput({
   const skillsLoaded = useSkillsStore((s) => s.loaded);
   const ensureSkills = useSkillsStore((s) => s.ensureLoaded);
 
-  const capabilities = useCapabilitiesStore((s) => s.items);
-  const capsLoaded = useCapabilitiesStore((s) => s.loaded);
-  const ensureCaps = useCapabilitiesStore((s) => s.ensureLoaded);
-
   const caminhos = useCaminhosStore((s) => s.items);
   const caminhosLoaded = useCaminhosStore((s) => s.loaded);
   const ensureCaminhos = useCaminhosStore((s) => s.ensureLoaded);
@@ -96,21 +90,16 @@ export function CommandInput({
     [value, cursor, disabled],
   );
 
-  // Filtered candidates per (trigger, position). Only the active modal
-  // renders, so the inactive arrays are essentially free (empty).
+  // Filtered candidates per trigger. `@` agora vai sempre pra
+  // integrations (independente de start vs mid-text) — Slack-style
+  // mention que combina com o backend extract_at_integration que
+  // acha @<name> em qualquer posição.
   const filteredSkills = useMemo(
     () =>
       mention.trigger === "/" && skillsLoaded
         ? filterSkills(skills, mention.query)
         : [],
     [mention, skills, skillsLoaded],
-  );
-  const filteredCaps = useMemo(
-    () =>
-      mention.trigger === "@" && mention.position === "inline" && capsLoaded
-        ? filterCapabilities(capabilities, mention.query)
-        : [],
-    [mention, capabilities, capsLoaded],
   );
   const filteredCaminhos = useMemo(
     () =>
@@ -121,31 +110,17 @@ export function CommandInput({
   );
   const filteredIntegrations = useMemo(
     () =>
-      mention.trigger === "@" &&
-      mention.position === "start" &&
-      integrationsLoaded
+      mention.trigger === "@" && integrationsLoaded
         ? filterIntegrations(integrations, mention.query)
         : [],
     [mention, integrations, integrationsLoaded],
   );
 
-  // Hydrate the matching catalog the first time the user triggers it.
-  // `@` at start-of-input → integrations; mid-text → capabilities.
   useEffect(() => {
     if (mention.trigger === "/") void ensureSkills();
-    if (mention.trigger === "@" && mention.position === "start")
-      void ensureIntegrations();
-    if (mention.trigger === "@" && mention.position === "inline")
-      void ensureCaps();
+    if (mention.trigger === "@") void ensureIntegrations();
     if (mention.trigger === "#") void ensureCaminhos();
-  }, [
-    mention.trigger,
-    mention.position,
-    ensureSkills,
-    ensureCaps,
-    ensureCaminhos,
-    ensureIntegrations,
-  ]);
+  }, [mention.trigger, ensureSkills, ensureCaminhos, ensureIntegrations]);
 
   // Reset highlight when the trigger or query changes.
   useEffect(() => {
@@ -211,18 +186,14 @@ export function CommandInput({
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // Active list for the current (trigger, position). Branches below
-    // only run when one is non-empty so navigation keys are safe.
     const active =
       mention.trigger === "/"
         ? filteredSkills.map((s) => s.name)
-        : mention.trigger === "@" && mention.position === "start"
+        : mention.trigger === "@"
           ? filteredIntegrations.map((i) => i.name)
-          : mention.trigger === "@"
-            ? filteredCaps.map((c) => c.name)
-            : mention.trigger === "#"
-              ? filteredCaminhos.map((c) => c.name)
-              : [];
+          : mention.trigger === "#"
+            ? filteredCaminhos.map((c) => c.name)
+            : [];
 
     if (mention.trigger && active.length > 0) {
       if (e.key === "ArrowDown") {
@@ -310,31 +281,15 @@ export function CommandInput({
         }}
       />
       <AtIntegrationModal
-        open={
-          mention.trigger === "@" && mention.position === "start" && !disabled
-        }
+        open={mention.trigger === "@" && !disabled}
         query={mention.query}
         integrations={integrations ?? []}
         highlight={highlight}
         onHighlightChange={setHighlight}
         onSelect={(name) => selectInline("@", name)}
         onClose={() => {
-          // Same dismiss-without-clearing pattern as the inline modals.
-        }}
-      />
-      <AtCommandModal
-        open={
-          mention.trigger === "@" && mention.position === "inline" && !disabled
-        }
-        query={mention.query}
-        capabilities={capabilities ?? []}
-        highlight={highlight}
-        onHighlightChange={setHighlight}
-        onSelect={(name) => selectInline("@", name)}
-        onClose={() => {
-          // Closing without selection just dismisses the menu — leave
-          // the partial `@foo` in the text so the user can keep editing.
-          // Re-detection on the next change picks it back up.
+          // Dismiss-without-clearing — partial `@foo` fica no texto e
+          // próximo render re-detecta. Igual aos outros inline modals.
         }}
       />
       <HashCommandModal
