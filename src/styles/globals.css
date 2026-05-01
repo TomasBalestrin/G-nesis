@@ -1,11 +1,35 @@
-/* Plus Jakarta Sans + JetBrains Mono — fontes do Claude Design System
-   (design.md §tipografia). Carregadas antes de tudo para o FOIT mínimo. */
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+/* Fontes Elite Premium bundled localmente (B2): Lora display, DM Sans
+   body, JetBrains Mono code. Vem ANTES de tudo pro FOIT mínimo. CDN
+   do Google Fonts foi aposentada — app é desktop (Tauri) e boot
+   offline-first. Ver src/assets/fonts/ pros .woff2. */
+@import './fonts.css';
 
-/* Design system: tokens semânticos + paleta + tema padrão (Azul Dark em
-   :root, Azul Light em [data-theme="light"]). Único arquivo CSS que define
-   cores. */
+/* Design system legado (Claude Blue) — mantido por enquanto pros
+   componentes que ainda usam --text/--accent. Será aposentado quando
+   a migração pra Elite Premium estiver completa em todas as
+   superfícies. */
 @import './design-system.css';
+
+/* Elite Premium tokens — DESIGN.md source-of-truth. Importado APÓS
+   o design-system.css pra ganhar em colisões de nome (--bg, --sf,
+   --tx, etc). Cobre dark + light + spacing + radius + motion. */
+@import './tokens.css';
+
+/* Elite Premium UI components — pulled here so o bundle sempre
+   contém os estilos mesmo quando nenhum consumer ainda importou o
+   componente TSX correspondente. Cada arquivo abaixo é
+   self-contained (.btn, .btn-primary, etc são classes plain CSS,
+   não Tailwind utilities). */
+@import '../components/ui/EliteButton.css';
+@import '../components/ui/EliteInput.css';
+@import '../components/ui/EliteBadge.css';
+@import '../components/ui/EliteCard.css';
+@import '../components/ui/EliteToast.css';
+@import '../components/ui/EliteTabs.css';
+@import '../components/ui/Pill.css';
+@import '../components/ui/ProgressBar.css';
+@import '../components/ui/ThemeToggle.css';
+@import '../components/layout/EliteSidebar.css';
 
 @tailwind base;
 @tailwind components;
@@ -13,9 +37,15 @@
 
 @layer base {
   html {
-    font-family: var(--font-sans);
+    /* DM Sans é o body default do Elite Premium (DESIGN.md §typography).
+       --font-sans existia no design-system.css legado pro Plus Jakarta;
+       Elite Premium override aqui sobrescreve. */
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
     font-size: var(--text-base);
     color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   html[data-theme="light"] {
@@ -31,10 +61,9 @@
 
   body {
     background: var(--bg);
-    color: var(--text);
+    color: var(--tx);
     line-height: var(--leading-normal);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    transition: background 0.25s, color 0.25s;
   }
 
   h1,
@@ -43,7 +72,10 @@
   h4,
   h5,
   h6 {
-    font-family: var(--font-sans);
+    /* Headlines em Lora (DESIGN.md §typography: "Lora for headlines
+       only"). Componentes que precisam de sans em h-tags usam a
+       utility .font-body pra override. */
+    font-family: 'Lora', Georgia, serif;
     font-weight: var(--weight-semibold);
     color: var(--text);
   }
@@ -62,7 +94,19 @@
   pre,
   kbd,
   samp {
-    font-family: var(--font-mono);
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular,
+      Consolas, monospace;
+  }
+
+  /* Icon defaults — DESIGN.md §icons + E2 audit. Lucide-react renderiza
+     com stroke-width=2 por default; CSS aqui force 1.5 cascade-wise pra
+     evitar precisar setar strokeWidth={1.5} em cada uso. linecap/
+     linejoin round já são default da lucide; declaramos só por
+     defensividade contra qualquer SVG inline futuro que esqueça. */
+  svg {
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   /* Scrollbar slim 6px (design.css §13). */
@@ -90,5 +134,67 @@
   }
   .animate-fade-in {
     animation: fade-in 150ms var(--ease-out, ease-out);
+  }
+
+  /* Font-family overrides — preferir aqui em vez de inline style.
+     DESIGN.md restringe Lora a headlines mas há casos de uso (ex:
+     hero serif em onboarding) onde o componente precisa explicitar. */
+  .font-display { font-family: 'Lora', Georgia, serif; }
+  .font-body { font-family: 'DM Sans', system-ui, -apple-system, sans-serif; }
+  .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+  /* Escala tipográfica do Elite Premium (B3). Cada `.type-*` é uma
+     receita completa (font-family + size + weight + cor quando
+     relevante) pra evitar mix-and-match acidental.
+     CONSTRAINT: body text ≤ 15px. As 4 classes de body (.type-body
+     14px, .type-label 13px, .type-meta 11px, .type-brand 14px)
+     respeitam o limite; .type-hero/.type-h1/.type-h2/.type-value
+     são display e podem ultrapassar (DESIGN.md §typography).
+     Display em Lora; body em DM Sans — nunca misturar. */
+  .type-hero {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .type-h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .type-h2 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--gd);
+  }
+  .type-body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .type-label {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--tx2);
+  }
+  .type-meta {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    color: var(--tx3);
+  }
+  .type-value {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--gd);
+  }
+  .type-brand {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--gd);
   }
 }

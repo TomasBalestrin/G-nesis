@@ -1,0 +1,83 @@
+/* Input + Textarea — Elite Premium (DESIGN.md §08).
+   Pill shape (radius 20px, textarea 14px), border 1px ol → gd no
+   focus. Sem outline, sem box-shadow, sem glow. Cor herdada do
+   tema via tokens. Transição só na border-color (120ms). */
+
+.fi {
+  display: block;
+  width: 100%;
+  height: 38px;
+  padding: 9px 16px;
+  border: 1px solid var(--ol);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--tx);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  transition: border-color var(--motion-fast, 120ms ease);
+  outline: none;
+  box-shadow: none;
+}
+
+.fi::placeholder {
+  color: var(--tx3);
+}
+
+.fi:focus,
+.fi:focus-visible {
+  border-color: var(--gd);
+  outline: none;
+  box-shadow: none;
+}
+
+.fi:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.fi.fi-err,
+.fi.fi-err:focus,
+.fi.fi-err:focus-visible {
+  /* Erro vence o focus pra dar sinal claro. Cor da borda muda;
+     nada de outline/glow conforme constraint. */
+  border-color: var(--er);
+}
+
+textarea.fi {
+  height: 80px;
+  resize: vertical;
+  border-radius: 14px;
+  padding: 10px 14px;
+  line-height: 1.55;
+}
+
+/* Label e mensagem de erro vivem fora do <input>; aqui só a
+   tipografia/cor padrão. Layout (margin-bottom da label, gap
+   entre label/input) é responsabilidade do consumer ou do
+   container .fi-field abaixo. */
+.fi-lb {
+  display: block;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tx2);
+  margin-bottom: 4px;
+}
+
+.fi-em {
+  display: block;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  color: var(--er);
+  margin-top: 3px;
+}
+
+/* Container opcional pra agrupar label + input + erro num bloco
+   coeso. Componente usa essa estrutura por default; consumers que
+   precisam de layouts mais elaborados podem usar só `.fi`/`.fi-lb`
+   /`.fi-em` standalone. */
+.fi-field {
+  display: flex;
+  flex-direction: column;
+}

@@ -1,0 +1,48 @@
+/* Card — Elite Premium (DESIGN.md §10).
+   Surface 1 com borda sutil. Sem box-shadow / gradient / glow.
+   Highlight troca apenas a border-color pra gold (e a cor do
+   título — via descendente) sem mudar o background — ressalta
+   sem gritar.
+
+   Convenção de nome: `.card*` em vez do `.cd*` do design HTML.
+   Mais legível em JSX/CSS sem perder semântica. Sub-componentes
+   (`.card-title`, `.card-description`) acessam o highlight via
+   seletor descendente — sem React Context, sem prop drilling. */
+
+.card {
+  background: var(--sf);
+  border: 1px solid var(--ol2);
+  border-radius: 14px;
+  padding: 20px;
+  /* CONSTRAINT: zero box-shadow. Outline destaca via cor de borda. */
+}
+
+.card-highlight {
+  border-color: var(--gd);
+}
+
+/* ── Sub-componentes ────────────────────────────────────────────── */
+
+.card-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--tx);
+  margin: 0 0 4px;
+}
+
+/* Quando o card está em highlight, o título herda a cor gold —
+   reforço visual sem precisar de prop adicional na Title. Seletor
+   descendente cobre Title aninhado em qualquer estrutura interna. */
+.card-highlight .card-title {
+  color: var(--gd);
+}
+
+.card-description {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tx2);
+  margin: 0;
+}

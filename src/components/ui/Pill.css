@@ -1,0 +1,52 @@
+/* Pill — Elite Premium (DESIGN.md §11 — chip pílula).
+   Outline 1px ol, border-radius 20px, padding 7 14. Hover
+   eleva pra surface 2. Ícone outline 14px stroke 1.5
+   (DESIGN.md §icons). */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--ol);
+  border-radius: 20px;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--tx2);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-fast, 100ms ease);
+  white-space: nowrap;
+}
+.pill:hover {
+  background: var(--sf2);
+  color: var(--tx);
+}
+.pill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--gd);
+}
+.pill:disabled,
+.pill[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.pill svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+  flex-shrink: 0;
+}
+
+/* Variante "selected" pra uso em filter chips / tag selectors —
+   bg gold-mute discreto sem virar botão primário. */
+.pill.pill-selected {
+  background: var(--gd-m);
+  border-color: var(--gd);
+  color: var(--gd);
+}
+.pill.pill-selected:hover {
+  background: var(--gd-mh);
+}

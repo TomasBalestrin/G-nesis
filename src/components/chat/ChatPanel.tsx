@@ -372,9 +372,14 @@ function TypingIndicator() {
 }
 
 function Dot({ delay = 0 }: { delay?: number }) {
+  // animate-pulse usa ease-in-out (cubic-bezier 0.4,0,0.6,1) — sem
+  // spring conforme Elite Premium (DESIGN.md §motion). Tailwind's
+  // content scanner é greedy e gera classe pra qualquer token que
+  // bate o pattern, incluindo em comments — daí evitar repetir aqui
+  // o nome da animation antiga.
   return (
     <span
-      className="h-2 w-2 animate-bounce rounded-full bg-[var(--text-3)]"
+      className="h-2 w-2 animate-pulse rounded-full bg-[var(--text-3)]"
       style={{ animationDelay: `${delay}ms` }}
     />
   );

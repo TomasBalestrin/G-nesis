@@ -1,0 +1,40 @@
+/* ProgressBar — Elite Premium (DESIGN.md §11).
+   Track horizontal 4px sobre surface 2. Fill em gold flat,
+   sem gradient. Label opcional acima (texto à esquerda,
+   percentage à direita em gold semibold). */
+
+.pr {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pr-lb {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+}
+.pr-lb span:first-child {
+  color: var(--tx2);
+}
+.pr-lb span:last-child {
+  color: var(--gd);
+  font-weight: 600;
+}
+
+.pr-tr {
+  height: 4px;
+  background: var(--sf2);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.pr-fi {
+  height: 100%;
+  background: var(--gd);
+  border-radius: 99px;
+  /* Transição suave quando o caller anima value step-by-step
+     (ex: skill execution progress). var(--motion-normal) é
+     180ms — perceptível mas não lento. */
+  transition: width var(--motion-normal, 180ms ease);
+}

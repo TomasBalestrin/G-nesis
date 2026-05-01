@@ -1,4 +1,4 @@
-> ⚡ Thor | 21/04/2026 | v1.0
+> ⚡ Thor | 30/04/2026 | v1.1
 
 # CLAUDE.md — Genesis
 
@@ -121,8 +121,8 @@ Após qualquer alteração: `cargo check` (Rust) + `npm run build` (frontend). S
 
 ### Estilo
 - Tailwind only — zero CSS modules, zero inline styles complexos
-- shadcn/ui para componentes base
-- CSS variables para tema (design system do usuário)
+- shadcn/ui como base de componentes, mas com overrides do **Elite Premium** (ver §Design System abaixo)
+- Tokens (cores, tipografia, radii, spacing) consumidos via CSS variables — **fonte de verdade em `DESIGN.md`**
 - Dark mode default
 
 ### State
@@ -130,6 +130,30 @@ Após qualquer alteração: `cargo check` (Rust) + `npm run build` (frontend). S
 - React state: estado efêmero (inputs, modais, toggles)
 - SQLite: persistência durável (projetos, histórico)
 - Events Tauri: streaming (logs, progresso em tempo real)
+
+---
+
+## Design System — Elite Premium
+
+Sistema visual usado em todas as superfícies do app. Estética minimalista de luxo discreto: zero brilho, zero sombra, gold contido como único acento.
+
+**Fontes de verdade**:
+- `DESIGN.md` — tokens (cores, tipografia, radii, spacing, motion). **Source-of-truth**.
+- `design system.html` — referência visual renderizável (abrir no browser pra ver os componentes em vivo).
+
+**Regra obrigatória**: ANTES de criar ou editar qualquer componente visual (TSX, Tailwind class, CSS), **leia `DESIGN.md`**. Se um token não cobre o caso, abrir issue/discussão antes de inventar — nunca fazer one-off.
+
+**Constraints resumidas (não exaustivo — DESIGN.md tem o spec completo)**:
+- ❌ **Sem shadows**, sem `box-shadow`, sem elevações por sombra
+- ❌ **Sem glow** / outer-glow / drop-shadow neon
+- ❌ **Sem gradientes** — cores chapadas; backgrounds sólidos
+- ✅ **Gold `#B59A5B`** é o ÚNICO accent permitido (links ativos, focus ring, badges destacados)
+- ✅ **Ícones outline 1.5px** (lucide com `strokeWidth={1.5}`) — sem ícones filled
+- ✅ **Inputs / cards `border-radius: 20px`** (radius médio); botões pequenos podem ser menores
+- ✅ **Lora** apenas em headlines (`<h1>`/`<h2>`); body copy em sans default
+- ✅ **Body ≤ 15px** — leitura confortável sem sobrecarregar a hierarquia
+
+Se um componente precisa fugir das constraints (ex: feedback toast com cor crítica vermelha), documentar no PR com link pra rule do DESIGN.md que justifica a exceção.
 
 ---
 
@@ -152,6 +176,8 @@ Após qualquer alteração: `cargo check` (Rust) + `npm run build` (frontend). S
 
 ## Docs Disponíveis
 
+- `DESIGN.md` — tokens do Elite Premium (cores, tipografia, radii, motion). **Ler antes de mexer em UI.**
+- `design system.html` — referência visual renderizável (abre no browser pra inspecionar componentes em vivo)
 - `docs/PRD.md` — features, modelo de dados, comandos Tauri, integrações
 - `docs/architecture.md` — diretórios, comunicação WebView↔Rust, patterns
 - `docs/ux-flows.md` — rotas, navegação, fluxos

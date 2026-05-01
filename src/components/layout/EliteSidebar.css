@@ -1,0 +1,257 @@
+/* Sidebar — Elite Premium (DESIGN.md + design system.html sidebar CSS).
+   248px fixed, dark surface, gold brand. SEM shadow. Active state =
+   gold wash de bg sem left-border (constraint: bordas laterais
+   coloridas viraram noise no design v1; substituídas por bg wash).
+
+   Convenção: sempre `.sb*` (segue o naming do design HTML pra
+   facilitar cross-reference visual com a docs page). Não colide
+   com Tailwind (sb não é prefixo de utility nenhum). */
+
+.sb {
+  width: 248px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: var(--bg);
+  border-right: 1px solid var(--ol2);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  transition: background 0.25s, border-color 0.25s;
+}
+
+/* ── Top bar: brand + painel button ────────────────────────────── */
+
+.sb-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 14px;
+}
+
+.sb-brand {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gd);
+  letter-spacing: 0.06em;
+}
+
+.sb-panel-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx3);
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--motion-fast, 100ms ease);
+}
+.sb-panel-btn:hover {
+  color: var(--tx2);
+  background: var(--sf);
+}
+.sb-panel-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+/* ── Nova Conversa (CTA) ───────────────────────────────────────── */
+
+.sb-new {
+  margin: 0 14px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 0;
+  border: 1px solid var(--gd);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--gd);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion-fast, 100ms ease);
+}
+.sb-new:hover {
+  background: var(--gd-m);
+}
+.sb-new svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+}
+
+/* ── Nav scroll area + sections ────────────────────────────────── */
+
+.sb-nav {
+  flex: 1;
+  padding: 0 10px;
+  overflow-y: auto;
+}
+
+.sb-sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 8px 5px;
+  cursor: default;
+}
+
+.sb-sec-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.sb-sec-left svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.5;
+  color: var(--tx3);
+  transition: transform 0.15s ease;
+}
+.sb-sec-left.collapsed svg {
+  transform: rotate(-90deg);
+}
+
+.sb-sec-btn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all var(--motion-fast, 100ms ease);
+}
+.sb-sec-btn:hover {
+  color: var(--gd);
+  background: var(--gd-m);
+}
+.sb-sec-btn svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.5;
+}
+
+/* ── Nav items ─────────────────────────────────────────────────── */
+
+.sb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--tx2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--motion-fast, 100ms ease);
+  margin-bottom: 1px;
+  position: relative;
+  text-decoration: none;
+  width: 100%;
+  text-align: left;
+}
+.sb-item:hover {
+  color: var(--tx);
+  background: var(--sf);
+}
+.sb-item.on {
+  /* Active = gold wash de bg + texto gold. SEM left-border
+     (constraint v1: bordas viraram noise; bg wash carrega o sinal). */
+  background: var(--gd-m);
+  color: var(--gd);
+}
+.sb-item svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+  flex-shrink: 0;
+}
+
+.sb-more {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx3);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity var(--motion-fast, 100ms ease);
+}
+.sb-item:hover .sb-more,
+.sb-item.on .sb-more {
+  opacity: 1;
+}
+.sb-more:hover {
+  background: var(--sf2);
+  color: var(--tx2);
+}
+.sb-more svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.5;
+}
+
+/* ── Footer com citação ────────────────────────────────────────── */
+
+.sb-foot {
+  padding: 14px 16px;
+  border-top: 1px solid var(--ol2);
+}
+
+.sb-quote {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  color: var(--tx3);
+  line-height: 1.55;
+  font-style: italic;
+}
+
+.sb-quote-author {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  color: var(--tx3);
+  font-style: normal;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+/* ── Layout helper: main content offset ────────────────────────── */
+
+.sb-main {
+  margin-left: 248px;
+}
+
+@media (max-width: 900px) {
+  .sb {
+    display: none;
+  }
+  .sb-main {
+    margin-left: 0;
+  }
+}

@@ -11,6 +11,24 @@ const config = {
     "./index.html",
     "./src/**/*.{ts,tsx}",
   ],
+  // Type scale do Elite Premium (B3): classes `.type-*` vivem em
+  // @layer utilities pra garantir prioridade sobre Tailwind base, mas
+  // o JIT purger só preserva o que aparece em `content`. Componentes
+  // novos vão referenciar essas classes; safelist mantém elas no
+  // bundle mesmo antes de algum consumer chegar.
+  safelist: [
+    "type-hero",
+    "type-h1",
+    "type-h2",
+    "type-body",
+    "type-label",
+    "type-meta",
+    "type-value",
+    "type-brand",
+    "font-display",
+    "font-body",
+    "font-mono",
+  ],
   theme: {
     container: {
       center: true,

@@ -1,0 +1,72 @@
+/* Badge — Elite Premium (DESIGN.md §09).
+   Pill (radius 99px) translúcido + dot 5×5 antes do texto. Cor do
+   bg = variante mute (token *-b com 7-12% opacity); cor do texto e
+   do dot = variante full. Sem shadow, sem gradient.
+
+   Convenção de nome: usei `.badge*` em vez do `.bg*` do design HTML
+   pra evitar leitura ambígua com utilitários do Tailwind tipo
+   `bg-red-500` (não é colisão real de classe, mas a leitura visual
+   no JSX fica mais clara). */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+/* ── Variantes ─────────────────────────────────────────────────────── */
+
+.badge-success {
+  background: var(--ok-b);
+  color: var(--ok);
+}
+.badge-success::before {
+  background: var(--ok);
+}
+
+.badge-warning {
+  background: var(--wr-b);
+  color: var(--wr);
+}
+.badge-warning::before {
+  background: var(--wr);
+}
+
+.badge-error {
+  background: var(--er-b);
+  color: var(--er);
+}
+.badge-error::before {
+  background: var(--er);
+}
+
+.badge-info {
+  background: var(--in-b);
+  color: var(--in);
+}
+.badge-info::before {
+  background: var(--in);
+}
+
+.badge-premium {
+  background: var(--gd-m);
+  color: var(--gd);
+}
+.badge-premium::before {
+  background: var(--gd);
+}

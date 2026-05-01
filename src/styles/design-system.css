@@ -1,217 +1,147 @@
 /* =============================================================================
    GENESIS — design-system.css
 
-   Bridge entre o Claude Design System (design.css, fonte de verdade) e o
-   código existente que referencia tokens v3 (--bg-primary, --accent, --tool-*,
-   etc). Estratégia em 3 camadas:
+   E1 (migração Elite Premium): este arquivo agora é uma camada de COMPAT
+   sobre o tokens.css. Os 60 components legacy referenciam nomes v3
+   (--bg-secondary, --text-secondary, --accent, --primary, --surface,
+   --border, --shadow-*, --sb-bg, etc) — todos repontados pra os tokens
+   Elite Premium (--bg, --sf, --sf2, --tx, --tx2, --gd, --ol, --ok/--er/
+   --wr/--in, etc). Nada de valor literal — tudo via var().
 
-     1. Importa design.css verbatim — tipografia, espaçamento, radius,
-        sombras, transições, breakpoints, tokens de componentes, paleta base
-        (escalas 50-950 do gold, blue, laranja, cream, warm) e os 4 temas
-        ([data-theme="gold-light/dark/orange-light/orange-dark"]).
+   Resultado: 369+ usages legacy cascateiam pra Elite Premium sem tocar
+   nenhum component .tsx. Sombras todas → none (constraint absoluta).
+   Focus ring → ring duplo gold. design.css ainda é importado pra
+   manter os tokens estruturais (--font-sans, --leading-*, --radius-*,
+   --weight-*, paletas base).
 
-     2. Aplica GOLD DARK como tema padrão em :root. Valores idênticos ao
-        bloco [data-theme="gold-dark"] do design.css. ZERO invenção.
-        [data-theme="light"] aplica GOLD LIGHT.
-
-     3. Aliases para os nomes v3 que os componentes já usam, mapeados aos
-        tokens semânticos do design system.
+   Mantém compat com [data-theme="light"] porque os Elite tokens já
+   trocam em function de [data-theme] — uma única declaração de aliases
+   serve dark e light atomicamente.
 ============================================================================= */
 
 @import './design.css';
 
 
 /* =============================================================================
-   :ROOT  =  GOLD DARK
-   Cópia exata do bloco [data-theme="gold-dark"] em design.css.
-============================================================================= */
+   Aliases legacy → Elite Premium
 
-:root {
-  /* Backgrounds */
-  --bg:           #1a1815;
-  --bg-subtle:    #2a2723;
-  --bg-muted:     #3d3a35;
-
-  /* Superfícies */
-  --surface:      #252320;
-  --surface-low:  #2a2723;
-
-  /* Bordas */
-  --border:       #3d3a35;
-  --border-sub:   #2e2b27;
-  --border-str:   #524e48;
-
-  /* Texto */
-  --text:         #f0ede8;
-  --text-2:       #d1ccc4;
-  --text-3:       #918d84;
-  --text-dis:     #726e67;
-
-  /* Primário (gold dark — gold-400 p/ contraste sobre fundos escuros) */
-  --primary:      #D4A04A;
-  --primary-h:    #E4B870;
-  --primary-a:    #F0D5A8;
-  --primary-bg:   rgba(212, 160, 74, 0.14);
-  --primary-mu:   rgba(212, 160, 74, 0.22);
-  --primary-tx:   #E4B870;
-  --primary-bd:   rgba(212, 160, 74, 0.35);
-
-  /* Input */
-  --input-bg:     #1f1d1a;
-  --input-bd:     #3d3a35;
-  --input-focus:  #D4A04A;
-
-  /* Sidebar */
-  --sb-bg:        #1a1815;
-  --sb-bd:        #2a2723;
-  --sb-hover:     #2a2723;
-  --sb-active:    rgba(212, 160, 74, 0.14);
-  --sb-text:      #b1ada1;
-  --sb-text-a:    #E4B870;
-
-  /* Código */
-  --code-bg:      #1a1815;
-  --code-tx:      #e4e0db;
-
-  /* Sombras */
-  --shadow-sm:    0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
-  --shadow-md:    0 4px 8px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
-  --shadow-lg:    0 12px 24px rgba(0,0,0,0.45), 0 4px 8px rgba(0,0,0,0.30);
-  --shadow-xl:    0 24px 48px rgba(0,0,0,0.55), 0 8px 16px rgba(0,0,0,0.35);
-  --shadow-acc:   0 4px 16px rgba(212,160,74,0.30), 0 1px 4px rgba(212,160,74,0.15);
-
-  /* Focus */
-  --focus-ring:   0 0 0 2px #1a1815, 0 0 0 4px #D4A04A;
-
-  /* Seleção */
-  --sel-bg:       rgba(212, 160, 74, 0.28);
-  --sel-tx:       #F0D5A8;
-}
-
-
-/* =============================================================================
-   [data-theme="light"]  =  GOLD LIGHT
-   Cópia exata do bloco [data-theme="gold-light"] em design.css.
-============================================================================= */
-
-[data-theme="light"] {
-  /* Backgrounds */
-  --bg:           #faf9f5;
-  --bg-subtle:    #f4f3ee;
-  --bg-muted:     #ece9e0;
-
-  /* Superfícies */
-  --surface:      #ffffff;
-  --surface-low:  #f4f3ee;
-
-  /* Bordas */
-  --border:       #d1ccc4;
-  --border-sub:   #e4e0db;
-  --border-str:   #b1ada1;
-
-  /* Texto */
-  --text:         #1a1815;
-  --text-2:       #57534d;
-  --text-3:       #918d84;
-  --text-dis:     #b1ada1;
-
-  /* Primário (gold light — base #C8943E) */
-  --primary:      #C8943E;
-  --primary-h:    #A87830;
-  --primary-a:    #845C24;
-  --primary-bg:   #FDF8F0;
-  --primary-mu:   #F9EDD8;
-  --primary-tx:   #845C24;
-  --primary-bd:   #F0D5A8;
-
-  /* Input */
-  --input-bg:     #ffffff;
-  --input-bd:     #d1ccc4;
-  --input-focus:  #C8943E;
-
-  /* Sidebar */
-  --sb-bg:        #f4f3ee;
-  --sb-bd:        #e4e0db;
-  --sb-hover:     #ece9e0;
-  --sb-active:    #FDF8F0;
-  --sb-text:      #57534d;
-  --sb-text-a:    #845C24;
-
-  /* Código */
-  --code-bg:      #f0eeec;
-  --code-tx:      #3d3a35;
-
-  /* Sombras */
-  --shadow-sm:    0 1px 3px rgba(26,24,21,0.08), 0 1px 2px rgba(26,24,21,0.05);
-  --shadow-md:    0 4px 8px rgba(26,24,21,0.08), 0 2px 4px rgba(26,24,21,0.05);
-  --shadow-lg:    0 12px 24px rgba(26,24,21,0.10), 0 4px 8px rgba(26,24,21,0.05);
-  --shadow-xl:    0 24px 48px rgba(26,24,21,0.12), 0 8px 16px rgba(26,24,21,0.06);
-  --shadow-acc:   0 4px 16px rgba(200,148,62,0.25), 0 1px 4px rgba(200,148,62,0.12);
-
-  /* Focus */
-  --focus-ring:   0 0 0 2px #ffffff, 0 0 0 4px #E4B870;
-
-  /* Seleção */
-  --sel-bg:       #F9EDD8;
-  --sel-tx:       #604218;
-}
-
-
-/* =============================================================================
-   COMPATIBILITY ALIASES
-   Traduzem os nomes v3 que os componentes referenciam para os tokens
-   semânticos do design system. Cada alias é apenas var() — nunca um valor
-   literal. Isso garante que quando o tema flipa via [data-theme="light"],
-   tudo flipa junto sem duplicação.
+   Todos os tokens v3 que existem em components ficam aqui apontando pra
+   um Elite token. Cobertura:
+     - Backgrounds, surfaces, borders, text (tons + numeração antiga)
+     - Primary/accent palette (gold)
+     - Status colors (success/warning/error/info)
+     - Component-specific (input, sidebar, chat user, code, tool palette)
+     - Shadows = none, focus-ring = gold dual outline
 ============================================================================= */
 
 :root,
+[data-theme="dark"],
 [data-theme="light"] {
-  /* Backgrounds (v3 → design system) */
-  --bg-primary:    var(--bg);
-  --bg-secondary:  var(--surface);
-  --bg-tertiary:   var(--bg-muted);
-  --bg-hover:      var(--bg-muted);
+  /* Tipografia: override do --font-sans pra DM Sans (Elite default).
+     design.css define Plus Jakarta como base mas Elite usa DM Sans
+     no body. --font-mono mantém JetBrains Mono (já bate). */
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
 
-  /* Texto */
-  --text-primary:   var(--text);
-  --text-secondary: var(--text-2);
-  --text-tertiary:  var(--text-3);
+  /* ── Backgrounds + surfaces ── */
+  /* --bg já vem do tokens.css (#0A0A0E dark / #FFFFFF light). */
+  --bg-subtle:     var(--sf);
+  --bg-muted:      var(--sf2);
+  --bg-secondary:  var(--sf);
+  --bg-tertiary:   var(--sf2);
+  --bg-hover:      var(--sf2);
+  --surface:       var(--sf);
+  --surface-low:   var(--sf2);
 
-  /* Accent (v3 names) → primário do design system */
-  --accent:          var(--primary);
-  --accent-hover:    var(--primary-h);
-  --accent-soft:     var(--primary-bg);
-  --accent-ring:     var(--primary-bd);
-  --accent-contrast: #ffffff;
+  /* ── Bordas ── */
+  --border:      var(--ol);
+  --border-sub:  var(--ol2);
+  --border-str:  var(--ol);
 
-  /* Status (v3 short names → status-* do design system) */
-  --success:      var(--status-success-tx);
-  --success-soft: var(--status-success-bg);
-  --error:        var(--status-error-tx);
-  --error-soft:   var(--status-error-bg);
-  --warning:      var(--status-warning-tx);
-  --warning-soft: var(--status-warning-bg);
-  --info:         var(--status-info-tx);
-  --info-soft:    var(--status-info-bg);
+  /* ── Texto ── */
+  --text:           var(--tx);
+  --text-2:         var(--tx2);
+  --text-3:         var(--tx3);
+  --text-dis:       var(--tx3);
+  --text-primary:   var(--tx);
+  --text-secondary: var(--tx2);
+  --text-tertiary:  var(--tx3);
 
-  /* Chat — mensagem do usuário usa o primário (per design.md §componentes) */
-  --chat-user-bg:   var(--primary);
-  --chat-user-text: #ffffff;
+  /* ── Primary / Accent (gold) ── */
+  --primary:        var(--gd);
+  --primary-h:      var(--gd-l);
+  --primary-a:      var(--gd-d);
+  --primary-bg:     var(--gd-m);
+  --primary-mu:     var(--gd-mh);
+  --primary-tx:     var(--gd);
+  --primary-bd:     var(--gd);
+  --accent:         var(--gd);
+  --accent-hover:   var(--gd-l);
+  --accent-soft:    var(--gd-m);
+  --accent-ring:    var(--gd);
+  --accent-contrast: var(--bg); /* texto sobre bg gold = bg do app (dark
+                                    vira preto, light vira branco) */
 
-  /* Code aliases */
-  --code-text: var(--code-tx);
+  /* ── Inputs ── */
+  --input-bg:    transparent;
+  --input-bd:    var(--ol);
+  --input-focus: var(--gd);
 
-  /* Sidebar alias */
-  --sidebar-bg: var(--sb-bg);
+  /* ── Sidebar ── */
+  --sb-bg:     var(--bg);
+  --sb-bd:     var(--ol2);
+  --sb-hover:  var(--sf);
+  --sb-active: var(--gd-m);
+  --sb-text:   var(--tx2);
+  --sb-text-a: var(--gd);
+  --sidebar-bg: var(--bg);
 
-  /* Tool palette para badges de execução. Reaproveita os status colors
-     (verde/azul) e a escala laranja já presente em design.css §01 — zero
-     valores novos. */
-  --tool-bash:             var(--status-success-tx);
-  --tool-bash-soft:        var(--status-success-bg);
-  --tool-claude-code:      var(--orange-700);
-  --tool-claude-code-soft: var(--orange-100);
-  --tool-api:              var(--status-info-tx);
-  --tool-api-soft:         var(--status-info-bg);
+  /* ── Code ── */
+  /* --code-bg vem do tokens.css. */
+  --code-tx: var(--tx);
+  --code-text: var(--tx);
+
+  /* ── Sombras: TODAS none (constraint absoluta DESIGN.md §constraints) ── */
+  --shadow-sm:  none;
+  --shadow-md:  none;
+  --shadow-lg:  none;
+  --shadow-xl:  none;
+  --shadow-acc: none;
+
+  /* ── Focus ring duplo (mesma convenção dos Elite components) ── */
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--gd);
+
+  /* ── Selection ── */
+  --sel-bg: var(--gd-m);
+  --sel-tx: var(--gd);
+
+  /* ── Status (curto e longo, mantém compat com qualquer alias) ── */
+  --success:      var(--ok);
+  --success-soft: var(--ok-b);
+  --error:        var(--er);
+  --error-soft:   var(--er-b);
+  --warning:      var(--wr);
+  --warning-soft: var(--wr-b);
+  --info:         var(--in);
+  --info-soft:    var(--in-b);
+  --status-success-tx: var(--ok);
+  --status-success-bg: var(--ok-b);
+  --status-error-tx:   var(--er);
+  --status-error-bg:   var(--er-b);
+  --status-warning-tx: var(--wr);
+  --status-warning-bg: var(--wr-b);
+  --status-info-tx:    var(--in);
+  --status-info-bg:    var(--in-b);
+  --destructive:       var(--er);
+
+  /* ── Chat user bubble ── */
+  --chat-user-bg:   var(--gd);
+  --chat-user-text: var(--bg); /* contraste alto sem ser branco fixo */
+
+  /* ── Tool palette pra badges de execução ── */
+  --tool-bash:             var(--ok);
+  --tool-bash-soft:        var(--ok-b);
+  --tool-claude-code:      var(--gd);
+  --tool-claude-code-soft: var(--gd-m);
+  --tool-api:              var(--in);
+  --tool-api-soft:         var(--in-b);
 }

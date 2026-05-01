@@ -1,0 +1,105 @@
+/* Button — Elite Premium (DESIGN.md §07).
+   Reset minimal. Sem shadow / glow / gradiente. Transição all 120ms
+   (var(--motion-fast) é equivalente). DM Sans 600. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  border-radius: 10px;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--motion-fast, 120ms ease);
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--gd);
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.btn svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.5;
+}
+
+/* ── Variantes ─────────────────────────────────────────────────────── */
+
+.btn-primary {
+  background: var(--gd);
+  color: #0a0a0e;
+}
+.btn-primary:hover {
+  background: var(--gd-l);
+}
+
+.btn-outline {
+  border-color: var(--gd);
+  color: var(--gd);
+}
+.btn-outline:hover {
+  background: var(--gd-m);
+}
+
+.btn-secondary {
+  border-color: var(--ol);
+  color: var(--tx2);
+}
+.btn-secondary:hover {
+  background: var(--sf2);
+  color: var(--tx);
+}
+
+.btn-ghost {
+  color: var(--tx2);
+  padding: 0 10px;
+}
+.btn-ghost:hover {
+  color: var(--tx);
+  background: var(--sf2);
+}
+
+.btn-destructive {
+  background: var(--er);
+  color: #fff;
+}
+.btn-destructive:hover {
+  opacity: 0.9;
+}
+
+/* ── Tamanho ───────────────────────────────────────────────────────── */
+
+.btn-sm {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.btn-sm.btn-ghost {
+  /* Ghost reduz padding pra manter o toque pequeno; size sm
+     mantém esse comportamento proporcional. */
+  padding: 0 8px;
+}
+.btn-sm svg {
+  width: 13px;
+  height: 13px;
+}

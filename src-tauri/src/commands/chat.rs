@@ -405,9 +405,11 @@ async fn run_integration_request(
 const MAX_INTEGRATION_ROUNDS: usize = 3;
 
 /// Delay entre rounds pra suavizar o burst de calls que estourava o
-/// rate limit da OpenAI quando o GPT fazia chain de 3 integration_calls
-/// consecutivas.
-const ROUND_DELAY_SECS: u64 = 1;
+/// rate limit da OpenAI em chains de integration_calls. 2s combina
+/// com o retry de 3s no with_retry: se um round dispara 429, o
+/// retry da OpenAI segura 3s e o delay do round seguinte segura
+/// outros 2s — total ~5s de oxigênio antes da próxima request.
+const ROUND_DELAY_SECS: u64 = 2;
 
 async fn post_process_integration_call(
     raw: (String, Option<String>, Option<String>),
