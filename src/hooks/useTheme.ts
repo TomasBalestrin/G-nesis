@@ -8,30 +8,36 @@ function readInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
   const saved = window.localStorage.getItem(STORAGE_KEY);
   if (saved === "light" || saved === "dark") return saved;
-  // Fall back to the class already on <html> (index.html seeds `dark`).
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  // Fall back to the data-theme attr seeded by index.html (default
+  // "dark" via inline script). Em SSR-like contexts onde o DOM
+  // não está disponível, default ainda é dark.
+  const attr = document.documentElement.getAttribute("data-theme");
+  return attr === "light" ? "light" : "dark";
 }
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
-  // Tema padrão (sem atributo) já é Gold Dark via :root no design-system.css.
-  // [data-theme="light"] sobrescreve para Gold Light. Removemos o atributo
-  // ao voltar pra dark pra cair no fallback do :root.
-  if (theme === "light") {
-    root.setAttribute("data-theme", "light");
-  } else {
-    root.removeAttribute("data-theme");
-  }
-  // Mantém a classe .dark pra qualquer utilitário do tailwindcss-animate ou
-  // selector legado que ainda assuma o esquema antigo.
+  // tokens.css (B1) define `:root, [data-theme="dark"]` e
+  // `[data-theme="light"]`. Sempre setamos o atributo explícito —
+  // não removemos no dark — pra evitar drift entre o primeiro
+  // render (com attr seeded em index.html) e estados subsequentes.
+  root.setAttribute("data-theme", theme);
+  // Mantém a class .dark pro Tailwind dark mode utilities seguirem
+  // funcionando enquanto a migração pro Elite Premium acontece.
   root.classList.toggle("dark", theme === "dark");
 }
 
 /**
- * App theme toggle (`light` / `dark`). Flips the `dark` class on the `<html>`
- * element — Tailwind `darkMode: ["class"]` and our `.dark` token overrides
- * key off that. Persists the choice in localStorage so reloads keep it.
- * Default is dark, set up by the `class="dark"` attribute in index.html.
+ * App theme toggle (`light` / `dark`). Aplica `data-theme` no
+ * `<html>` — tokens.css (B1) lê esse atributo pra trocar todos os
+ * tokens semânticos atomicamente. Persiste em `localStorage` —
+ * reloads herdam a escolha. Index.html roda um inline script antes
+ * de hydrate pra prevenir flash do tema padrão dark quando a
+ * preferência salva é light.
+ *
+ * Storage strategy: localStorage (sync, single-process). Tauri tem
+ * SQLite via IPC mas adicionar async aqui geraria flash potencial
+ * antes do tema persistido carregar — local first pra UI snappy.
  */
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);

@@ -28,6 +28,7 @@
 @import '../components/ui/EliteTabs.css';
 @import '../components/ui/Pill.css';
 @import '../components/ui/ProgressBar.css';
+@import '../components/ui/ThemeToggle.css';
 @import '../components/layout/EliteSidebar.css';
 
 @tailwind base;

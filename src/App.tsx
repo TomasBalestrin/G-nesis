@@ -29,6 +29,7 @@ import { FatalErrorDialog } from "@/components/ui/fatal-error-dialog";
 import { EliteToaster } from "@/components/ui/EliteToast";
 import { Toaster } from "@/components/ui/toaster";
 import ErrorBoundary from "@/components/ui/ErrorBoundary";
+import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
 import {
   getAppStateValue,
@@ -48,6 +49,11 @@ function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const hydrateAppState = useAppStore((s) => s.hydrateFromBackend);
   const { toast } = useToast();
+  // Theme inicializado no nível root pra garantir sync entre o
+  // inline-script seed do index.html e o estado do React. O hook é
+  // idempotente — re-aplicar o tema atual via setAttribute não causa
+  // flash. Persiste em localStorage e aplica data-theme no <html>.
+  useTheme();
 
   // Pull persisted UI state (active project, active model) from app_state
   // once the backend pool is up. Idempotent — internal flag guards re-runs.
