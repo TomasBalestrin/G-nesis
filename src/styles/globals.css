@@ -25,6 +25,9 @@
 @import '../components/ui/EliteBadge.css';
 @import '../components/ui/EliteCard.css';
 @import '../components/ui/EliteToast.css';
+@import '../components/ui/EliteTabs.css';
+@import '../components/ui/Pill.css';
+@import '../components/ui/ProgressBar.css';
 @import '../components/layout/EliteSidebar.css';
 
 @tailwind base;

@@ -1,0 +1,33 @@
+/* Tabs — Elite Premium (DESIGN.md §11 — navegação inline).
+   Linha horizontal de toggles. Active = bg sf2 + cor tx. Hover
+   sutil (cor tx3 → tx2). Sem underline, sem bg-shadow. */
+
+.tb {
+  display: flex;
+  gap: 2px;
+}
+
+.tb-i {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--tx3);
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--motion-fast, 100ms ease);
+  white-space: nowrap;
+}
+.tb-i:hover {
+  color: var(--tx2);
+}
+.tb-i.on {
+  color: var(--tx);
+  background: var(--sf2);
+}
+.tb-i:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--gd);
+}
