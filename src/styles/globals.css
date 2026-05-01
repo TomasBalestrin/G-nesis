@@ -98,6 +98,17 @@
       Consolas, monospace;
   }
 
+  /* Icon defaults — DESIGN.md §icons + E2 audit. Lucide-react renderiza
+     com stroke-width=2 por default; CSS aqui force 1.5 cascade-wise pra
+     evitar precisar setar strokeWidth={1.5} em cada uso. linecap/
+     linejoin round já são default da lucide; declaramos só por
+     defensividade contra qualquer SVG inline futuro que esqueça. */
+  svg {
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
   /* Scrollbar slim 6px (design.css §13). */
   ::-webkit-scrollbar {
     width: 6px;

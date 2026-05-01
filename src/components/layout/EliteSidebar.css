@@ -86,7 +86,7 @@
 .sb-new svg {
   width: 14px;
   height: 14px;
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 
 /* ── Nav scroll area + sections ────────────────────────────────── */
@@ -121,7 +121,7 @@
 .sb-sec-left svg {
   width: 12px;
   height: 12px;
-  stroke-width: 2;
+  stroke-width: 1.5;
   color: var(--tx3);
   transition: transform 0.15s ease;
 }
@@ -149,7 +149,7 @@
 .sb-sec-btn svg {
   width: 13px;
   height: 13px;
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 
 /* ── Nav items ─────────────────────────────────────────────────── */
@@ -214,7 +214,7 @@
 .sb-more svg {
   width: 15px;
   height: 15px;
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 
 /* ── Footer com citação ────────────────────────────────────────── */
