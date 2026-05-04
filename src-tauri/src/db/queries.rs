@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 
 use crate::db::models::{
     AppState, Capability, ChatMessage, Conversation, Execution, ExecutionStep, IntegrationRow,
-    KnowledgeFile, KnowledgeFileMeta, KnowledgeSummary, Project,
+    KnowledgeFile, KnowledgeFileMeta, KnowledgeSummary, Project, SkillRow,
 };
 
 fn map_err(e: sqlx::Error) -> String {
@@ -808,5 +808,100 @@ pub async fn touch_integration_last_used(
     .execute(pool)
     .await
     .map_err(map_err)?;
+    Ok(())
+}
+
+// ── skills ──────────────────────────────────────────────────────────────────
+
+/// Single source of truth pros columns SELECTed em [`SkillRow`].
+/// Drift aqui quebra `FromRow` (rejeita rows com fields ausentes),
+/// então todo SELECT no bloco abaixo formata com este const.
+const SKILL_COLUMNS: &str = "id, name, version, author, has_assets, \
+     has_references, files_count, created_at, updated_at";
+
+/// Lista skills do mirror SQLite, sorted por name. Mirror — não
+/// substitui o file scan via `crate::skills::storage::list_skill_packages`
+/// (esse continua sendo a source-of-truth). Use SQL aqui pra UI
+/// que quer rapidez (sem stat de N pastas + sem parsing de
+/// frontmatter) e pode tolerar staleness.
+pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<SkillRow>, String> {
+    sqlx::query_as::<_, SkillRow>(&format!(
+        "SELECT {SKILL_COLUMNS} FROM skills ORDER BY name"
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Fetch by name (handle do `/skill-name` no chat). `None` quando o
+/// row não existe — mirror pode estar atrás do disco; caller decide
+/// fallback (ex: re-sync via storage::list_skill_packages).
+pub async fn get_skill_by_name(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<Option<SkillRow>, String> {
+    sqlx::query_as::<_, SkillRow>(&format!(
+        "SELECT {SKILL_COLUMNS} FROM skills WHERE name = ?1"
+    ))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_err)
+}
+
+/// Insert. `created_at`/`updated_at` deixam o DEFAULT do schema
+/// preencher (strftime now). UNIQUE em `name` propaga erro com
+/// detalhe pro caller decidir UPSERT vs reject.
+pub async fn insert_skill(pool: &SqlitePool, skill: &SkillRow) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO skills \
+         (id, name, version, author, has_assets, has_references, files_count) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )
+    .bind(&skill.id)
+    .bind(&skill.name)
+    .bind(&skill.version)
+    .bind(&skill.author)
+    .bind(skill.has_assets)
+    .bind(skill.has_references)
+    .bind(skill.files_count)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+/// Update keyed por id (rename via name change OK — UNIQUE bate
+/// se colidir). Não toca created_at; updated_at sobe sozinho via
+/// trigger trg_skills_updated_at.
+pub async fn update_skill(pool: &SqlitePool, skill: &SkillRow) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE skills SET \
+         name = ?2, version = ?3, author = ?4, \
+         has_assets = ?5, has_references = ?6, files_count = ?7 \
+         WHERE id = ?1",
+    )
+    .bind(&skill.id)
+    .bind(&skill.name)
+    .bind(&skill.version)
+    .bind(&skill.author)
+    .bind(skill.has_assets)
+    .bind(skill.has_references)
+    .bind(skill.files_count)
+    .execute(pool)
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
+/// Hard delete por name. Idempotente — SQLite DELETE com 0 matches é
+/// Ok. NÃO toca em filesystem; caller chama `crate::skills::storage::
+/// delete_skill_package` em paralelo pra cleanup completo.
+pub async fn delete_skill_row(pool: &SqlitePool, name: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM skills WHERE name = ?1")
+        .bind(name)
+        .execute(pool)
+        .await
+        .map_err(map_err)?;
     Ok(())
 }

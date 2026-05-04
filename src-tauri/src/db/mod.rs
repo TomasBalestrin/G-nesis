@@ -28,6 +28,7 @@ const MIGRATION_005: &str = include_str!("../../migrations/005_workflows.sql");
 const MIGRATION_006: &str = include_str!("../../migrations/006_knowledge.sql");
 const MIGRATION_007: &str = include_str!("../../migrations/007_capabilities.sql");
 const MIGRATION_008: &str = include_str!("../../migrations/008_integrations.sql");
+const MIGRATION_009: &str = include_str!("../../migrations/009_skills.sql");
 
 pub fn db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -121,6 +122,14 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
     pool.execute(MIGRATION_008)
         .await
         .map_err(|e| format!("migration 008 failed: {e}"))?;
+
+    // 009 — skills table. Mirror relacional dos packages v2 em
+    // ~/.genesis/skills/<name>/. Source-of-truth segue sendo o
+    // SKILL.md em disco; tabela só serve pra list/sort rápido sem
+    // parsear frontmatter de cada package.
+    pool.execute(MIGRATION_009)
+        .await
+        .map_err(|e| format!("migration 009 failed: {e}"))?;
 
     // Inline ALTER: conversations.active_integration mantém a última
     // integração @<name> que o usuário invocou nessa thread. Permite

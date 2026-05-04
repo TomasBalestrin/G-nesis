@@ -179,6 +179,30 @@ pub struct KnowledgeSummary {
 /// — `type_` is the field, serde's `rename = "type"` keeps the JSON
 /// wire shape and the FromRow column lookup aligned with the
 /// `capabilities.type` column.
+/// Relational mirror of a skill v2 package em `~/.genesis/skills/<name>/`.
+/// SKILL.md em disco é a source-of-truth do conteúdo; esta linha é
+/// só metadata pra listagem rápida (autor / versão / contagem de
+/// arquivos / flags pra UI mostrar badge "tem assets" / "tem refs").
+///
+/// `has_assets`/`has_references` são `i64` (0/1) porque SQLite
+/// armazena INTEGER como 64-bit; a CHECK constraint da migration
+/// pina pra binário no write.
+///
+/// `author` é nullable — frontmatter v1 nem sempre traz e a UI
+/// mostra "—" quando ausente.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SkillRow {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub author: Option<String>,
+    pub has_assets: i64,
+    pub has_references: i64,
+    pub files_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Relational mirror of an `[integrations.<name>]` entry in
 /// ~/.genesis/config.toml. Stored separately so the picker / list views
 /// can run as fast SQL queries — but the **api_key never lands here**.
