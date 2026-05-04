@@ -132,6 +132,29 @@ export function importSkill(args: { filePath: string }): Promise<SkillPackage> {
   return invoke("import_skill", args);
 }
 
+/// Cria um package v2 do zero — pasta + SKILL.md template (frontmatter
+/// mínimo + body TODO). Backend rejeita se já existe v1 ou v2 com o
+/// mesmo nome. Sincroniza mirror SQLite. Caller (wizard de criação)
+/// segue com `saveSkillFile` pra sobrescrever o SKILL.md com a
+/// frontmatter customizada do usuário.
+export function createSkill(args: { name: string }): Promise<SkillPackage> {
+  return invoke("create_skill", args);
+}
+
+/// Salva (overwrite) um arquivo dentro do package v2. `path` é
+/// relativo ao package (ex: "SKILL.md", "references/foo.md"). Quando
+/// path == "SKILL.md", o backend valida o frontmatter via parser —
+/// rejeita conteúdo inválido antes de tocar disco. Cria parent dirs
+/// faltantes (ex: salvar `references/x.md` quando `references/` ainda
+/// não existe).
+export function saveSkillFile(args: {
+  name: string;
+  path: string;
+  content: string;
+}): Promise<void> {
+  return invoke("save_skill_file", args);
+}
+
 // ── projects (legacy: list/create/delete retired in H1) ────────────────────
 //
 // `list_projects` / `create_project` / `delete_project` foram aposentadas

@@ -20,6 +20,7 @@ import { SettingsConfigSection } from "@/components/settings/SettingsConfigSecti
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsSkillsSection } from "@/components/settings/SettingsSkillsSection";
 import { SettingsWorkflowsSection } from "@/components/settings/SettingsWorkflowsSection";
+import { CreateSkillWizard } from "@/components/skills/CreateSkillWizard";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
@@ -168,13 +169,15 @@ function App() {
               <Route path="chat/:conversationId" element={<ChatPanel />} />
 
               {/* Skills: list in sidebar; no standalone /skills listing page.
-                  /skills/new always lands on the v1 editor (new skills are
-                  created in v1 format until E4 ships v2 authoring).
+                  /skills/new abre o CreateSkillWizard (3 etapas: info
+                  básica em C1; instruções e arquivos em C2/C3 — em
+                  construção). Substitui o legacy SkillEditor como
+                  entry-point de NOVA skill — packages criados são v2.
                   /skills/:name dispatches by version: v2 (folder layout)
                   -> SkillViewerV2 read-only viewer, v1 -> SkillEditor.
-                  /skills/:name/edit always uses SkillEditor — v2 editing
-                  is a follow-up task. */}
-              <Route path="skills/new" element={<SkillEditor />} />
+                  /skills/:name/edit ainda usa SkillEditor pra editar
+                  skills v1 legacy; v2 editing é follow-up. */}
+              <Route path="skills/new" element={<CreateSkillWizard />} />
               <Route path="skills/:name" element={<SkillRouteDispatch />} />
               <Route path="skills/:name/edit" element={<SkillEditor />} />
 
