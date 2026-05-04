@@ -287,6 +287,21 @@ pub async fn create_skill(
         .ok_or_else(|| "skill criada mas package não encontrado".into())
 }
 
+/// Descompacta um arquivo `.skill` (ZIP) em `~/.genesis/skills/<name>/`
+/// + registra no mirror SQLite. `file_path` é absoluto na máquina do
+/// usuário (frontend resolve via tauri-plugin-dialog antes de invocar).
+///
+/// Erros vêm com mensagens user-actionable do `import_skill_package`:
+/// arquivo muito grande, ZIP malformado, multi-root, sem SKILL.md,
+/// zip-slip detectado, ou nome conflitante. UI mostra direto no toast.
+#[tauri::command]
+pub async fn import_skill(
+    file_path: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<SkillPackage, String> {
+    crate::skills::import::import_skill_package(&file_path, &pool).await
+}
+
 /// Salva um arquivo dentro do package. Cria parent dirs se faltar
 /// (ex: salvar `references/novo.md` quando `references/` ainda não
 /// existe). Path validado contra traversal igual `get_skill_file`.

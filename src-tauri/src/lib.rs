@@ -66,6 +66,7 @@ pub fn run() {
             skills_cmd::get_skill_file,
             skills_cmd::create_skill,
             skills_cmd::save_skill_file,
+            skills_cmd::import_skill,
             // projects
             // projects::list_projects / create_project / delete_project
             // foram aposentados em H1 — todo o surface migrou pra
