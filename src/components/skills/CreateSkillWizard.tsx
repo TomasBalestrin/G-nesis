@@ -14,6 +14,8 @@ import {
 } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useSkillsStore } from "@/stores/skillsStore";
+import { CreateSkillStep2 } from "@/components/skills/CreateSkillStep2";
+import { buildSkillMd, renderStep2Template } from "@/components/skills/wizardHelpers";
 
 type Step = 1 | 2 | 3;
 
@@ -53,6 +55,10 @@ export function CreateSkillWizard() {
   const [author, setAuthor] = useState("");
   const [existingNames, setExistingNames] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+
+  // Etapa 2 state — conteúdo completo do SKILL.md (frontmatter + body).
+  // Owned aqui pra sobreviver às transições back/forward do wizard.
+  const [skillMdContent, setSkillMdContent] = useState("");
 
   // Hidrata o set de nomes existentes pra checagem real-time + autor
   // default. Falhas silenciosas — a validação final acontece no
@@ -99,18 +105,30 @@ export function CreateSkillWizard() {
     try {
       await createSkill({ name: trimmedName });
       created = true;
-      const skillMd = renderSkillMd({
-        name: trimmedName,
-        description: trimmedDescription,
-        version: trimmedVersion,
-        author: trimmedAuthor,
-      });
+      // Body inicial = template sugerido (## O que faz / ## Regras /
+      // ## Passos), pré-preenchido com a descrição da etapa 1.
+      // Etapa 2 abre direto com isto carregado no editor; auto-save
+      // sincroniza edições subsequentes.
+      const initialBody = renderStep2Template(
+        trimmedName,
+        trimmedDescription,
+      );
+      const skillMd = buildSkillMd(
+        {
+          name: trimmedName,
+          description: trimmedDescription,
+          version: trimmedVersion,
+          author: trimmedAuthor,
+        },
+        initialBody,
+      );
       await saveSkillFile({
         name: trimmedName,
         path: "SKILL.md",
         content: skillMd,
       });
       await refreshSkills();
+      setSkillMdContent(skillMd);
       toast({ title: `Skill ${trimmedName} criada` });
       setStep(2);
     } catch (err) {
@@ -151,43 +169,50 @@ export function CreateSkillWizard() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-xl p-6">
-          {step === 1 ? (
-            <Step1
-              name={name}
-              nameStatus={nameStatus}
-              description={description}
-              version={version}
-              author={author}
-              submitting={submitting}
-              canAdvance={canAdvance}
-              onNameChange={handleNameChange}
-              onDescriptionChange={setDescription}
-              onVersionChange={setVersion}
-              onAuthorChange={setAuthor}
-              onCancel={() => navigate("/")}
-              onNext={handleNext}
-            />
-          ) : null}
-          {step === 2 ? (
-            <StepPlaceholder
-              step={2}
-              skillName={name}
-              onBack={() => setStep(1)}
-              onCancel={() => navigate("/")}
-            />
-          ) : null}
-          {step === 3 ? (
-            <StepPlaceholder
-              step={3}
-              skillName={name}
-              onBack={() => setStep(2)}
-              onCancel={() => navigate("/")}
-            />
-          ) : null}
+      {step === 2 ? (
+        <CreateSkillStep2
+          skillName={name}
+          content={skillMdContent}
+          onContentChange={setSkillMdContent}
+          onBack={() => setStep(1)}
+          onNext={() => setStep(3)}
+          onSaveAndClose={() =>
+            navigate(`/skills/${encodeURIComponent(name)}`)
+          }
+        />
+      ) : (
+        <div className="flex-1 overflow-auto">
+          <div className="mx-auto max-w-xl p-6">
+            {step === 1 ? (
+              <Step1
+                name={name}
+                nameStatus={nameStatus}
+                description={description}
+                version={version}
+                author={author}
+                submitting={submitting}
+                canAdvance={canAdvance}
+                onNameChange={handleNameChange}
+                onDescriptionChange={setDescription}
+                onVersionChange={setVersion}
+                onAuthorChange={setAuthor}
+                onCancel={() => navigate("/")}
+                onNext={handleNext}
+              />
+            ) : null}
+            {step === 3 ? (
+              <StepPlaceholder
+                step={3}
+                skillName={name}
+                onBack={() => setStep(2)}
+                onCancel={() =>
+                  navigate(`/skills/${encodeURIComponent(name)}`)
+                }
+              />
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -351,7 +376,7 @@ function NameStatusHint({
 }
 
 interface StepPlaceholderProps {
-  step: 2 | 3;
+  step: 3;
   skillName: string;
   onBack: () => void;
   onCancel: () => void;
@@ -416,48 +441,3 @@ function StepIndicator({ step }: { step: Step }) {
   );
 }
 
-interface SkillFrontmatter {
-  name: string;
-  description: string;
-  version: string;
-  author: string;
-}
-
-/**
- * Frontmatter mínimo aceito pelo `skill_parser` (validado pelo backend
- * em `save_skill_file`). O body é um placeholder simples — o conteúdo
- * de verdade vem das próximas etapas (C2/C3) ou de edição manual.
- */
-function renderSkillMd({
-  name,
-  description,
-  version,
-  author,
-}: SkillFrontmatter): string {
-  return [
-    "---",
-    `name: ${name}`,
-    `description: ${escapeYamlString(description)}`,
-    `version: ${version}`,
-    `author: ${escapeYamlString(author)}`,
-    "---",
-    "",
-    `# ${name}`,
-    "",
-    "TODO: descreva os passos da skill nas próximas etapas do wizard.",
-    "",
-  ].join("\n");
-}
-
-/**
- * Escape de string YAML inline. Cobre os casos comuns no input do
- * wizard (descrição com `:` ou `#`); valores complexos (multilinha,
- * aspas quebradas) ficam pra edição manual.
- */
-function escapeYamlString(value: string): string {
-  if (/[:#"\n]/.test(value)) {
-    const inner = value.replace(/"/g, '\\"');
-    return `"${inner}"`;
-  }
-  return value;
-}
