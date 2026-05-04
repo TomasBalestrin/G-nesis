@@ -472,13 +472,22 @@ async fn post_process_integration_call(
         match run_integration_request(integration, &call, pool).await {
             Ok(json) => {
                 last_success = true;
+                // Log requested em E3 follow-up: round + endpoint +
+                // tamanho do payload da API. Útil pra confirmar que
+                // o GPT está realmente progredindo na chain (lista
+                // → detail → totals) em vez de parar cedo.
+                println!(
+                    ">>> ROUND {round}: endpoint={} response_size={}",
+                    call.endpoint,
+                    json.len()
+                );
                 // Push assistant turn (envelope JSON) + synthetic user
                 // turn carregando o resultado da API. O prompt do user
                 // turn deixa claro que round adicional é OK se o GPT
                 // ainda precisa de mais dados.
                 next_messages.push(Message::assistant(current_reply.clone()));
                 let context_msg = format!(
-                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe ainda precisar de mais dados (ex: pegar um ID retornado e usar em outro endpoint), responda com OUTRA `integration_call`. Se já tem tudo que precisa, responda ao usuário em português conciso (sem JSON cru, sem devolver os IDs).",
+                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe a pergunta original pediu DADOS AGREGADOS (faturamento, lucro, métricas) e este resultado é APENAS uma lista (sem totals/agregados), você AINDA não terminou — faça outra `integration_call` pra abrir o item específico e pegar os números. Se já tem tudo que precisa, responda ao usuário em português conciso, com valores formatados (R$ X, X%) — sem JSON cru, sem devolver IDs.",
                     name = integration.name,
                     endpoint = call.endpoint,
                 );
@@ -674,17 +683,27 @@ fn skills_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(config::load_config()?.skills_dir))
 }
 
-fn skill_md_path(name: &str) -> Result<PathBuf, String> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        return Err(format!("nome de skill inválido: `{name}`"));
-    }
-    let dir = skills_dir()?;
-    let file_name = if name.ends_with(".md") {
-        name.to_string()
-    } else {
-        format!("{name}.md")
-    };
-    Ok(dir.join(file_name))
+/// Resolve o caminho do `SKILL.md` v2 de uma skill. `skill_dir()`
+/// valida `name` contra `..` / separators / vazio. Retorna o path
+/// mesmo que o arquivo não exista — caller (`render_skill_md`,
+/// `render_confirmation`) faz `fs::read_to_string` e cai em
+/// `render_not_found` na falha. v1 (.md solto) foi removido em F2.
+fn resolve_skill_md(name: &str) -> Result<PathBuf, String> {
+    let dir = crate::skills::storage::skill_dir(name)?;
+    Ok(dir.join("SKILL.md"))
+}
+
+/// Filenames (sem path) das references de uma skill v2. Vazio quando
+/// não é v2 ou quando references/ não existe / está vazia. Caller
+/// usa pra montar o bloco "References disponíveis: ..." mostrado
+/// ao usuário no canned reply do slash + ao GPT em prompts futuros
+/// que carreguem skill context.
+fn list_skill_reference_names(name: &str) -> Vec<String> {
+    crate::skills::storage::list_references(name)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect()
 }
 
 /// Load every `.md` under `skills_dir` and parse it. Walks the top level
@@ -806,7 +825,7 @@ fn format_step_line(index: usize, step: &SkillStep) -> String {
     }
 }
 
-fn render_confirmation(skill: &ParsedSkill) -> String {
+fn render_confirmation(skill: &ParsedSkill, references: &[String]) -> String {
     let description = if skill.meta.description.is_empty() {
         "(sem descrição)"
     } else {
@@ -831,6 +850,18 @@ fn render_confirmation(skill: &ParsedSkill) -> String {
         for input in &skill.inputs {
             msg.push_str(&format!("- `{{{{{input}}}}}`\n"));
         }
+    }
+
+    if !references.is_empty() {
+        // Lazy-load: listamos só os filenames (não o conteúdo) pra
+        // economizar tokens no prompt do GPT em turnos seguintes.
+        // A instrução "Se precisar... peça" dá um hook protocolar
+        // pro modelo solicitar uma reference específica via chat.
+        msg.push_str("\n## References disponíveis\n\n");
+        msg.push_str(&references.join(", "));
+        msg.push_str(
+            "\n\n_Se precisar do conteúdo de alguma reference específica, peça pelo nome._",
+        );
     }
 
     msg.push_str("\n---\n\nSelecione um projeto e use o botão **Executar** para iniciar.");
@@ -862,14 +893,19 @@ fn render_not_found(name: &str, catalog: &[SkillMeta]) -> String {
 /// user still gets a reply).
 fn try_slash_reply(skill_name: &str) -> String {
     let catalog = load_skill_catalog();
-    let path = match skill_md_path(skill_name) {
+    // resolve_skill_md aponta sempre pro SKILL.md v2; arquivo ausente
+    // cai em fs::read_to_string Err → render_not_found.
+    let path = match resolve_skill_md(skill_name) {
         Ok(p) => p,
         Err(err) => return format!("{err}"),
     };
 
     match fs::read_to_string(&path) {
         Ok(content) => match skill_parser::parse_skill(&content) {
-            Ok(skill) => render_confirmation(&skill),
+            Ok(skill) => {
+                let refs = list_skill_reference_names(skill_name);
+                render_confirmation(&skill, &refs)
+            }
             Err(err) => format!(
                 "Skill `{skill_name}` existe mas está inválida: {err}\n\n\
                  Corrija em **Skills → {skill_name}**.",
@@ -1171,7 +1207,7 @@ async fn dispatch_read_skill(raw: &str) -> String {
         Ok(a) => a,
         Err(e) => return format!("read_skill: argumentos inválidos ({e})"),
     };
-    match crate::commands::skills::read_skill(args.skill_name.clone()).await {
+    match crate::skills::storage::read_skill_md(&args.skill_name) {
         Ok(content) => content,
         Err(e) => format!("Falha ao ler skill `{}`: {e}", args.skill_name),
     }
@@ -1192,9 +1228,21 @@ async fn dispatch_save_skill(raw: &str) -> String {
         Err(e) => return format!("save_skill: argumentos inválidos ({e})"),
     };
 
-    if let Err(e) =
-        crate::commands::skills::save_skill(args.skill_name.clone(), args.skill_content).await
-    {
+    // v2-only: cria pasta + grava SKILL.md (parser valida via
+    // save_skill_folder helper). Conteúdo de skills v1 (frontmatter
+    // sem `version:` 2.x) ainda parseia, então o agente continua
+    // funcionando — só o layout em disco mudou.
+    if let Err(e) = crate::skills::storage::ensure_skill_dirs(&args.skill_name) {
+        return format!("Falha ao criar pasta da skill `{}`: {e}", args.skill_name);
+    }
+    if let Err(e) = crate::orchestrator::skill_parser::parse_skill(&args.skill_content) {
+        return format!("Skill `{}` inválida: {e}", args.skill_name);
+    }
+    let skill_md = match crate::skills::storage::skill_dir(&args.skill_name) {
+        Ok(d) => d.join("SKILL.md"),
+        Err(e) => return format!("nome inválido: {e}"),
+    };
+    if let Err(e) = fs::write(&skill_md, &args.skill_content) {
         return format!("Falha ao salvar skill `{}`: {e}", args.skill_name);
     }
 
@@ -2521,10 +2569,29 @@ mod tests {
             }],
             ..Default::default()
         };
-        let msg = render_confirmation(&skill);
+        let msg = render_confirmation(&skill, &[]);
         assert!(msg.contains("**`demo`**"));
         assert!(msg.contains("1. **step_1** (`bash`): `echo hi`"));
         assert!(msg.contains("{{briefing}}"));
         assert!(msg.contains("Executar"));
+        // Sem references: bloco não aparece.
+        assert!(!msg.contains("References disponíveis"));
+    }
+
+    #[test]
+    fn render_confirmation_lists_references_when_present() {
+        let skill = ParsedSkill {
+            meta: SkillMeta {
+                name: "demo".into(),
+                description: "teste".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let refs = vec!["iron-man.md".to_string(), "thor.md".to_string()];
+        let msg = render_confirmation(&skill, &refs);
+        assert!(msg.contains("References disponíveis"));
+        assert!(msg.contains("iron-man.md, thor.md"));
+        assert!(msg.contains("peça pelo nome"));
     }
 }

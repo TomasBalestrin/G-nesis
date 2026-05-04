@@ -17,7 +17,7 @@ import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 import type { Execution, ExecutionDetail } from "@/types/project";
-import type { ParsedSkill, SkillMeta } from "@/types/skill";
+import type { SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
 export interface SafeInvokeOptions {
@@ -92,25 +92,134 @@ export function listSkills(): Promise<SkillMeta[]> {
   return invoke("list_skills");
 }
 
-export function readSkill(args: { name: string }): Promise<string> {
-  return invoke("read_skill", args);
-}
-
-export function saveSkill(args: {
-  name: string;
-  content: string;
-}): Promise<void> {
-  return invoke("save_skill", args);
-}
-
-export function parseSkill(args: { name: string }): Promise<ParsedSkill> {
-  return invoke("parse_skill", args);
-}
-
-/** Removes the `.md` from disk. Backend refuses if any execution is still
- * in flight for the same skill. */
+/** Removes the package folder from disk. Backend refuses if any
+ * execution is still in flight for the same skill. */
 export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
+}
+
+/// Skill package v2 (B1+B2). Mirror do `crate::skills::storage::SkillPackage`.
+/// `path` é absoluto — serde serializa o PathBuf do Rust como string.
+/// `references_count` e `assets_count` contam arquivos não-hidden 1
+/// nível abaixo das subpastas (não recursivo) — pensado pra badges
+/// na sidebar sem ter que chamar getSkill.
+/// `id` e `created_at` vêm do mirror SQLite (best-effort). Skills
+/// criadas via FS direto sem mirror retornam null nesses campos.
+export interface SkillPackage {
+  name: string;
+  path: string;
+  has_assets: boolean;
+  has_references: boolean;
+  files_count: number;
+  references_count: number;
+  assets_count: number;
+  id: string | null;
+  created_at: string | null;
+}
+
+export function listSkillPackages(): Promise<SkillPackage[]> {
+  return invoke("list_skill_packages");
+}
+
+/// Descompacta um arquivo .skill (ZIP) em ~/.genesis/skills/<name>/
+/// e registra no mirror SQLite. Erros incluem: "arquivo .skill muito
+/// grande", "ZIP inválido", "ZIP precisa ter exatamente 1 pasta
+/// raiz", "ZIP não tem SKILL.md em <root>/", "Skill `<name>` já
+/// existe". UI mostra direto no toast.
+export function importSkill(args: { filePath: string }): Promise<SkillPackage> {
+  return invoke("import_skill", args);
+}
+
+/// Cria um package v2 do zero — pasta + SKILL.md template (frontmatter
+/// mínimo + body TODO). Backend rejeita se já existe v1 ou v2 com o
+/// mesmo nome. Sincroniza mirror SQLite. Caller (wizard de criação)
+/// segue com `saveSkillFile` pra sobrescrever o SKILL.md com a
+/// frontmatter customizada do usuário.
+export function createSkill(args: { name: string }): Promise<SkillPackage> {
+  return invoke("create_skill", args);
+}
+
+/// Salva (overwrite) um arquivo dentro do package v2. `path` é
+/// relativo ao package (ex: "SKILL.md", "references/foo.md"). Quando
+/// path == "SKILL.md", o backend valida o frontmatter via parser —
+/// rejeita conteúdo inválido antes de tocar disco. Cria parent dirs
+/// faltantes (ex: salvar `references/x.md` quando `references/` ainda
+/// não existe).
+export function saveSkillFile(args: {
+  name: string;
+  path: string;
+  content: string;
+}): Promise<void> {
+  return invoke("save_skill_file", args);
+}
+
+/// Salva um asset binário (imagem, PDF, etc) no package. `bytes` é
+/// um array de bytes — caller passa `Array.from(uint8Array)` ou
+/// equivalente. Recusa salvar SKILL.md por aqui.
+export function saveSkillAsset(args: {
+  name: string;
+  path: string;
+  bytes: number[];
+}): Promise<void> {
+  return invoke("save_skill_asset", args);
+}
+
+/// Remove um arquivo dentro do package (`references/x.md`,
+/// `assets/y.png`). Idempotente — arquivo ausente não erra. Recusa
+/// remover SKILL.md (use deleteSkill pra apagar a skill toda).
+export function deleteSkillFile(args: {
+  name: string;
+  path: string;
+}): Promise<void> {
+  return invoke("delete_skill_file", args);
+}
+
+/// Bundle retornado por `get_skill` — package + SKILL.md content +
+/// listas de filenames (relativos) de references/ e assets/. UI
+/// hidrata o detalhe da skill em uma chamada só.
+export interface SkillBundle {
+  package: SkillPackage;
+  skill_md: string;
+  references: string[];
+  assets: string[];
+}
+
+export function getSkill(args: { name: string }): Promise<SkillBundle> {
+  return invoke("get_skill", args);
+}
+
+/// Lê arquivo de texto dentro do package (.md, .html, .txt, etc).
+/// Path relativo (ex: "references/foo.md", "assets/template.html").
+export function getSkillFile(args: {
+  name: string;
+  path: string;
+}): Promise<string> {
+  return invoke("get_skill_file", args);
+}
+
+/// Lê asset binário e retorna como `data:<mime>;base64,...`. Ideal
+/// pra <img src=...> direto na UI sem mexer com asset protocol.
+export function readSkillAssetDataUrl(args: {
+  name: string;
+  path: string;
+}): Promise<string> {
+  return invoke("read_skill_asset_data_url", args);
+}
+
+/// Empacota a skill como `.skill` (ZIP) num diretório temporário e
+/// retorna o path. Frontend abre `dialog.save()` pra obter destino,
+/// depois chama `moveFile(tempPath, destPath)` pra finalizar.
+export function exportSkill(args: { name: string }): Promise<string> {
+  return invoke("export_skill", args);
+}
+
+/// Move/renomeia arquivo. Usado pelo flow de export pra finalizar o
+/// ZIP que `exportSkill` deixou em /tmp. Sobrescreve `dest` se existir.
+export function moveFile(args: {
+  src: string;
+  dest: string;
+}): Promise<void> {
+  return invoke("move_file", args);
 }
 
 // ── projects (legacy: list/create/delete retired in H1) ────────────────────
@@ -633,7 +742,7 @@ export type {
   Project,
 } from "@/types/project";
 export type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
-export type { ParsedSkill, SkillMeta } from "@/types/skill";
+export type { Skill, SkillDetail, SkillMeta } from "@/types/skill";
 export type {
   ParsedWorkflow,
   WorkflowMeta,

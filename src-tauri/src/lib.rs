@@ -8,11 +8,13 @@ pub mod config;
 pub mod db;
 pub mod integrations;
 pub mod orchestrator;
+pub mod skills;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
     app_state, caminhos, capabilities, chat, config as config_cmd, conversations, dependencies,
-    execution, integrations as integrations_cmd, knowledge, projects, skills, workflows,
+    execution, integrations as integrations_cmd, knowledge, projects,
+    skills as skills_cmd, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -39,6 +41,22 @@ pub fn run() {
 
             let pool = tauri::async_runtime::block_on(db::init_db())
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
+
+            // Idempotente: skills v1 (.md soltas em ~/.genesis/skills/)
+            // viram pastas v2 (<name>/SKILL.md + assets/ + references/).
+            // Falhas individuais por skill ficam em stderr e não
+            // interrompem o boot — só Err quando o skills_dir é
+            // ilegível, o que aí é fatal mesmo.
+            let report =
+                tauri::async_runtime::block_on(skills::migrate_v1_skills(&pool))
+                    .map_err(|e| format!("skills v1→v2 migration failed: {e}"))?;
+            if report.migrated > 0 || report.failed > 0 {
+                eprintln!(
+                    "[skills::migration] scanned={} migrated={} skipped={} failed={}",
+                    report.scanned, report.migrated, report.skipped, report.failed
+                );
+            }
+
             app.manage(pool);
 
             app.manage(ExecutionRegistry::new());
@@ -50,12 +68,22 @@ pub fn run() {
             // config
             config_cmd::get_config,
             config_cmd::save_config,
-            // skills
-            skills::list_skills,
-            skills::read_skill,
-            skills::save_skill,
-            skills::delete_skill,
-            skills::parse_skill,
+            // skills (v2 only — pasta com SKILL.md + assets/ +
+            // references/). v1 (`<name>.md` solto) foi removido em F2;
+            // existing skills migram no startup via skills::migration.
+            skills_cmd::list_skills,
+            skills_cmd::delete_skill,
+            skills_cmd::list_skill_packages,
+            skills_cmd::get_skill,
+            skills_cmd::get_skill_file,
+            skills_cmd::create_skill,
+            skills_cmd::save_skill_file,
+            skills_cmd::save_skill_asset,
+            skills_cmd::delete_skill_file,
+            skills_cmd::read_skill_asset_data_url,
+            skills_cmd::export_skill,
+            skills_cmd::move_file,
+            skills_cmd::import_skill,
             // projects
             // projects::list_projects / create_project / delete_project
             // foram aposentados em H1 — todo o surface migrou pra

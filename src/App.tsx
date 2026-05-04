@@ -1,11 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  BrowserRouter,
-  Navigate,
-  Route,
-  Routes,
-  useParams,
-} from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { CaminhoDetail } from "@/components/caminhos/CaminhoDetail";
 import { CaminhoList } from "@/components/caminhos/CaminhoList";
@@ -20,8 +14,8 @@ import { SettingsConfigSection } from "@/components/settings/SettingsConfigSecti
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsSkillsSection } from "@/components/settings/SettingsSkillsSection";
 import { SettingsWorkflowsSection } from "@/components/settings/SettingsWorkflowsSection";
-import { SkillEditor } from "@/components/skills/SkillEditor";
-import { SkillViewerV2 } from "@/components/skills/SkillViewerV2";
+import { CreateSkillWizard } from "@/components/skills/CreateSkillWizard";
+import { SkillDetailView } from "@/components/skills/SkillDetailView";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
 import { WorkflowViewer } from "@/components/workflows/WorkflowViewer";
@@ -34,7 +28,6 @@ import { useToast } from "@/hooks/useToast";
 import {
   getAppStateValue,
   getConfig,
-  listSkills,
   setAppStateValue,
 } from "@/lib/tauri-bridge";
 import { useAppStore } from "@/stores/appStore";
@@ -168,15 +161,15 @@ function App() {
               <Route path="chat/:conversationId" element={<ChatPanel />} />
 
               {/* Skills: list in sidebar; no standalone /skills listing page.
-                  /skills/new always lands on the v1 editor (new skills are
-                  created in v1 format until E4 ships v2 authoring).
-                  /skills/:name dispatches by version: v2 (folder layout)
-                  -> SkillViewerV2 read-only viewer, v1 -> SkillEditor.
-                  /skills/:name/edit always uses SkillEditor — v2 editing
-                  is a follow-up task. */}
-              <Route path="skills/new" element={<SkillEditor />} />
-              <Route path="skills/:name" element={<SkillRouteDispatch />} />
-              <Route path="skills/:name/edit" element={<SkillEditor />} />
+                  /skills/new abre o CreateSkillWizard (3 etapas).
+                  /skills/:name → SkillDetailView (visualização split com
+                  árvore + preview). /skills/:name/edit → CreateSkillWizard
+                  em modo edição (abre direto na etapa 2 com SKILL.md
+                  hidratado). Skills v1 legacy NÃO têm mais editor — a
+                  migração F1 converte tudo pra v2. */}
+              <Route path="skills/new" element={<CreateSkillWizard />} />
+              <Route path="skills/:name" element={<SkillDetailView />} />
+              <Route path="skills/:name/edit" element={<CreateSkillWizard />} />
 
               {/* Capabilities: surface routes removidas em A2.
                   Backend continua expondo list_capabilities pro
@@ -255,48 +248,3 @@ function KnowledgeRoute() {
   );
 }
 
-/** /skills/:name dispatcher: probes list_skills for the matching meta
- *  and renders SkillViewerV2 for v2 (`version` starts with "2"), or
- *  the v1 SkillEditor for everything else (including legacy 1.x and
- *  rows we couldn't resolve). Loading state shows a placeholder so
- *  the user doesn't see the wrong viewer flash before settling. */
-function SkillRouteDispatch() {
-  const { name = "" } = useParams<{ name: string }>();
-  const [version, setVersion] = useState<string | null | "loading">("loading");
-
-  useEffect(() => {
-    if (!name) {
-      setVersion(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const skills = await listSkills();
-        if (cancelled) return;
-        const found = skills.find((s) => s.name === name) ?? null;
-        setVersion(found?.version ?? null);
-      } catch {
-        if (!cancelled) setVersion(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [name]);
-
-  if (version === "loading") {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-[var(--text-secondary)]">
-        Carregando skill...
-      </div>
-    );
-  }
-  if (typeof version === "string" && version.startsWith("2")) {
-    return <SkillViewerV2 />;
-  }
-  // null (skill not found, list failed, or v1 row) → fall through to
-  // the v1 editor; SkillEditor's own loader handles "not found" with
-  // a friendly empty-state.
-  return <SkillEditor />;
-}

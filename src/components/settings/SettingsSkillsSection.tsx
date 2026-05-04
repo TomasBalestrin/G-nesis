@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ImportSkillZone } from "@/components/skills/ImportSkillZone";
 import { useToast } from "@/hooks/useToast";
 import { deleteSkill, getConfig } from "@/lib/tauri-bridge";
 import { useSkillsStore } from "@/stores/skillsStore";
@@ -53,18 +54,21 @@ export function SettingsSkillsSection() {
       </header>
 
       <div className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-2xl space-y-3 p-6">
-          {!loaded && loading ? (
-            <p className="text-sm text-[var(--text-2)]">Carregando...</p>
-          ) : items.length === 0 ? (
-            <p className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-4 py-8 text-center text-sm text-[var(--text-2)]">
-              Nenhuma skill ainda.
-            </p>
-          ) : (
-            items.map((skill) => (
-              <SkillCard key={skill.name} skill={skill} onDeleted={refresh} />
-            ))
-          )}
+        <div className="mx-auto max-w-2xl space-y-6 p-6">
+          <ImportSkillZone onImported={refresh} />
+          <div className="space-y-3">
+            {!loaded && loading ? (
+              <p className="text-sm text-[var(--text-2)]">Carregando...</p>
+            ) : items.length === 0 ? (
+              <p className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-4 py-8 text-center text-sm text-[var(--text-2)]">
+                Nenhuma skill ainda.
+              </p>
+            ) : (
+              items.map((skill) => (
+                <SkillCard key={skill.name} skill={skill} onDeleted={refresh} />
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>
