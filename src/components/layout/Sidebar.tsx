@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   ChevronRight,
+  Download,
   FileCode,
+  Folder,
+  Image as ImageIcon,
   MessageSquare,
+  MoreHorizontal,
   Moon,
   Pencil,
   Plus,
   Settings,
   Sun,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
@@ -21,9 +27,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
-import { deleteSkill } from "@/lib/tauri-bridge";
+import {
+  deleteSkill,
+  exportSkill,
+  importSkill,
+} from "@/lib/tauri-bridge";
+import type { SkillPackage } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
@@ -291,13 +309,42 @@ function IconButton({ ariaLabel, onClick, children }: IconButtonProps) {
 function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(true);
   const items = useSkillsStore((s) => s.items);
+  const packages = useSkillsStore((s) => s.packages);
   const loading = useSkillsStore((s) => s.loading);
   const loaded = useSkillsStore((s) => s.loaded);
   const ensureLoaded = useSkillsStore((s) => s.ensureLoaded);
+  const refresh = useSkillsStore((s) => s.refresh);
+  const { toast } = useToast();
 
   useEffect(() => {
     ensureLoaded();
   }, [ensureLoaded]);
+
+  // File picker via tauri-plugin-dialog → IPC import_skill → refresh.
+  // Mesma UX da ImportSkillZone em Settings, mas inline na sidebar.
+  async function handleImport() {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: false,
+        title: "Importar arquivo .skill",
+        filters: [{ name: "Skill package", extensions: ["skill"] }],
+      });
+      if (typeof selected !== "string") return;
+      const pkg = await importSkill({ filePath: selected });
+      toast({
+        title: `Skill ${pkg.name} importada`,
+        description: `${pkg.files_count} arquivo(s).`,
+      });
+      await refresh();
+    } catch (err) {
+      toast({
+        title: "Falha ao importar skill",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
+  }
 
   return (
     <section>
@@ -306,14 +353,26 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
         open={open}
         onToggle={() => setOpen((o) => !o)}
         action={
-          <Link
-            to="/skills/new"
-            onClick={onNavigate}
-            aria-label="Nova skill"
-            className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </Link>
+          <span className="flex items-center">
+            <button
+              type="button"
+              onClick={handleImport}
+              aria-label="Importar skill (.skill)"
+              title="Importar .skill"
+              className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
+            >
+              <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
+            </button>
+            <Link
+              to="/skills/new"
+              onClick={onNavigate}
+              aria-label="Nova skill"
+              title="Nova skill"
+              className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={1.5} />
+            </Link>
+          </span>
         }
       />
       {open ? (
@@ -326,7 +385,12 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
             </p>
           ) : (
             items.map((skill) => (
-              <SkillItem key={skill.name} skill={skill} onNavigate={onNavigate} />
+              <SkillItem
+                key={skill.name}
+                skill={skill}
+                pkg={packages[skill.name] ?? null}
+                onNavigate={onNavigate}
+              />
             ))
           )}
         </div>
@@ -335,21 +399,26 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-function SkillItem({
-  skill,
-  onNavigate,
-}: {
+interface SkillItemProps {
   skill: SkillMeta;
+  pkg: SkillPackage | null;
   onNavigate: () => void;
-}) {
+}
+
+function SkillItem({ skill, pkg, onNavigate }: SkillItemProps) {
   const { name: routeName } = useParams<{ name: string }>();
   const isActive = routeName === skill.name;
   const refreshSkills = useSkillsStore((s) => s.refresh);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [expanded, setExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const description = skill.description.trim();
+
+  const referencesCount = pkg?.references_count ?? 0;
+  const hasAssets = pkg?.has_assets ?? false;
+  const hasReferences = pkg?.has_references ?? false;
+  const detailHref = `/skills/${encodeURIComponent(skill.name)}`;
 
   async function handleConfirmDelete() {
     setDeleting(true);
@@ -370,50 +439,151 @@ function SkillItem({
     }
   }
 
+  async function handleExport() {
+    try {
+      const dest = await saveDialog({
+        title: "Exportar skill",
+        defaultPath: `${skill.name}.skill`,
+        filters: [{ name: "Skill package", extensions: ["skill"] }],
+      });
+      if (!dest) return;
+      await exportSkill({ name: skill.name, destPath: dest });
+      toast({ title: `Skill exportada`, description: dest });
+    } catch (err) {
+      toast({
+        title: "Falha ao exportar",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
+  }
+
+  function openDetail() {
+    navigate(detailHref);
+    onNavigate();
+  }
+
   return (
     <>
-      <NavLink
-        to={`/skills/${encodeURIComponent(skill.name)}`}
-        onClick={onNavigate}
+      <div
         className={cn(
-          "group flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
+          "group rounded-md border-l-2 transition-colors duration-100",
           isActive
-            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-            : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+            ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+            : "border-transparent hover:bg-[var(--bg-hover)]",
         )}
       >
-        <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-xs">{skill.name}</span>
-          {description ? (
-            <span className="mt-0.5 block truncate text-[11px] text-[var(--text-tertiary)]">
-              {description}
-            </span>
-          ) : null}
-        </span>
-        <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          <IconButton
-            ariaLabel={`Deletar skill ${skill.name}`}
+        <div className="flex items-center gap-1 px-1 py-1">
+          <button
+            type="button"
             onClick={(e) => {
-              e.preventDefault();
               e.stopPropagation();
-              setConfirmOpen(true);
+              setExpanded((v) => !v);
             }}
+            aria-label={expanded ? "Colapsar" : "Expandir"}
+            aria-expanded={expanded}
+            className="rounded p-0.5 text-[var(--text-3)] hover:text-[var(--text)] focus-visible:outline-none"
           >
-            <Trash2 className="h-3 w-3" />
-          </IconButton>
-        </span>
-      </NavLink>
+            <ChevronRight
+              className={cn(
+                "h-3 w-3 transition-transform duration-150",
+                expanded && "rotate-90",
+              )}
+              strokeWidth={1.5}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={openDetail}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 text-left"
+          >
+            <FileCode
+              className={cn(
+                "h-3.5 w-3.5 shrink-0",
+                isActive
+                  ? "text-[var(--accent)]"
+                  : "text-[var(--text-3)]",
+              )}
+              strokeWidth={1.5}
+            />
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn(
+                  "block truncate font-mono text-xs",
+                  isActive
+                    ? "text-[var(--accent)]"
+                    : "text-[var(--text-2)]",
+                )}
+              >
+                {skill.name}
+              </span>
+            </span>
+            {referencesCount > 0 ? (
+              <span
+                className="shrink-0 rounded-full bg-[var(--bg-muted)] px-1.5 text-[10px] font-medium text-[var(--text-2)]"
+                title={`${referencesCount} reference(s)`}
+              >
+                {referencesCount}
+              </span>
+            ) : null}
+          </button>
+          <SkillDropdown
+            onEdit={() => {
+              navigate(`${detailHref}/edit`);
+              onNavigate();
+            }}
+            onExport={handleExport}
+            onDelete={() => setConfirmOpen(true)}
+          />
+        </div>
+
+        {expanded ? (
+          <ul className="space-y-0.5 pb-1 pl-7 pr-2">
+            <SkillTreeItem
+              icon={
+                <FileCode
+                  className="h-3 w-3 shrink-0"
+                  strokeWidth={1.5}
+                />
+              }
+              label="SKILL.md"
+              onClick={openDetail}
+            />
+            {hasReferences ? (
+              <SkillTreeItem
+                icon={
+                  <Folder className="h-3 w-3 shrink-0" strokeWidth={1.5} />
+                }
+                label="references/"
+                count={referencesCount}
+                onClick={openDetail}
+              />
+            ) : null}
+            {hasAssets ? (
+              <SkillTreeItem
+                icon={
+                  <ImageIcon
+                    className="h-3 w-3 shrink-0"
+                    strokeWidth={1.5}
+                  />
+                }
+                label="assets/"
+                count={pkg?.assets_count ?? 0}
+                onClick={openDetail}
+              />
+            ) : null}
+          </ul>
+        ) : null}
+      </div>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Deletar skill?</DialogTitle>
             <DialogDescription>
-              O arquivo <span className="font-mono">{skill.name}.md</span> será
-              removido do <span className="font-mono">skills_dir</span>. Esta
-              ação não pode ser desfeita. Execuções em andamento bloqueiam a
-              deleção.
+              <span className="font-mono">{skill.name}</span> será removida do
+              skills_dir. Esta ação não pode ser desfeita. Execuções em
+              andamento bloqueiam a deleção.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -435,6 +605,74 @@ function SkillItem({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+interface SkillTreeItemProps {
+  icon: React.ReactNode;
+  label: string;
+  count?: number;
+  onClick: () => void;
+}
+
+function SkillTreeItem({ icon, label, count, onClick }: SkillTreeItemProps) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full items-center gap-1.5 rounded px-2 py-0.5 text-left text-[11px] text-[var(--text-2)] transition-colors hover:bg-[var(--bg-muted)]"
+      >
+        {icon}
+        <span className="truncate font-mono">{label}</span>
+        {typeof count === "number" && count > 0 ? (
+          <span className="ml-auto text-[10px] text-[var(--text-3)]">
+            {count}
+          </span>
+        ) : null}
+      </button>
+    </li>
+  );
+}
+
+interface SkillDropdownProps {
+  onEdit: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+}
+
+function SkillDropdown({ onEdit, onExport, onDelete }: SkillDropdownProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Mais ações"
+          onClick={(e) => e.stopPropagation()}
+          className="rounded p-1 text-[var(--text-3)] opacity-0 transition-opacity hover:bg-[var(--bg-muted)] hover:text-[var(--text)] focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <MoreHorizontal className="h-3 w-3" strokeWidth={1.5} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuItem onClick={onEdit}>
+          <Pencil className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
+          Editar
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onExport}>
+          <Download className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
+          Exportar
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={onDelete}
+          className="text-[var(--destructive)] focus:text-[var(--destructive)]"
+        >
+          <Trash2 className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
+          Deletar
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

@@ -115,12 +115,21 @@ export function deleteSkill(args: { name: string }): Promise<void> {
 
 /// Skill package v2 (B1+B2). Mirror do `crate::skills::storage::SkillPackage`.
 /// `path` é absoluto — serde serializa o PathBuf do Rust como string.
+/// `references_count` e `assets_count` contam arquivos não-hidden 1
+/// nível abaixo das subpastas (não recursivo) — pensado pra badges
+/// na sidebar sem ter que chamar getSkill.
 export interface SkillPackage {
   name: string;
   path: string;
   has_assets: boolean;
   has_references: boolean;
   files_count: number;
+  references_count: number;
+  assets_count: number;
+}
+
+export function listSkillPackages(): Promise<SkillPackage[]> {
+  return invoke("list_skill_packages");
 }
 
 /// Descompacta um arquivo .skill (ZIP) em ~/.genesis/skills/<name>/

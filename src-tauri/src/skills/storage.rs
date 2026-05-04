@@ -34,6 +34,12 @@ pub struct SkillPackage {
     pub has_assets: bool,
     pub has_references: bool,
     pub files_count: usize,
+    /// Arquivos não-hidden direto em `references/` (não recursivo).
+    /// 0 quando a subpasta não existe — útil pra badge na sidebar
+    /// sem precisar buscar `references: Vec<String>` via getSkill.
+    pub references_count: usize,
+    /// Idem pra `assets/`.
+    pub assets_count: usize,
 }
 
 /// Diretório raiz de skills lido do config (default
@@ -176,13 +182,43 @@ fn validate_name(name: &str) -> Result<(), String> {
 fn read_package(path: &Path, name: String) -> SkillPackage {
     let assets = path.join("assets");
     let references = path.join("references");
+    let references_count = count_files_flat(&references);
+    let assets_count = count_files_flat(&assets);
     SkillPackage {
         files_count: count_files_recursive(path),
         has_assets: assets.is_dir(),
         has_references: references.is_dir(),
+        references_count,
+        assets_count,
         name,
         path: path.to_path_buf(),
     }
+}
+
+/// Conta arquivos não-hidden direto em `dir` (1 nível, não recursivo).
+/// Diretório ausente → 0. Pensado pros badges de subpastas que mostram
+/// quantos arquivos o package tem em `references/` ou `assets/`.
+fn count_files_flat(dir: &Path) -> usize {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    let mut total = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let hidden = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with('.'))
+            .unwrap_or(true);
+        if !hidden {
+            total += 1;
+        }
+    }
+    total
 }
 
 /// Conta arquivos não-hidden em `dir` recursivamente. Hidden =
