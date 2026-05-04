@@ -6,8 +6,10 @@
 //! `commands/skills.rs` (handlers IPC). Nada de parser, nada de
 //! step validation aqui — só estrutura de diretórios.
 
+pub mod import;
 pub mod storage;
 
+pub use import::import_skill_package;
 pub use storage::{
     delete_skill_package, ensure_skill_dirs, get_skill_package, list_assets,
     list_references, list_skill_packages, read_skill_md, skill_dir, skills_dir,
