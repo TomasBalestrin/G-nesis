@@ -8,11 +8,13 @@ pub mod config;
 pub mod db;
 pub mod integrations;
 pub mod orchestrator;
+pub mod skills;
 
 use channels::terminal::TerminalRegistry;
 use commands::{
     app_state, caminhos, capabilities, chat, config as config_cmd, conversations, dependencies,
-    execution, integrations as integrations_cmd, knowledge, projects, skills, workflows,
+    execution, integrations as integrations_cmd, knowledge, projects,
+    skills as skills_cmd, workflows,
 };
 use orchestrator::ExecutionRegistry;
 use tauri::Manager;
@@ -51,11 +53,11 @@ pub fn run() {
             config_cmd::get_config,
             config_cmd::save_config,
             // skills
-            skills::list_skills,
-            skills::read_skill,
-            skills::save_skill,
-            skills::delete_skill,
-            skills::parse_skill,
+            skills_cmd::list_skills,
+            skills_cmd::read_skill,
+            skills_cmd::save_skill,
+            skills_cmd::delete_skill,
+            skills_cmd::parse_skill,
             // projects
             // projects::list_projects / create_project / delete_project
             // foram aposentados em H1 — todo o surface migrou pra
