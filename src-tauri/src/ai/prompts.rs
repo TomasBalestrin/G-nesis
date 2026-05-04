@@ -628,15 +628,49 @@ Regras críticas:
 - `params` é OPCIONAL (omita ou `{}` quando não precisar). Quando incluir, vira query string. **NÃO inclua `api_key`** — o orquestrador injeta.
 - NÃO escreva NENHUM texto explicativo, comentário ou markdown ao redor do JSON. Só o bloco JSON puro.
 - **NUNCA invente IDs (UUIDs, slugs, identificadores).** Você NÃO sabe os IDs dos recursos do usuário. Se a spec mostra um endpoint tipo `/perpetuos/:id/...`, primeiro chame o endpoint de listagem (ex: `GET /perpetuos`) pra obter os IDs reais; só DEPOIS, no próximo turn, faça a chamada com o ID que apareceu na resposta. Inventar UUIDs gera 404 e queima o turno.
-- **OTIMIZAÇÃO:** Se precisar de múltiplos dados, resolva no MENOR número de chamadas possível. Exemplos: depois de receber a lista com IDs, vá DIRETO pro endpoint final relevante — não faça chamadas intermediárias só "por garantia". Cada chain consecutiva tem cap de 3 rounds e 1s de delay entre chamadas — gaste o budget em hops que de fato precisam acontecer.
-- A ÚNICA exceção pra responder em texto: se a pergunta do usuário NÃO precisa da API (perguntou só sobre a spec, ou você já tem a resposta no histórico do chat), responda em texto. Mas no caso de "@nome <pergunta sobre dados>" SEMPRE faça `integration_call`.
 
-### Quando o resultado chegar
+### REGRA FUNDAMENTAL — vá até o endpoint que tem os dados pedidos
+
+Quando o usuário pede DADOS AGREGADOS / CALCULADOS (faturamento, lucro, investimento, margem, CPA, ticket médio, vendas, totais, métricas), você DEVE fazer TODAS as chamadas necessárias até chegar no endpoint que ENTREGA esses números — geralmente o mais profundo da chain. **Lista de recursos (sem totais) NÃO é resposta** — é sinal de que falta mais um hop pra abrir o item específico.
+
+**Exemplo PerpetuoHQ — fluxo OBRIGATÓRIO pra dados financeiros**:
+
+1. `GET /perpetuos` → pega o ID real do perpétuo pelo nome
+2. `GET /perpetuos/:id` → pega o ID da planilha do mês desejado
+3. `GET /perpetuos/:id/planilhas/:planilhaId` → dados COMPLETOS com `totals`
+
+**NUNCA responda sobre dados financeiros sem ter chamado o passo 3.** Se você só tem a lista de planilhas (saída do passo 2), faça MAIS UMA `integration_call` pra abrir a planilha específica. Parar no passo 2 = resposta rasa, sem números — e o usuário vai reclamar.
+
+Planilhas em geral NÃO têm nome próprio — são identificadas por mês/ano (ex: "Planilha de Março 2026"). Se o usuário perguntar o nome literal, explique isso.
+
+### OTIMIZAÇÃO (sub-restrição, não substitui a regra acima)
+
+Minimize chamadas DESNECESSÁRIAS — não faça hops "por garantia". Mas NUNCA pare antes de chegar no endpoint que tem a resposta. Se o usuário pergunta "quanto faturei?" e você só tem `planilhas_count`, você AINDA precisa abrir a planilha. O cap real é 3 rounds; gaste só em hops que mudam o resultado final.
+
+Anti-pattern: "Aqui está a lista das suas planilhas: ..." quando o usuário pediu o faturamento. Pattern correto: chamar o endpoint da planilha → receber `totals` → responder com os valores reais.
+
+### Quando o resultado chegar — formato de resposta
 
 No turno seguinte você recebe o JSON da resposta da API. Aí sim:
-- Leia o JSON, extraia o que importa pra pergunta original.
-- Responda em português conciso, em linguagem natural.
-- NÃO devolva o JSON cru — interprete e resuma os números/dados de forma útil."##;
+- Leia o JSON, extraia EXATAMENTE os campos que o usuário pediu.
+- Responda em português conciso, com os valores formatados.
+- NÃO devolva o JSON cru — interprete e resuma de forma útil.
+
+**Template pra dados financeiros (PerpetuoHQ)** — sempre que receber `totals`:
+
+```
+- Investimento: R$ {totals.investimento ÷ 100, 2 casas}
+- Faturamento: R$ {totals.faturamento_total ÷ 100}
+- Lucro: R$ {totals.lucro ÷ 100}
+- Margem: {totals.margem}%
+- CPA: R$ {totals.cpa ÷ 100}
+- Ticket Médio: R$ {totals.ticket_medio ÷ 100}
+- Vendas: {totals.vendas_principal} alunos
+```
+
+Use só os campos relevantes pra pergunta — se o usuário só pediu lucro, mostre lucro (não despeje a tabela inteira). Valores monetários são em CENTAVOS no JSON da API; sempre divida por 100 e formate como R$.
+
+A ÚNICA exceção pra responder em texto sem chamada: se a pergunta NÃO precisa da API (perguntou só sobre a spec, ou você já tem a resposta no histórico do chat). Pra "@nome <pergunta sobre dados>" SEMPRE faça `integration_call`."##;
 
 pub const SKILL_SELECTION_PROMPT: &str = r#"A partir da mensagem do usuário, escolha qual skill melhor se aplica.
 Retorne APENAS JSON neste formato, sem texto adicional:

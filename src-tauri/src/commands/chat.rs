@@ -472,13 +472,22 @@ async fn post_process_integration_call(
         match run_integration_request(integration, &call, pool).await {
             Ok(json) => {
                 last_success = true;
+                // Log requested em E3 follow-up: round + endpoint +
+                // tamanho do payload da API. Útil pra confirmar que
+                // o GPT está realmente progredindo na chain (lista
+                // → detail → totals) em vez de parar cedo.
+                println!(
+                    ">>> ROUND {round}: endpoint={} response_size={}",
+                    call.endpoint,
+                    json.len()
+                );
                 // Push assistant turn (envelope JSON) + synthetic user
                 // turn carregando o resultado da API. O prompt do user
                 // turn deixa claro que round adicional é OK se o GPT
                 // ainda precisa de mais dados.
                 next_messages.push(Message::assistant(current_reply.clone()));
                 let context_msg = format!(
-                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe ainda precisar de mais dados (ex: pegar um ID retornado e usar em outro endpoint), responda com OUTRA `integration_call`. Se já tem tudo que precisa, responda ao usuário em português conciso (sem JSON cru, sem devolver os IDs).",
+                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe a pergunta original pediu DADOS AGREGADOS (faturamento, lucro, métricas) e este resultado é APENAS uma lista (sem totals/agregados), você AINDA não terminou — faça outra `integration_call` pra abrir o item específico e pegar os números. Se já tem tudo que precisa, responda ao usuário em português conciso, com valores formatados (R$ X, X%) — sem JSON cru, sem devolver IDs.",
                     name = integration.name,
                     endpoint = call.endpoint,
                 );
