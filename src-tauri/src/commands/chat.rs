@@ -696,6 +696,36 @@ fn skill_md_path(name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(file_name))
 }
 
+/// Resolve o caminho do markdown principal de uma skill, preferindo
+/// v2 (`<skills_dir>/<name>/SKILL.md`) sobre v1 (`<skills_dir>/<name>.md`).
+/// Retorna o v1 path quando NEM v2 NEM v1 existem — assim
+/// `fs::read_to_string` falha de forma consistente e o caller cai
+/// em `render_not_found`. Não re-valida o name (delegado a
+/// `skill_md_path`).
+fn resolve_skill_md(name: &str) -> Result<PathBuf, String> {
+    let v2 = match crate::skills::storage::skill_dir(name) {
+        Ok(d) => d.join("SKILL.md"),
+        Err(_) => return skill_md_path(name),
+    };
+    if v2.is_file() {
+        return Ok(v2);
+    }
+    skill_md_path(name)
+}
+
+/// Filenames (sem path) das references de uma skill v2. Vazio quando
+/// não é v2 ou quando references/ não existe / está vazia. Caller
+/// usa pra montar o bloco "References disponíveis: ..." mostrado
+/// ao usuário no canned reply do slash + ao GPT em prompts futuros
+/// que carreguem skill context.
+fn list_skill_reference_names(name: &str) -> Vec<String> {
+    crate::skills::storage::list_references(name)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect()
+}
+
 /// Load every `.md` under `skills_dir` and parse it. Walks the top level
 /// plus immediate subdirectories (e.g. `skills/meta/criar-skill.md`) so
 /// curated meta-skills stay discoverable without polluting the user's
@@ -815,7 +845,7 @@ fn format_step_line(index: usize, step: &SkillStep) -> String {
     }
 }
 
-fn render_confirmation(skill: &ParsedSkill) -> String {
+fn render_confirmation(skill: &ParsedSkill, references: &[String]) -> String {
     let description = if skill.meta.description.is_empty() {
         "(sem descrição)"
     } else {
@@ -840,6 +870,18 @@ fn render_confirmation(skill: &ParsedSkill) -> String {
         for input in &skill.inputs {
             msg.push_str(&format!("- `{{{{{input}}}}}`\n"));
         }
+    }
+
+    if !references.is_empty() {
+        // Lazy-load: listamos só os filenames (não o conteúdo) pra
+        // economizar tokens no prompt do GPT em turnos seguintes.
+        // A instrução "Se precisar... peça" dá um hook protocolar
+        // pro modelo solicitar uma reference específica via chat.
+        msg.push_str("\n## References disponíveis\n\n");
+        msg.push_str(&references.join(", "));
+        msg.push_str(
+            "\n\n_Se precisar do conteúdo de alguma reference específica, peça pelo nome._",
+        );
     }
 
     msg.push_str("\n---\n\nSelecione um projeto e use o botão **Executar** para iniciar.");
@@ -871,14 +913,20 @@ fn render_not_found(name: &str, catalog: &[SkillMeta]) -> String {
 /// user still gets a reply).
 fn try_slash_reply(skill_name: &str) -> String {
     let catalog = load_skill_catalog();
-    let path = match skill_md_path(skill_name) {
+    // resolve_skill_md cobre v2 (pasta com SKILL.md) E v1 (.md solto).
+    // Sem isso, slash de skill v2 caía em fs::read_to_string Err →
+    // render_not_found mesmo com a skill cadastrada.
+    let path = match resolve_skill_md(skill_name) {
         Ok(p) => p,
         Err(err) => return format!("{err}"),
     };
 
     match fs::read_to_string(&path) {
         Ok(content) => match skill_parser::parse_skill(&content) {
-            Ok(skill) => render_confirmation(&skill),
+            Ok(skill) => {
+                let refs = list_skill_reference_names(skill_name);
+                render_confirmation(&skill, &refs)
+            }
             Err(err) => format!(
                 "Skill `{skill_name}` existe mas está inválida: {err}\n\n\
                  Corrija em **Skills → {skill_name}**.",
@@ -2530,10 +2578,29 @@ mod tests {
             }],
             ..Default::default()
         };
-        let msg = render_confirmation(&skill);
+        let msg = render_confirmation(&skill, &[]);
         assert!(msg.contains("**`demo`**"));
         assert!(msg.contains("1. **step_1** (`bash`): `echo hi`"));
         assert!(msg.contains("{{briefing}}"));
         assert!(msg.contains("Executar"));
+        // Sem references: bloco não aparece.
+        assert!(!msg.contains("References disponíveis"));
+    }
+
+    #[test]
+    fn render_confirmation_lists_references_when_present() {
+        let skill = ParsedSkill {
+            meta: SkillMeta {
+                name: "demo".into(),
+                description: "teste".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let refs = vec!["iron-man.md".to_string(), "thor.md".to_string()];
+        let msg = render_confirmation(&skill, &refs);
+        assert!(msg.contains("References disponíveis"));
+        assert!(msg.contains("iron-man.md, thor.md"));
+        assert!(msg.contains("peça pelo nome"));
     }
 }
