@@ -41,12 +41,11 @@ import {
   exportSkill,
   importSkill,
 } from "@/lib/tauri-bridge";
-import type { SkillPackage } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 import type { Conversation } from "@/types/chat";
-import type { SkillMeta } from "@/types/skill";
+import type { Skill } from "@/types/skill";
 
 interface SidebarProps {
   open: boolean;
@@ -309,7 +308,6 @@ function IconButton({ ariaLabel, onClick, children }: IconButtonProps) {
 function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(true);
   const items = useSkillsStore((s) => s.items);
-  const packages = useSkillsStore((s) => s.packages);
   const loading = useSkillsStore((s) => s.loading);
   const loaded = useSkillsStore((s) => s.loaded);
   const ensureLoaded = useSkillsStore((s) => s.ensureLoaded);
@@ -388,7 +386,6 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
               <SkillItem
                 key={skill.name}
                 skill={skill}
-                pkg={packages[skill.name] ?? null}
                 onNavigate={onNavigate}
               />
             ))
@@ -400,12 +397,11 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
 }
 
 interface SkillItemProps {
-  skill: SkillMeta;
-  pkg: SkillPackage | null;
+  skill: Skill;
   onNavigate: () => void;
 }
 
-function SkillItem({ skill, pkg, onNavigate }: SkillItemProps) {
+function SkillItem({ skill, onNavigate }: SkillItemProps) {
   const { name: routeName } = useParams<{ name: string }>();
   const isActive = routeName === skill.name;
   const refreshSkills = useSkillsStore((s) => s.refresh);
@@ -415,9 +411,9 @@ function SkillItem({ skill, pkg, onNavigate }: SkillItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const referencesCount = pkg?.references_count ?? 0;
-  const hasAssets = pkg?.has_assets ?? false;
-  const hasReferences = pkg?.has_references ?? false;
+  const referencesCount = skill.references_count;
+  const hasAssets = skill.has_assets;
+  const hasReferences = skill.has_references;
   const detailHref = `/skills/${encodeURIComponent(skill.name)}`;
 
   async function handleConfirmDelete() {
@@ -568,7 +564,7 @@ function SkillItem({ skill, pkg, onNavigate }: SkillItemProps) {
                   />
                 }
                 label="assets/"
-                count={pkg?.assets_count ?? 0}
+                count={skill.assets_count}
                 onClick={openDetail}
               />
             ) : null}

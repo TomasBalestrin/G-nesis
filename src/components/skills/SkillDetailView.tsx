@@ -32,15 +32,12 @@ import { useToast } from "@/hooks/useToast";
 import {
   deleteSkill,
   exportSkill,
-  getSkill,
   getSkillFile,
-  listSkills,
   readSkillAssetDataUrl,
-  type SkillBundle,
 } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useSkillsStore } from "@/stores/skillsStore";
-import type { SkillMeta } from "@/types/skill";
+import type { Skill, SkillDetail } from "@/types/skill";
 
 type ViewMode = "visual" | "code";
 
@@ -105,9 +102,10 @@ export function SkillDetailView() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const refreshSkills = useSkillsStore((s) => s.refresh);
+  const setActive = useSkillsStore((s) => s.setActive);
+  const clearActive = useSkillsStore((s) => s.clearActive);
+  const activeSkill = useSkillsStore((s) => s.activeSkill);
 
-  const [bundle, setBundle] = useState<SkillBundle | null>(null);
-  const [meta, setMeta] = useState<SkillMeta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedItem>({ kind: "skill" });
   const [textContent, setTextContent] = useState<string | null>(null);
@@ -119,43 +117,34 @@ export function SkillDetailView() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Hydrate bundle + meta. Bundle é IPC (getSkill), meta vem do
-  // listSkills (parseado, traz version/author do frontmatter).
+  // Hidrata `activeSkill` no store via setActive(name) — esse já
+  // chama getSkill IPC e mescla com o catálogo cached. Limpa no
+  // unmount pra liberar memória + evitar flash de skill antiga
+  // quando o user navega entre skills.
   useEffect(() => {
     if (!name) return;
-    let cancelled = false;
     setLoadError(null);
-    (async () => {
-      try {
-        const [b, skills] = await Promise.all([
-          getSkill({ name }),
-          listSkills(),
-        ]);
-        if (cancelled) return;
-        setBundle(b);
-        setMeta(skills.find((s) => s.name === name) ?? null);
-      } catch (err) {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : String(err));
-      }
-    })();
+    setSelected({ kind: "skill" });
+    void setActive(name).catch((err) => {
+      setLoadError(err instanceof Error ? err.message : String(err));
+    });
     return () => {
-      cancelled = true;
+      clearActive();
     };
-  }, [name]);
+  }, [name, setActive, clearActive]);
 
-  // Carrega o conteúdo do item selecionado. Texto via getSkillFile,
-  // imagem via readSkillAssetDataUrl, outros tipos caem em null +
-  // mensagem "abrir no FS".
+  // Carrega o conteúdo do item selecionado. SKILL.md já vem direto
+  // do `activeSkill.content`. Texto via getSkillFile, imagem via
+  // readSkillAssetDataUrl, outros tipos caem em mensagem "abrir no FS".
   useEffect(() => {
-    if (!bundle) return;
+    if (!activeSkill) return;
     let cancelled = false;
     setPreviewError(null);
     setTextContent(null);
     setImageDataUrl(null);
 
     if (selected.kind === "skill") {
-      setTextContent(bundle.skill_md);
+      setTextContent(activeSkill.content);
       return;
     }
     const filename = selected.filename ?? "";
@@ -185,7 +174,7 @@ export function SkillDetailView() {
     return () => {
       cancelled = true;
     };
-  }, [bundle, selected, name]);
+  }, [activeSkill, selected, name]);
 
   async function handleExport() {
     setBusy(true);
@@ -241,7 +230,7 @@ export function SkillDetailView() {
     <div className="flex h-full flex-col">
       <Header
         name={name}
-        meta={meta}
+        skill={activeSkill}
         busy={busy}
         onEdit={() => navigate(`/skills/${encodeURIComponent(name)}/edit`)}
         onExport={handleExport}
@@ -250,7 +239,7 @@ export function SkillDetailView() {
 
       <div className="flex min-h-0 flex-1">
         <FileTree
-          bundle={bundle}
+          skill={activeSkill}
           selected={selected}
           onSelect={setSelected}
           collapsedRefs={collapsedRefs}
@@ -270,7 +259,7 @@ export function SkillDetailView() {
             textContent={textContent}
             imageDataUrl={imageDataUrl}
             previewError={previewError}
-            bundle={bundle}
+            skill={activeSkill}
           />
         </main>
       </div>
@@ -308,14 +297,14 @@ export function SkillDetailView() {
 
 interface HeaderProps {
   name: string;
-  meta: SkillMeta | null;
+  skill: Skill | null;
   busy: boolean;
   onEdit: () => void;
   onExport: () => void;
   onDelete: () => void;
 }
 
-function Header({ name, meta, busy, onEdit, onExport, onDelete }: HeaderProps) {
+function Header({ name, skill, busy, onEdit, onExport, onDelete }: HeaderProps) {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-4">
       <Button asChild variant="ghost" size="icon" aria-label="Voltar">
@@ -326,20 +315,20 @@ function Header({ name, meta, busy, onEdit, onExport, onDelete }: HeaderProps) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h1 className="truncate text-lg font-semibold">{name}</h1>
-          {meta?.version ? (
+          {skill?.version ? (
             <span className="rounded-md border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-1.5 py-0 font-mono text-[10px] text-[var(--text-2)]">
-              v{meta.version}
+              v{skill.version}
             </span>
           ) : null}
-          {meta?.author ? (
+          {skill?.author ? (
             <span className="rounded-md border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-1.5 py-0 text-[10px] text-[var(--text-2)]">
-              por {meta.author}
+              por {skill.author}
             </span>
           ) : null}
         </div>
-        {meta?.description ? (
+        {skill?.description ? (
           <p className="mt-0.5 truncate text-xs text-[var(--text-3)]">
-            {meta.description}
+            {skill.description}
           </p>
         ) : null}
       </div>
@@ -368,7 +357,7 @@ function Header({ name, meta, busy, onEdit, onExport, onDelete }: HeaderProps) {
 }
 
 interface FileTreeProps {
-  bundle: SkillBundle | null;
+  skill: SkillDetail | null;
   selected: SelectedItem;
   onSelect: (item: SelectedItem) => void;
   collapsedRefs: boolean;
@@ -378,7 +367,7 @@ interface FileTreeProps {
 }
 
 function FileTree({
-  bundle,
+  skill,
   selected,
   onSelect,
   collapsedRefs,
@@ -386,8 +375,8 @@ function FileTree({
   onToggleRefs,
   onToggleAssets,
 }: FileTreeProps) {
-  const refs = bundle?.references ?? [];
-  const assets = bundle?.assets ?? [];
+  const refs = skill?.references ?? [];
+  const assets = skill?.assets ?? [];
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-[var(--bg-subtle)]/40">
@@ -622,7 +611,7 @@ interface PreviewPaneProps {
   textContent: string | null;
   imageDataUrl: string | null;
   previewError: string | null;
-  bundle: SkillBundle | null;
+  skill: SkillDetail | null;
 }
 
 function PreviewPane({
@@ -631,7 +620,7 @@ function PreviewPane({
   textContent,
   imageDataUrl,
   previewError,
-  bundle,
+  skill,
 }: PreviewPaneProps) {
   const isMarkdown =
     selected.kind === "skill" ||
@@ -663,7 +652,7 @@ function PreviewPane({
   }
 
   if (textContent === null) {
-    if (!bundle) {
+    if (!skill) {
       return (
         <div className="flex flex-1 items-center justify-center text-xs text-[var(--text-3)]">
           Carregando...

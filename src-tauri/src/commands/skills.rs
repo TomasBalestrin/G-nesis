@@ -189,22 +189,45 @@ pub struct SkillBundle {
     pub assets: Vec<String>,
 }
 
-/// Lista todos os skill packages v2 do FS via `list_skill_packages`.
-/// Retorna o `SkillPackage` cru (metadata sem parsear frontmatter)
-/// — UI usa pra grade/lista. NÃO consulta o mirror SQLite porque
-/// FS é a source-of-truth e os packages podem ter mudado fora do app.
+/// Lista todos os skill packages v2 do FS via `list_skill_packages`,
+/// enriquecidos com `id` e `created_at` do mirror SQLite (best-effort
+/// — packages sem mirror ficam com None nesses campos). FS continua
+/// source-of-truth pra has_assets/has_references/files_count.
 #[tauri::command]
-pub async fn list_skill_packages() -> Result<Vec<SkillPackage>, String> {
-    skill_storage::list_skill_packages()
+pub async fn list_skill_packages(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<SkillPackage>, String> {
+    let mut packages = skill_storage::list_skill_packages()?;
+    // Best-effort SQLite join. Falha aqui (mirror corrompido,
+    // permissão) só faz id/created_at saírem como None — UI degrada
+    // graceful (Skill.id cai pra name como fallback no FE).
+    if let Ok(rows) = queries::list_skills(&pool).await {
+        let by_name: std::collections::HashMap<String, &SkillRow> =
+            rows.iter().map(|r| (r.name.clone(), r)).collect();
+        for pkg in &mut packages {
+            if let Some(row) = by_name.get(&pkg.name) {
+                pkg.id = Some(row.id.clone());
+                pkg.created_at = Some(row.created_at.clone());
+            }
+        }
+    }
+    Ok(packages)
 }
 
-/// Bundle de uma skill: package + SKILL.md content + filenames de
-/// references/assets em uma chamada. UI evita 3 IPCs separados pra
-/// abrir uma skill.
+/// Bundle de uma skill: package (com id/created_at do mirror) +
+/// SKILL.md content + filenames de references/assets em uma chamada.
+/// UI evita 3 IPCs separados pra abrir uma skill.
 #[tauri::command]
-pub async fn get_skill(name: String) -> Result<SkillBundle, String> {
-    let package = skill_storage::get_skill_package(&name)?
+pub async fn get_skill(
+    name: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<SkillBundle, String> {
+    let mut package = skill_storage::get_skill_package(&name)?
         .ok_or_else(|| format!("skill `{name}` não encontrada"))?;
+    if let Ok(Some(row)) = queries::get_skill_by_name(&pool, &name).await {
+        package.id = Some(row.id);
+        package.created_at = Some(row.created_at);
+    }
     let skill_md = skill_storage::read_skill_md(&name)?;
     let references = skill_storage::list_references(&name)?
         .into_iter()

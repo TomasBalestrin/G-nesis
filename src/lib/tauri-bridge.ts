@@ -118,6 +118,8 @@ export function deleteSkill(args: { name: string }): Promise<void> {
 /// `references_count` e `assets_count` contam arquivos não-hidden 1
 /// nível abaixo das subpastas (não recursivo) — pensado pra badges
 /// na sidebar sem ter que chamar getSkill.
+/// `id` e `created_at` vêm do mirror SQLite (best-effort). Skills
+/// criadas via FS direto sem mirror retornam null nesses campos.
 export interface SkillPackage {
   name: string;
   path: string;
@@ -126,6 +128,8 @@ export interface SkillPackage {
   files_count: number;
   references_count: number;
   assets_count: number;
+  id: string | null;
+  created_at: string | null;
 }
 
 export function listSkillPackages(): Promise<SkillPackage[]> {

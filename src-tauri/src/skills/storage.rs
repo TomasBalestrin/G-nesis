@@ -40,6 +40,13 @@ pub struct SkillPackage {
     pub references_count: usize,
     /// Idem pra `assets/`.
     pub assets_count: usize,
+    /// Mirror SQLite (migration 009). Storage layer sempre retorna
+    /// `None`/`""`; command layer (`commands/skills.rs`) faz o join
+    /// via `queries::get_skill_by_name` antes de serializar.
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 /// Diretório raiz de skills lido do config (default
@@ -192,6 +199,8 @@ fn read_package(path: &Path, name: String) -> SkillPackage {
         assets_count,
         name,
         path: path.to_path_buf(),
+        id: None,
+        created_at: None,
     }
 }
 
