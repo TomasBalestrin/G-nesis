@@ -41,6 +41,22 @@ pub fn run() {
 
             let pool = tauri::async_runtime::block_on(db::init_db())
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
+
+            // Idempotente: skills v1 (.md soltas em ~/.genesis/skills/)
+            // viram pastas v2 (<name>/SKILL.md + assets/ + references/).
+            // Falhas individuais por skill ficam em stderr e não
+            // interrompem o boot — só Err quando o skills_dir é
+            // ilegível, o que aí é fatal mesmo.
+            let report =
+                tauri::async_runtime::block_on(skills::migrate_v1_skills(&pool))
+                    .map_err(|e| format!("skills v1→v2 migration failed: {e}"))?;
+            if report.migrated > 0 || report.failed > 0 {
+                eprintln!(
+                    "[skills::migration] scanned={} migrated={} skipped={} failed={}",
+                    report.scanned, report.migrated, report.skipped, report.failed
+                );
+            }
+
             app.manage(pool);
 
             app.manage(ExecutionRegistry::new());

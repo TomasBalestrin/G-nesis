@@ -8,10 +8,12 @@
 
 pub mod export;
 pub mod import;
+pub mod migration;
 pub mod storage;
 
 pub use export::export_skill_package;
 pub use import::import_skill_package;
+pub use migration::migrate_v1_skills;
 pub use storage::{
     delete_skill_package, ensure_skill_dirs, get_skill_package, list_assets,
     list_references, list_skill_packages, read_skill_md, skill_dir, skills_dir,
