@@ -176,6 +176,47 @@ export function deleteSkillFile(args: {
   return invoke("delete_skill_file", args);
 }
 
+/// Bundle retornado por `get_skill` — package + SKILL.md content +
+/// listas de filenames (relativos) de references/ e assets/. UI
+/// hidrata o detalhe da skill em uma chamada só.
+export interface SkillBundle {
+  package: SkillPackage;
+  skill_md: string;
+  references: string[];
+  assets: string[];
+}
+
+export function getSkill(args: { name: string }): Promise<SkillBundle> {
+  return invoke("get_skill", args);
+}
+
+/// Lê arquivo de texto dentro do package (.md, .html, .txt, etc).
+/// Path relativo (ex: "references/foo.md", "assets/template.html").
+export function getSkillFile(args: {
+  name: string;
+  path: string;
+}): Promise<string> {
+  return invoke("get_skill_file", args);
+}
+
+/// Lê asset binário e retorna como `data:<mime>;base64,...`. Ideal
+/// pra <img src=...> direto na UI sem mexer com asset protocol.
+export function readSkillAssetDataUrl(args: {
+  name: string;
+  path: string;
+}): Promise<string> {
+  return invoke("read_skill_asset_data_url", args);
+}
+
+/// Empacota a skill como `.skill` (ZIP) em `destPath` (escolhido
+/// via dialog.save no frontend). Sobrescreve se existir.
+export function exportSkill(args: {
+  name: string;
+  destPath: string;
+}): Promise<void> {
+  return invoke("export_skill", args);
+}
+
 // ── projects (legacy: list/create/delete retired in H1) ────────────────────
 //
 // `list_projects` / `create_project` / `delete_project` foram aposentadas

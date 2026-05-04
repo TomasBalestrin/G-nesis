@@ -68,6 +68,8 @@ pub fn run() {
             skills_cmd::save_skill_file,
             skills_cmd::save_skill_asset,
             skills_cmd::delete_skill_file,
+            skills_cmd::read_skill_asset_data_url,
+            skills_cmd::export_skill,
             skills_cmd::import_skill,
             // projects
             // projects::list_projects / create_project / delete_project

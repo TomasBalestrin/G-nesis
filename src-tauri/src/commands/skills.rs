@@ -233,6 +233,104 @@ pub async fn get_skill_file(name: String, path: String) -> Result<String, String
         .map_err(|e| format!("falha ao ler {}: {e}", resolved.display()))
 }
 
+/// Lê um asset binário e retorna data URL (`data:<mime>;base64,...`).
+/// MIME inferido por extensão — fallback `application/octet-stream`
+/// pra extensões desconhecidas. Pensado pra <img src=...> direto na
+/// UI; para arquivos texto, prefira `get_skill_file`.
+#[tauri::command]
+pub async fn read_skill_asset_data_url(
+    name: String,
+    path: String,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+    let resolved = resolve_skill_file(&name, &path)?;
+    let bytes = fs::read(&resolved)
+        .map_err(|e| format!("falha ao ler {}: {e}", resolved.display()))?;
+    let mime = guess_mime_from_path(&path);
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
+/// Exporta uma skill v2 como `.skill` (ZIP) gravado em `dest_path`.
+/// Estrutura: o arquivo contém uma pasta raiz `<name>/` com
+/// `SKILL.md` + `assets/` + `references/` (mesmo layout que o
+/// importer espera). Idempotente — sobrescreve `dest_path` se
+/// existir. Usado pelo botão "Exportar" no SkillDetailView.
+#[tauri::command]
+pub async fn export_skill(name: String, dest_path: String) -> Result<(), String> {
+    use std::io::Write;
+    use zip::write::FileOptions;
+    use zip::CompressionMethod;
+
+    let dir = skill_storage::skill_dir(&name)?;
+    if !dir.is_dir() {
+        return Err(format!("skill `{name}` não encontrada"));
+    }
+
+    let dest = std::path::Path::new(&dest_path);
+    let file = fs::File::create(dest)
+        .map_err(|e| format!("falha ao criar {dest_path}: {e}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    // Walk recursivo gravando relativo a `<name>/<...>` no ZIP. Usamos
+    // walk próprio (não walkdir) pra evitar dep extra; profundidade
+    // máxima do package é fixa (raiz + 1 subpasta), então simples.
+    for entry in fs::read_dir(&dir)
+        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?
+    {
+        let entry = entry.map_err(|e| format!("read_dir entry: {e}"))?;
+        let path = entry.path();
+        let rel_top = entry.file_name().to_string_lossy().into_owned();
+        if path.is_file() {
+            zip.start_file(format!("{name}/{rel_top}"), opts)
+                .map_err(|e| format!("zip start_file: {e}"))?;
+            let data = fs::read(&path)
+                .map_err(|e| format!("falha ao ler {}: {e}", path.display()))?;
+            zip.write_all(&data)
+                .map_err(|e| format!("zip write: {e}"))?;
+        } else if path.is_dir() {
+            for child in fs::read_dir(&path)
+                .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+            {
+                let child = child.map_err(|e| format!("read_dir child: {e}"))?;
+                let cpath = child.path();
+                if !cpath.is_file() {
+                    continue;
+                }
+                let cname = child.file_name().to_string_lossy().into_owned();
+                zip.start_file(format!("{name}/{rel_top}/{cname}"), opts)
+                    .map_err(|e| format!("zip start_file: {e}"))?;
+                let data = fs::read(&cpath)
+                    .map_err(|e| format!("falha ao ler {}: {e}", cpath.display()))?;
+                zip.write_all(&data)
+                    .map_err(|e| format!("zip write: {e}"))?;
+            }
+        }
+    }
+    zip.finish().map_err(|e| format!("zip finish: {e}"))?;
+    Ok(())
+}
+
+fn guess_mime_from_path(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" => "application/javascript",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Cria um package v2 do zero: pasta + SKILL.md template + assets/
 /// + references/. Erra se a skill já existe (qualquer formato — v1
 /// .md solto ou v2 pasta). Sincroniza com o mirror SQLite (tabela

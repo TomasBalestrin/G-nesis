@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import {
   createSkill,
   deleteSkill,
   getAppStateValue,
+  getSkill,
   listSkills,
   saveSkillFile,
 } from "@/lib/tauri-bridge";
@@ -25,33 +26,36 @@ const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 const DEFAULT_VERSION = "1.0";
 
 /**
- * Wizard 3-etapas pra criar um package v2 do zero. Esta task (C1)
- * implementa apenas a Etapa 1 — info básica (nome + descrição +
- * versão + autor). Etapas 2 e 3 ficam como placeholder e serão
- * preenchidas em C2/C3.
+ * Wizard 3-etapas — atende criação (`/skills/new`) e edição
+ * (`/skills/:name/edit`). Em modo edição, a etapa 1 (info básica)
+ * é pulada e o SKILL.md/refs/assets são hidratados via getSkill,
+ * abrindo direto na etapa 2.
  *
- * Etapa 1 — flow:
- *   1. Validação real-time do slug (regex + listSkills uniqueness).
- *   2. Versão default "1.0", autor default vem de app_state.user_name
- *      (mesma fonte do greeting do chat).
- *   3. Próximo → createSkill({name}) cria pasta + template, depois
- *      saveSkillFile({name, path: "SKILL.md", content}) sobrescreve
- *      o template com a frontmatter customizada do usuário. Avança
- *      pra etapa 2.
- *   4. Cancelar → navega pra `/`.
+ * Fluxo de criação:
+ *   - Etapa 1: nome (slug com checagem real-time) + descrição +
+ *     versão (1.0) + autor (default app_state.user_name).
+ *   - Etapa 2: editor markdown com toolbar + preview + auto-save.
+ *   - Etapa 3 (opcional): references + assets + estrutura final.
  *
- * Substitui SkillEditor como entry-point de NOVA skill. Edição de
- * skills v1 legacy continua via /skills/:name/edit (SkillEditor) até
- * v2 ganhar editor próprio.
+ * Fluxo de edição:
+ *   - Hidrata SKILL.md + listas de refs/assets.
+ *   - Abre na etapa 2; "Voltar" volta pro SkillDetailView (não pra
+ *     etapa 1, já que nome/descrição não podem mudar aqui).
  */
 export function CreateSkillWizard() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const refreshSkills = useSkillsStore((s) => s.refresh);
-  const [step, setStep] = useState<Step>(1);
+  // Modo edição entra via rota /skills/:name/edit — `name` presente
+  // no params indica que a skill já existe. Modo criação (/skills/new)
+  // tem `name` vazio.
+  const { name: editingName } = useParams<{ name?: string }>();
+  const isEditing = Boolean(editingName);
+
+  const [step, setStep] = useState<Step>(isEditing ? 2 : 1);
 
   // Etapa 1 state
-  const [name, setName] = useState("");
+  const [name, setName] = useState(editingName ?? "");
   const [description, setDescription] = useState("");
   const [version, setVersion] = useState(DEFAULT_VERSION);
   const [author, setAuthor] = useState("");
@@ -61,6 +65,7 @@ export function CreateSkillWizard() {
   // Etapa 2 state — conteúdo completo do SKILL.md (frontmatter + body).
   // Owned aqui pra sobreviver às transições back/forward do wizard.
   const [skillMdContent, setSkillMdContent] = useState("");
+  const [hydrating, setHydrating] = useState(isEditing);
 
   // Etapa 3 state — references e assets já gravados em disco. As
   // listas servem só pra renderizar a estrutura final + permitir
@@ -72,6 +77,7 @@ export function CreateSkillWizard() {
   // default. Falhas silenciosas — a validação final acontece no
   // backend via createSkill.
   useEffect(() => {
+    if (isEditing) return;
     void listSkills()
       .then((skills) => setExistingNames(new Set(skills.map((s) => s.name))))
       .catch(() => setExistingNames(new Set()));
@@ -80,7 +86,41 @@ export function CreateSkillWizard() {
         if (v) setAuthor(v);
       })
       .catch(() => {});
-  }, []);
+  }, [isEditing]);
+
+  // Modo edição: hidrata SKILL.md + listas de refs/assets do disco
+  // pra que Step 2 abra com conteúdo existente, Step 3 mostre o que
+  // já está em disco. Fallback amigável em caso de skill ausente.
+  useEffect(() => {
+    if (!isEditing || !editingName) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const bundle = await getSkill({ name: editingName });
+        if (cancelled) return;
+        setSkillMdContent(bundle.skill_md);
+        setReferencesList(
+          bundle.references.map((filename) => ({ filename, size: 0 })),
+        );
+        setAssetsList(
+          bundle.assets.map((filename) => ({ filename, size: 0 })),
+        );
+      } catch (err) {
+        if (cancelled) return;
+        toast({
+          title: "Falha ao carregar skill pra edição",
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        });
+        navigate(`/skills/${encodeURIComponent(editingName)}`);
+      } finally {
+        if (!cancelled) setHydrating(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, editingName, navigate, toast]);
 
   function handleNameChange(raw: string) {
     const slug = raw.toLowerCase().replace(/\s+/g, "-");
@@ -163,34 +203,48 @@ export function CreateSkillWizard() {
     }
   }
 
+  const backTarget = isEditing
+    ? `/skills/${encodeURIComponent(name)}`
+    : "/";
+  const closeToDetail = () => {
+    void refreshSkills();
+    navigate(`/skills/${encodeURIComponent(name)}`);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-4">
         <Button asChild variant="ghost" size="icon" aria-label="Voltar">
-          <Link to="/">
+          <Link to={backTarget}>
             <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
           </Link>
         </Button>
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold">Nova skill</h2>
+          <h2 className="text-lg font-semibold">
+            {isEditing ? `Editar ${name}` : "Nova skill"}
+          </h2>
           <StepIndicator step={step} />
         </div>
       </header>
 
-      {step === 2 ? (
+      {hydrating ? (
+        <div className="flex flex-1 items-center justify-center text-xs text-[var(--text-3)]">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={1.5} />
+          Carregando...
+        </div>
+      ) : null}
+
+      {!hydrating && step === 2 ? (
         <CreateSkillStep2
           skillName={name}
           content={skillMdContent}
           onContentChange={setSkillMdContent}
-          onBack={() => setStep(1)}
+          onBack={isEditing ? closeToDetail : () => setStep(1)}
           onNext={() => setStep(3)}
-          onSaveAndClose={() => {
-            void refreshSkills();
-            navigate(`/skills/${encodeURIComponent(name)}`);
-          }}
+          onSaveAndClose={closeToDetail}
         />
       ) : null}
-      {step === 3 ? (
+      {!hydrating && step === 3 ? (
         <CreateSkillStep3
           skillName={name}
           references={referencesList}
@@ -199,9 +253,12 @@ export function CreateSkillWizard() {
           onAssetsChange={setAssetsList}
           onBack={() => setStep(2)}
           onFinish={() => {
-            toast({ title: `Skill ${name} pronta` });
-            void refreshSkills();
-            navigate(`/skills/${encodeURIComponent(name)}`);
+            toast({
+              title: isEditing
+                ? `Skill ${name} atualizada`
+                : `Skill ${name} pronta`,
+            });
+            closeToDetail();
           }}
         />
       ) : null}
