@@ -15,11 +15,9 @@ import {
   Loader2,
   Save,
 } from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MarkdownPreview } from "@/components/skills/MarkdownPreview";
 import { useToast } from "@/hooks/useToast";
 import { saveSkillFile } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
@@ -220,11 +218,7 @@ export function CreateSkillStep2({
         {showPreview ? (
           <section className="flex min-h-0 flex-col" aria-label="Preview">
             <ScrollArea className="flex-1">
-              <article className="p-6 text-sm leading-relaxed">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {content}
-                </ReactMarkdown>
-              </article>
+              <MarkdownPreview content={content} />
             </ScrollArea>
           </section>
         ) : null}
@@ -414,52 +408,3 @@ function formatTime(d: Date): string {
     second: "2-digit",
   });
 }
-
-const mdComponents: Components = {
-  h1: ({ children }) => (
-    <h1 className="mb-3 mt-4 text-2xl font-bold first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }) => (
-    <h2 className="mb-2 mt-4 text-xl font-semibold">{children}</h2>
-  ),
-  h3: ({ children }) => (
-    <h3 className="mb-2 mt-3 text-lg font-semibold">{children}</h3>
-  ),
-  p: ({ children }) => (
-    <p className="mt-2 whitespace-pre-wrap first:mt-0">{children}</p>
-  ),
-  ul: ({ children }) => <ul className="my-2 list-disc pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-2 list-decimal pl-5">{children}</ol>,
-  li: ({ children }) => <li className="mb-1">{children}</li>,
-  pre: ({ children }) => (
-    <pre className="my-3 overflow-x-auto rounded-lg bg-[var(--code-bg)] p-3 font-mono text-xs text-[var(--code-tx)]">
-      {children}
-    </pre>
-  ),
-  code: ({ className, children }) => (
-    <code
-      className={cn(
-        "rounded bg-[var(--code-bg)] px-1 py-0.5 font-mono text-xs text-[var(--code-tx)]",
-        className,
-      )}
-    >
-      {children}
-    </code>
-  ),
-  blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-[var(--border-str)] pl-3 text-[var(--text-2)]">
-      {children}
-    </blockquote>
-  ),
-  hr: () => <hr className="my-4 border-[var(--border-sub)]" />,
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-[var(--accent)] underline underline-offset-2"
-    >
-      {children}
-    </a>
-  ),
-};

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
@@ -15,8 +15,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+
+import { SkillFileViewer } from "@/components/skills/MarkdownPreview";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -682,95 +682,15 @@ function PreviewPane({
     );
   }
 
-  if (viewMode === "visual" && isMarkdown) {
-    return (
-      <ScrollArea className="flex-1">
-        <article className="mx-auto max-w-3xl px-6 py-6 text-sm leading-relaxed">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-            {textContent}
-          </ReactMarkdown>
-        </article>
-      </ScrollArea>
-    );
-  }
-
-  if (viewMode === "visual" && !isMarkdown) {
-    // HTML preview inline (text mode for HTML, sandboxed iframe seria
-    // ideal mas overkill aqui — só rendering via <pre> mostra a fonte).
-    // Fallback: mostra raw com numeração igual ao modo código.
-    return <CodeView content={textContent} />;
-  }
-
-  return <CodeView content={textContent} />;
-}
-
-function CodeView({ content }: { content: string }) {
-  const lines = useMemo(() => content.split("\n"), [content]);
+  // Texto: visual renderiza markdown só pra .md/.markdown. Demais
+  // tipos texto (HTML, JSON, etc) caem no CodeView via `forceCode`
+  // mesmo no modo visual.
   return (
-    <ScrollArea className="flex-1">
-      <pre className="flex font-mono text-xs leading-relaxed">
-        <code className="select-none border-r border-[var(--border-sub)] bg-[var(--bg-subtle)] px-3 py-4 text-right text-[var(--text-3)]">
-          {lines.map((_, idx) => (
-            <div key={idx}>{idx + 1}</div>
-          ))}
-        </code>
-        <code className="flex-1 px-4 py-4 text-[var(--code-text)]">
-          {lines.map((line, idx) => (
-            <div key={idx} className="whitespace-pre-wrap break-words">
-              {line || " "}
-            </div>
-          ))}
-        </code>
-      </pre>
-    </ScrollArea>
+    <SkillFileViewer
+      content={textContent}
+      mode={viewMode}
+      forceCode={!isMarkdown}
+    />
   );
 }
 
-const mdComponents: Components = {
-  h1: ({ children }) => (
-    <h1 className="mb-3 mt-4 text-2xl font-bold first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }) => (
-    <h2 className="mb-2 mt-4 text-xl font-semibold">{children}</h2>
-  ),
-  h3: ({ children }) => (
-    <h3 className="mb-2 mt-3 text-lg font-semibold">{children}</h3>
-  ),
-  p: ({ children }) => (
-    <p className="mt-2 whitespace-pre-wrap first:mt-0">{children}</p>
-  ),
-  ul: ({ children }) => <ul className="my-2 list-disc pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-2 list-decimal pl-5">{children}</ol>,
-  li: ({ children }) => <li className="mb-1">{children}</li>,
-  pre: ({ children }) => (
-    <pre className="my-3 overflow-x-auto rounded-lg bg-[var(--code-bg)] p-3 font-mono text-xs text-[var(--code-tx)]">
-      {children}
-    </pre>
-  ),
-  code: ({ className, children }) => (
-    <code
-      className={cn(
-        "rounded bg-[var(--code-bg)] px-1 py-0.5 font-mono text-xs text-[var(--code-tx)]",
-        className,
-      )}
-    >
-      {children}
-    </code>
-  ),
-  blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-[var(--border-str)] pl-3 text-[var(--text-2)]">
-      {children}
-    </blockquote>
-  ),
-  hr: () => <hr className="my-4 border-[var(--border-sub)]" />,
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-[var(--accent)] underline underline-offset-2"
-    >
-      {children}
-    </a>
-  ),
-};
