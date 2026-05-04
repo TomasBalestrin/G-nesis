@@ -155,6 +155,27 @@ export function saveSkillFile(args: {
   return invoke("save_skill_file", args);
 }
 
+/// Salva um asset binário (imagem, PDF, etc) no package. `bytes` é
+/// um array de bytes — caller passa `Array.from(uint8Array)` ou
+/// equivalente. Recusa salvar SKILL.md por aqui.
+export function saveSkillAsset(args: {
+  name: string;
+  path: string;
+  bytes: number[];
+}): Promise<void> {
+  return invoke("save_skill_asset", args);
+}
+
+/// Remove um arquivo dentro do package (`references/x.md`,
+/// `assets/y.png`). Idempotente — arquivo ausente não erra. Recusa
+/// remover SKILL.md (use deleteSkill pra apagar a skill toda).
+export function deleteSkillFile(args: {
+  name: string;
+  path: string;
+}): Promise<void> {
+  return invoke("delete_skill_file", args);
+}
+
 // ── projects (legacy: list/create/delete retired in H1) ────────────────────
 //
 // `list_projects` / `create_project` / `delete_project` foram aposentadas

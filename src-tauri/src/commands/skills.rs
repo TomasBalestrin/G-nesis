@@ -332,34 +332,102 @@ pub async fn save_skill_file(
     fs::write(&resolved, content)
         .map_err(|e| format!("falha ao salvar {}: {e}", resolved.display()))?;
 
-    // Re-stat e update do mirror SQLite (best-effort — file system
-    // permanece source-of-truth se a UPDATE falhar).
-    if let Some(package) = skill_storage::get_skill_package(&name)? {
-        let existing = queries::get_skill_by_name(&pool, &name).await.ok().flatten();
-        let row = SkillRow {
-            id: existing.as_ref().map(|r| r.id.clone()).unwrap_or_else(|| Uuid::new_v4().to_string()),
-            name: package.name.clone(),
-            version: existing.as_ref().map(|r| r.version.clone()).unwrap_or_else(|| "1.0".to_string()),
-            author: existing.and_then(|r| r.author),
-            has_assets: if package.has_assets { 1 } else { 0 },
-            has_references: if package.has_references { 1 } else { 0 },
-            files_count: package.files_count as i64,
-            created_at: String::new(),
-            updated_at: String::new(),
-        };
-        let result = queries::update_skill(&pool, &row).await;
-        if result.is_err() {
-            // UPDATE não tocou nenhuma row (não tinha mirror) → INSERT.
-            if let Err(err) = queries::insert_skill(&pool, &row).await {
-                eprintln!("[skills] sync SQLite mirror `{name}` falhou: {err}");
-            }
-        }
+    sync_skill_mirror(&pool, &name).await;
+    Ok(())
+}
+
+/// Salva um arquivo binário dentro do package — pra assets que não
+/// são texto (imagens, PDFs, etc). Mesma validação de path do
+/// `save_skill_file`, mas aceita `Vec<u8>` em vez de `String`. Tauri
+/// serializa de Uint8Array do JS pra Vec<u8> automaticamente.
+///
+/// Recusa salvar SKILL.md por aqui — esse é caminho de texto +
+/// validação via parser. Use `save_skill_file` pro markdown.
+#[tauri::command]
+pub async fn save_skill_asset(
+    name: String,
+    path: String,
+    bytes: Vec<u8>,
+    pool: State<'_, SqlitePool>,
+) -> Result<(), String> {
+    let resolved = resolve_skill_file(&name, &path)?;
+    if path == "SKILL.md" || resolved.ends_with("SKILL.md") {
+        return Err("use save_skill_file pra SKILL.md".into());
     }
 
+    if let Some(parent) = resolved.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("falha ao criar {}: {e}", parent.display()))?;
+    }
+    fs::write(&resolved, &bytes)
+        .map_err(|e| format!("falha ao salvar {}: {e}", resolved.display()))?;
+    sync_skill_mirror(&pool, &name).await;
+    Ok(())
+}
+
+/// Remove um arquivo dentro do package (`references/x.md`,
+/// `assets/y.png`). Idempotente — arquivo ausente não erra. Recusa
+/// remover SKILL.md (use `delete_skill` pra apagar a skill toda) e
+/// recusa remover diretórios. Atualiza o mirror SQLite ao final.
+#[tauri::command]
+pub async fn delete_skill_file(
+    name: String,
+    path: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<(), String> {
+    let resolved = resolve_skill_file(&name, &path)?;
+    if path == "SKILL.md" || resolved.ends_with("SKILL.md") {
+        return Err("não delete SKILL.md por aqui — use delete_skill".into());
+    }
+    if !resolved.exists() {
+        return Ok(());
+    }
+    if resolved.is_dir() {
+        return Err(format!(
+            "{} é diretório; só removo arquivos por aqui",
+            resolved.display()
+        ));
+    }
+    fs::remove_file(&resolved)
+        .map_err(|e| format!("falha ao remover {}: {e}", resolved.display()))?;
+    sync_skill_mirror(&pool, &name).await;
     Ok(())
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/// Re-stat o package + sincroniza o mirror SQLite (has_assets,
+/// has_references, files_count). Best-effort: falha aqui não
+/// derruba a operação que chamou — o FS continua source-of-truth.
+async fn sync_skill_mirror(pool: &SqlitePool, name: &str) {
+    let package = match skill_storage::get_skill_package(name) {
+        Ok(Some(p)) => p,
+        _ => return,
+    };
+    let existing = queries::get_skill_by_name(pool, name).await.ok().flatten();
+    let row = SkillRow {
+        id: existing
+            .as_ref()
+            .map(|r| r.id.clone())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        name: package.name.clone(),
+        version: existing
+            .as_ref()
+            .map(|r| r.version.clone())
+            .unwrap_or_else(|| "1.0".to_string()),
+        author: existing.and_then(|r| r.author),
+        has_assets: if package.has_assets { 1 } else { 0 },
+        has_references: if package.has_references { 1 } else { 0 },
+        files_count: package.files_count as i64,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+    if queries::update_skill(pool, &row).await.is_err() {
+        if let Err(err) = queries::insert_skill(pool, &row).await {
+            eprintln!("[skills] sync SQLite mirror `{name}` falhou: {err}");
+        }
+    }
+}
 
 /// Resolve `<skill_dir>/<name>/<rel_path>` validando que `rel_path`
 /// não tenta escapar do package. Reject `..`, paths absolutos,

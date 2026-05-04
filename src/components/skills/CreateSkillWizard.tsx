@@ -15,6 +15,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useSkillsStore } from "@/stores/skillsStore";
 import { CreateSkillStep2 } from "@/components/skills/CreateSkillStep2";
+import { CreateSkillStep3 } from "@/components/skills/CreateSkillStep3";
+import type { SkillSubFile } from "@/components/skills/CreateSkillStep3";
 import { buildSkillMd, renderStep2Template } from "@/components/skills/wizardHelpers";
 
 type Step = 1 | 2 | 3;
@@ -59,6 +61,12 @@ export function CreateSkillWizard() {
   // Etapa 2 state — conteúdo completo do SKILL.md (frontmatter + body).
   // Owned aqui pra sobreviver às transições back/forward do wizard.
   const [skillMdContent, setSkillMdContent] = useState("");
+
+  // Etapa 3 state — references e assets já gravados em disco. As
+  // listas servem só pra renderizar a estrutura final + permitir
+  // remoção; o disco continua source-of-truth.
+  const [referencesList, setReferencesList] = useState<SkillSubFile[]>([]);
+  const [assetsList, setAssetsList] = useState<SkillSubFile[]>([]);
 
   // Hidrata o set de nomes existentes pra checagem real-time + autor
   // default. Falhas silenciosas — a validação final acontece no
@@ -176,43 +184,48 @@ export function CreateSkillWizard() {
           onContentChange={setSkillMdContent}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
-          onSaveAndClose={() =>
-            navigate(`/skills/${encodeURIComponent(name)}`)
-          }
+          onSaveAndClose={() => {
+            void refreshSkills();
+            navigate(`/skills/${encodeURIComponent(name)}`);
+          }}
         />
-      ) : (
+      ) : null}
+      {step === 3 ? (
+        <CreateSkillStep3
+          skillName={name}
+          references={referencesList}
+          assets={assetsList}
+          onReferencesChange={setReferencesList}
+          onAssetsChange={setAssetsList}
+          onBack={() => setStep(2)}
+          onFinish={() => {
+            toast({ title: `Skill ${name} pronta` });
+            void refreshSkills();
+            navigate(`/skills/${encodeURIComponent(name)}`);
+          }}
+        />
+      ) : null}
+      {step === 1 ? (
         <div className="flex-1 overflow-auto">
           <div className="mx-auto max-w-xl p-6">
-            {step === 1 ? (
-              <Step1
-                name={name}
-                nameStatus={nameStatus}
-                description={description}
-                version={version}
-                author={author}
-                submitting={submitting}
-                canAdvance={canAdvance}
-                onNameChange={handleNameChange}
-                onDescriptionChange={setDescription}
-                onVersionChange={setVersion}
-                onAuthorChange={setAuthor}
-                onCancel={() => navigate("/")}
-                onNext={handleNext}
-              />
-            ) : null}
-            {step === 3 ? (
-              <StepPlaceholder
-                step={3}
-                skillName={name}
-                onBack={() => setStep(2)}
-                onCancel={() =>
-                  navigate(`/skills/${encodeURIComponent(name)}`)
-                }
-              />
-            ) : null}
+            <Step1
+              name={name}
+              nameStatus={nameStatus}
+              description={description}
+              version={version}
+              author={author}
+              submitting={submitting}
+              canAdvance={canAdvance}
+              onNameChange={handleNameChange}
+              onDescriptionChange={setDescription}
+              onVersionChange={setVersion}
+              onAuthorChange={setAuthor}
+              onCancel={() => navigate("/")}
+              onNext={handleNext}
+            />
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -372,46 +385,6 @@ function NameStatusHint({
       <CheckCircle2 className="h-3 w-3" strokeWidth={1.5} />
       Disponível
     </p>
-  );
-}
-
-interface StepPlaceholderProps {
-  step: 3;
-  skillName: string;
-  onBack: () => void;
-  onCancel: () => void;
-}
-
-function StepPlaceholder({
-  step,
-  skillName,
-  onBack,
-  onCancel,
-}: StepPlaceholderProps) {
-  return (
-    <div className="space-y-6">
-      <div className="rounded-lg border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-6 py-8 text-sm">
-        <p className="font-medium">Etapa {step} — em construção</p>
-        <p className="mt-2 text-[var(--text-2)]">
-          A skill <span className="font-mono">{skillName}</span> já foi criada
-          em disco. As próximas etapas (instruções e arquivos auxiliares)
-          chegam em C{step}.
-        </p>
-        <p className="mt-2 text-[var(--text-3)]">
-          Por ora, abra a skill na lista pra visualizar o package.
-        </p>
-      </div>
-
-      <div className="flex items-center justify-between gap-2 pt-2">
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
-          Voltar
-        </Button>
-        <Button variant="outline" onClick={onCancel}>
-          Concluir
-        </Button>
-      </div>
-    </div>
   );
 }
 
