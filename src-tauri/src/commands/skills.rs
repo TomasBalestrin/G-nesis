@@ -49,12 +49,26 @@ pub async fn list_skills() -> Result<Vec<skill_parser::SkillMeta>, String> {
 }
 
 /// Delete the on-disk artifact backing a skill — pasta `<name>/`
-/// inteira (incluindo `scripts/`, `references/`, `assets/`). Skills
-/// não têm linha em SQLite via FK (executions referenciam `skill_name`
-/// por string), então o cleanup é puramente FS + cleanup do mirror.
+/// inteira (incluindo `scripts/`, `references/`, `assets/`).
 ///
-/// Bloqueio: execuções em andamento da skill abortam o delete — o
-/// executor ainda pode precisar do arquivo.
+/// Ordem do cleanup:
+///   1. Bloqueio: execuções em andamento abortam o delete (caller
+///      precisa parar antes — o executor pode ainda estar lendo).
+///   2. Best-effort `fs::remove_dir_all` na pasta — falha de I/O é
+///      logada mas NÃO interrompe o passo 3, pra que mirror SQLite
+///      não fique órfão quando o disco está ruim.
+///   3. Hard `DELETE FROM skills WHERE name = ?` no mirror (migration
+///      009). Roda sempre, inclusive quando a pasta não existia
+///      (limpa mirrors órfãos).
+///
+/// Retorno:
+///   - `Ok(())` quando alguma das duas operações tocou estado real
+///     (apagou pasta OU apagou row OU ambos). Nome fica livre pra
+///     reuso imediato — `create_skill(name)` próximo passa.
+///   - `Err("não encontrada")` quando NEM pasta NEM row existiam.
+///   - `Err("falha ao deletar pasta...")` quando o FS falhou (pasta
+///     pode estar parcialmente apagada). SQLite já foi limpo nesse
+///     caso, então retry vai cair na branch "não encontrada".
 #[tauri::command]
 pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
     let folder = skill_storage::skill_dir(&name)?;
@@ -67,15 +81,31 @@ pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(
         ));
     }
 
-    if !folder.is_dir() || !folder.join("SKILL.md").is_file() {
-        return Err(format!("skill `{name}` não encontrada"));
+    let folder_existed = folder.is_dir();
+    let mut fs_err: Option<String> = None;
+    if folder_existed {
+        if let Err(e) = fs::remove_dir_all(&folder) {
+            let msg = format!("falha ao deletar pasta {}: {e}", folder.display());
+            eprintln!("[skills] delete `{name}`: {msg}");
+            fs_err = Some(msg);
+        }
     }
-    fs::remove_dir_all(&folder)
-        .map_err(|e| format!("falha ao deletar skill `{name}`: {e}"))?;
 
-    // Best-effort cleanup do mirror SQLite (migration 009).
+    // Mirror SQLite cleanup roda incondicional — best-effort logado
+    // se falhar, não derruba o delete inteiro.
+    let mirror_existed = matches!(
+        queries::get_skill_by_name(&pool, &name).await,
+        Ok(Some(_))
+    );
     if let Err(err) = queries::delete_skill_row(&pool, &name).await {
         eprintln!("[skills] cleanup mirror SQLite `{name}` falhou: {err}");
+    }
+
+    if let Some(msg) = fs_err {
+        return Err(msg);
+    }
+    if !folder_existed && !mirror_existed {
+        return Err(format!("skill `{name}` não encontrada"));
     }
     Ok(())
 }
