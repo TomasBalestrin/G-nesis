@@ -274,65 +274,45 @@ pub async fn read_skill_asset_data_url(
     Ok(format!("data:{mime};base64,{encoded}"))
 }
 
-/// Exporta uma skill v2 como `.skill` (ZIP) gravado em `dest_path`.
-/// Estrutura: o arquivo contém uma pasta raiz `<name>/` com
-/// `SKILL.md` + `assets/` + `references/` (mesmo layout que o
-/// importer espera). Idempotente — sobrescreve `dest_path` se
-/// existir. Usado pelo botão "Exportar" no SkillDetailView.
+/// Empacota a skill `<name>` como `.skill` (ZIP) em diretório temporário
+/// e retorna o path como string. Frontend usa `dialog.save()` pra
+/// pedir destino ao usuário, depois chama `move_file(temp, dest)` pra
+/// finalizar. Esse fluxo de duas etapas mantém o command de export
+/// sem precisar de permissão de escrita arbitrária.
 #[tauri::command]
-pub async fn export_skill(name: String, dest_path: String) -> Result<(), String> {
-    use std::io::Write;
-    use zip::write::FileOptions;
-    use zip::CompressionMethod;
+pub async fn export_skill(name: String) -> Result<String, String> {
+    let path = crate::skills::export::export_skill_package(&name)?;
+    Ok(path.to_string_lossy().into_owned())
+}
 
-    let dir = skill_storage::skill_dir(&name)?;
-    if !dir.is_dir() {
-        return Err(format!("skill `{name}` não encontrada"));
+/// Move um arquivo de `src` pra `dest` (ou copia + apaga, quando o
+/// rename atravessa filesystems). Idempotente em `dest` — sobrescreve
+/// se existir. Usado pelo flow de export do SkillDetailView pra
+/// finalizar o ZIP que `export_skill` deixou em `temp_dir`.
+///
+/// Não é um command genérico de FS — caller precisa ter os paths
+/// específicos em mãos. Não faz validação de "src deve ser temp" pra
+/// evitar acoplamento; UI é quem orquestra os dois passos.
+#[tauri::command]
+pub async fn move_file(src: String, dest: String) -> Result<(), String> {
+    let src_path = std::path::PathBuf::from(&src);
+    let dest_path = std::path::PathBuf::from(&dest);
+    if !src_path.is_file() {
+        return Err(format!("origem não é arquivo: {src}"));
     }
-
-    let dest = std::path::Path::new(&dest_path);
-    let file = fs::File::create(dest)
-        .map_err(|e| format!("falha ao criar {dest_path}: {e}"))?;
-    let mut zip = zip::ZipWriter::new(file);
-    let opts = FileOptions::default().compression_method(CompressionMethod::Deflated);
-
-    // Walk recursivo gravando relativo a `<name>/<...>` no ZIP. Usamos
-    // walk próprio (não walkdir) pra evitar dep extra; profundidade
-    // máxima do package é fixa (raiz + 1 subpasta), então simples.
-    for entry in fs::read_dir(&dir)
-        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?
-    {
-        let entry = entry.map_err(|e| format!("read_dir entry: {e}"))?;
-        let path = entry.path();
-        let rel_top = entry.file_name().to_string_lossy().into_owned();
-        if path.is_file() {
-            zip.start_file(format!("{name}/{rel_top}"), opts)
-                .map_err(|e| format!("zip start_file: {e}"))?;
-            let data = fs::read(&path)
-                .map_err(|e| format!("falha ao ler {}: {e}", path.display()))?;
-            zip.write_all(&data)
-                .map_err(|e| format!("zip write: {e}"))?;
-        } else if path.is_dir() {
-            for child in fs::read_dir(&path)
-                .map_err(|e| format!("cannot read {}: {e}", path.display()))?
-            {
-                let child = child.map_err(|e| format!("read_dir child: {e}"))?;
-                let cpath = child.path();
-                if !cpath.is_file() {
-                    continue;
-                }
-                let cname = child.file_name().to_string_lossy().into_owned();
-                zip.start_file(format!("{name}/{rel_top}/{cname}"), opts)
-                    .map_err(|e| format!("zip start_file: {e}"))?;
-                let data = fs::read(&cpath)
-                    .map_err(|e| format!("falha ao ler {}: {e}", cpath.display()))?;
-                zip.write_all(&data)
-                    .map_err(|e| format!("zip write: {e}"))?;
-            }
+    // Tenta rename primeiro (rápido, atômico em mesmo FS). Falha
+    // típica: cross-device link → fallback pra copy + remove.
+    match fs::rename(&src_path, &dest_path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::copy(&src_path, &dest_path)
+                .map_err(|e| format!("falha ao copiar pra {dest}: {e}"))?;
+            // Best-effort: temp removido após copy bem-sucedido. Falha
+            // aqui só polui /tmp; OS limpa eventualmente.
+            let _ = fs::remove_file(&src_path);
+            Ok(())
         }
     }
-    zip.finish().map_err(|e| format!("zip finish: {e}"))?;
-    Ok(())
 }
 
 fn guess_mime_from_path(path: &str) -> &'static str {

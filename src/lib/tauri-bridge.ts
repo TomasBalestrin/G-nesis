@@ -221,13 +221,20 @@ export function readSkillAssetDataUrl(args: {
   return invoke("read_skill_asset_data_url", args);
 }
 
-/// Empacota a skill como `.skill` (ZIP) em `destPath` (escolhido
-/// via dialog.save no frontend). Sobrescreve se existir.
-export function exportSkill(args: {
-  name: string;
-  destPath: string;
-}): Promise<void> {
+/// Empacota a skill como `.skill` (ZIP) num diretório temporário e
+/// retorna o path. Frontend abre `dialog.save()` pra obter destino,
+/// depois chama `moveFile(tempPath, destPath)` pra finalizar.
+export function exportSkill(args: { name: string }): Promise<string> {
   return invoke("export_skill", args);
+}
+
+/// Move/renomeia arquivo. Usado pelo flow de export pra finalizar o
+/// ZIP que `exportSkill` deixou em /tmp. Sobrescreve `dest` se existir.
+export function moveFile(args: {
+  src: string;
+  dest: string;
+}): Promise<void> {
+  return invoke("move_file", args);
 }
 
 // ── projects (legacy: list/create/delete retired in H1) ────────────────────

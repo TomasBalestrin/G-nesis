@@ -40,6 +40,7 @@ import {
   deleteSkill,
   exportSkill,
   importSkill,
+  moveFile,
 } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversationsStore";
@@ -437,13 +438,14 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
 
   async function handleExport() {
     try {
+      const tempPath = await exportSkill({ name: skill.name });
       const dest = await saveDialog({
         title: "Exportar skill",
         defaultPath: `${skill.name}.skill`,
         filters: [{ name: "Skill package", extensions: ["skill"] }],
       });
       if (!dest) return;
-      await exportSkill({ name: skill.name, destPath: dest });
+      await moveFile({ src: tempPath, dest });
       toast({ title: `Skill exportada`, description: dest });
     } catch (err) {
       toast({

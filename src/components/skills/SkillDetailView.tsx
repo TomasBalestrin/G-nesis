@@ -33,6 +33,7 @@ import {
   deleteSkill,
   exportSkill,
   getSkillFile,
+  moveFile,
   readSkillAssetDataUrl,
 } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
@@ -179,13 +180,16 @@ export function SkillDetailView() {
   async function handleExport() {
     setBusy(true);
     try {
+      // Two-step flow: backend cria ZIP em /tmp; UI pergunta destino
+      // ao usuário; backend move pro lugar final.
+      const tempPath = await exportSkill({ name });
       const dest = await save({
         title: "Exportar skill",
         defaultPath: `${name}.skill`,
         filters: [{ name: "Skill package", extensions: ["skill"] }],
       });
       if (!dest) return;
-      await exportSkill({ name, destPath: dest });
+      await moveFile({ src: tempPath, dest });
       toast({ title: `Skill exportada`, description: dest });
     } catch (err) {
       toast({
