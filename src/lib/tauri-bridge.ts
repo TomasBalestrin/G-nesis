@@ -113,6 +113,25 @@ export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
 }
 
+/// Skill package v2 (B1+B2). Mirror do `crate::skills::storage::SkillPackage`.
+/// `path` é absoluto — serde serializa o PathBuf do Rust como string.
+export interface SkillPackage {
+  name: string;
+  path: string;
+  has_assets: boolean;
+  has_references: boolean;
+  files_count: number;
+}
+
+/// Descompacta um arquivo .skill (ZIP) em ~/.genesis/skills/<name>/
+/// e registra no mirror SQLite. Erros incluem: "arquivo .skill muito
+/// grande", "ZIP inválido", "ZIP precisa ter exatamente 1 pasta
+/// raiz", "ZIP não tem SKILL.md em <root>/", "Skill `<name>` já
+/// existe". UI mostra direto no toast.
+export function importSkill(args: { filePath: string }): Promise<SkillPackage> {
+  return invoke("import_skill", args);
+}
+
 // ── projects (legacy: list/create/delete retired in H1) ────────────────────
 //
 // `list_projects` / `create_project` / `delete_project` foram aposentadas
