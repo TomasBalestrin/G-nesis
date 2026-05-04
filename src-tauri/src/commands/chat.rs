@@ -683,34 +683,14 @@ fn skills_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(config::load_config()?.skills_dir))
 }
 
-fn skill_md_path(name: &str) -> Result<PathBuf, String> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        return Err(format!("nome de skill inválido: `{name}`"));
-    }
-    let dir = skills_dir()?;
-    let file_name = if name.ends_with(".md") {
-        name.to_string()
-    } else {
-        format!("{name}.md")
-    };
-    Ok(dir.join(file_name))
-}
-
-/// Resolve o caminho do markdown principal de uma skill, preferindo
-/// v2 (`<skills_dir>/<name>/SKILL.md`) sobre v1 (`<skills_dir>/<name>.md`).
-/// Retorna o v1 path quando NEM v2 NEM v1 existem — assim
-/// `fs::read_to_string` falha de forma consistente e o caller cai
-/// em `render_not_found`. Não re-valida o name (delegado a
-/// `skill_md_path`).
+/// Resolve o caminho do `SKILL.md` v2 de uma skill. `skill_dir()`
+/// valida `name` contra `..` / separators / vazio. Retorna o path
+/// mesmo que o arquivo não exista — caller (`render_skill_md`,
+/// `render_confirmation`) faz `fs::read_to_string` e cai em
+/// `render_not_found` na falha. v1 (.md solto) foi removido em F2.
 fn resolve_skill_md(name: &str) -> Result<PathBuf, String> {
-    let v2 = match crate::skills::storage::skill_dir(name) {
-        Ok(d) => d.join("SKILL.md"),
-        Err(_) => return skill_md_path(name),
-    };
-    if v2.is_file() {
-        return Ok(v2);
-    }
-    skill_md_path(name)
+    let dir = crate::skills::storage::skill_dir(name)?;
+    Ok(dir.join("SKILL.md"))
 }
 
 /// Filenames (sem path) das references de uma skill v2. Vazio quando
@@ -913,9 +893,8 @@ fn render_not_found(name: &str, catalog: &[SkillMeta]) -> String {
 /// user still gets a reply).
 fn try_slash_reply(skill_name: &str) -> String {
     let catalog = load_skill_catalog();
-    // resolve_skill_md cobre v2 (pasta com SKILL.md) E v1 (.md solto).
-    // Sem isso, slash de skill v2 caía em fs::read_to_string Err →
-    // render_not_found mesmo com a skill cadastrada.
+    // resolve_skill_md aponta sempre pro SKILL.md v2; arquivo ausente
+    // cai em fs::read_to_string Err → render_not_found.
     let path = match resolve_skill_md(skill_name) {
         Ok(p) => p,
         Err(err) => return format!("{err}"),
@@ -1228,7 +1207,7 @@ async fn dispatch_read_skill(raw: &str) -> String {
         Ok(a) => a,
         Err(e) => return format!("read_skill: argumentos inválidos ({e})"),
     };
-    match crate::commands::skills::read_skill(args.skill_name.clone()).await {
+    match crate::skills::storage::read_skill_md(&args.skill_name) {
         Ok(content) => content,
         Err(e) => format!("Falha ao ler skill `{}`: {e}", args.skill_name),
     }
@@ -1249,9 +1228,21 @@ async fn dispatch_save_skill(raw: &str) -> String {
         Err(e) => return format!("save_skill: argumentos inválidos ({e})"),
     };
 
-    if let Err(e) =
-        crate::commands::skills::save_skill(args.skill_name.clone(), args.skill_content).await
-    {
+    // v2-only: cria pasta + grava SKILL.md (parser valida via
+    // save_skill_folder helper). Conteúdo de skills v1 (frontmatter
+    // sem `version:` 2.x) ainda parseia, então o agente continua
+    // funcionando — só o layout em disco mudou.
+    if let Err(e) = crate::skills::storage::ensure_skill_dirs(&args.skill_name) {
+        return format!("Falha ao criar pasta da skill `{}`: {e}", args.skill_name);
+    }
+    if let Err(e) = crate::orchestrator::skill_parser::parse_skill(&args.skill_content) {
+        return format!("Skill `{}` inválida: {e}", args.skill_name);
+    }
+    let skill_md = match crate::skills::storage::skill_dir(&args.skill_name) {
+        Ok(d) => d.join("SKILL.md"),
+        Err(e) => return format!("nome inválido: {e}"),
+    };
+    if let Err(e) = fs::write(&skill_md, &args.skill_content) {
         return format!("Falha ao salvar skill `{}`: {e}", args.skill_name);
     }
 

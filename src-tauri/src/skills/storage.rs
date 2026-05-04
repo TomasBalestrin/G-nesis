@@ -170,9 +170,8 @@ pub fn delete_skill_package(name: &str) -> Result<(), String> {
 // ── internals ───────────────────────────────────────────────────────────────
 
 /// `name` rules: não-vazio, sem path separators (`/`, `\`), sem
-/// `..` (path traversal). Defensive duplicate de `commands/skills.rs::
-/// skill_path` mas independente — este módulo não importa de
-/// commands/.
+/// `..` (path traversal). Boundary único pra skills v2 — qualquer
+/// command que toca arquivos da skill passa por aqui.
 fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("nome de skill vazio".into());

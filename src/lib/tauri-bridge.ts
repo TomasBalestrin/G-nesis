@@ -17,7 +17,7 @@ import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 import type { Execution, ExecutionDetail } from "@/types/project";
-import type { ParsedSkill, SkillMeta } from "@/types/skill";
+import type { SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
 export interface SafeInvokeOptions {
@@ -92,23 +92,8 @@ export function listSkills(): Promise<SkillMeta[]> {
   return invoke("list_skills");
 }
 
-export function readSkill(args: { name: string }): Promise<string> {
-  return invoke("read_skill", args);
-}
-
-export function saveSkill(args: {
-  name: string;
-  content: string;
-}): Promise<void> {
-  return invoke("save_skill", args);
-}
-
-export function parseSkill(args: { name: string }): Promise<ParsedSkill> {
-  return invoke("parse_skill", args);
-}
-
-/** Removes the `.md` from disk. Backend refuses if any execution is still
- * in flight for the same skill. */
+/** Removes the package folder from disk. Backend refuses if any
+ * execution is still in flight for the same skill. */
 export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
 }
@@ -757,7 +742,7 @@ export type {
   Project,
 } from "@/types/project";
 export type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
-export type { ParsedSkill, SkillMeta } from "@/types/skill";
+export type { Skill, SkillDetail, SkillMeta } from "@/types/skill";
 export type {
   ParsedWorkflow,
   WorkflowMeta,

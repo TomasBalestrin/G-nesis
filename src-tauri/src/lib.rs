@@ -68,15 +68,11 @@ pub fn run() {
             // config
             config_cmd::get_config,
             config_cmd::save_config,
-            // skills
+            // skills (v2 only — pasta com SKILL.md + assets/ +
+            // references/). v1 (`<name>.md` solto) foi removido em F2;
+            // existing skills migram no startup via skills::migration.
             skills_cmd::list_skills,
-            skills_cmd::read_skill,
-            skills_cmd::save_skill,
             skills_cmd::delete_skill,
-            skills_cmd::parse_skill,
-            // v2 packages (A3): nova estrutura pasta-por-skill com
-            // SKILL.md + assets/ + references/. Coexiste com os
-            // legacy acima (legacy lê .md solto + folder; v2 só folder).
             skills_cmd::list_skill_packages,
             skills_cmd::get_skill,
             skills_cmd::get_skill_file,

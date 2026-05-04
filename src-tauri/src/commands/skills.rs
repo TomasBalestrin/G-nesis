@@ -1,117 +1,63 @@
 //! Tauri IPC handlers for skill management.
 //!
-//! Skills v2 live under `~/.genesis/skills/<name>/` (pasta com SKILL.md
-//! + assets/ + references/). Coexiste com legacy `<name>.md` solto até
-//! a migration do bloco F. `list_skills` retorna metadata via parsed
-//! frontmatter (a UI legacy depende disso); skills v2 também populam o
-//! mirror SQLite (tabela `skills` da migration 009) pra list/sort
-//! rápido sem parsear N arquivos.
+//! Skills v2 only — `~/.genesis/skills/<name>/SKILL.md` + `assets/` +
+//! `references/`. O legado v1 (`<name>.md` solto) foi removido em F2;
+//! migração existente vive em `skills::migration` e roda no startup.
+//! `list_skills` retorna metadata parseada do frontmatter pra UI;
+//! mirror SQLite (migration 009) é populado pelas operações de write
+//! pra list/sort rápido.
 //!
-//! Path handling defensivo: `name` arg não pode conter separators ou
-//! `..` — tanto o helper local skill_path quanto o crate::skills::
-//! storage::skill_dir validam.
+//! Path handling defensivo: `name` arg validado contra `..` /
+//! separators / vazio via `crate::skills::storage::skill_dir`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::config;
 use crate::db::models::SkillRow;
 use crate::db::queries;
-use crate::orchestrator::skill_loader_v2;
-use crate::orchestrator::skill_parser::{self, ParsedSkill, SkillMeta};
+use crate::orchestrator::skill_parser;
 use crate::skills::storage as skill_storage;
 use crate::skills::SkillPackage;
 
-fn skills_dir() -> Result<PathBuf, String> {
-    let cfg = config::load_config()?;
-    Ok(PathBuf::from(cfg.skills_dir))
-}
-
-fn skill_path(dir: &Path, name: &str) -> Result<PathBuf, String> {
-    if name.is_empty() {
-        return Err("nome da skill vazio".into());
-    }
-    if name.contains('/') || name.contains('\\') || name.contains("..") {
-        return Err(format!("nome de skill inválido: `{name}`"));
-    }
-    let file_name = if name.ends_with(".md") {
-        name.to_string()
-    } else {
-        format!("{name}.md")
-    };
-    Ok(dir.join(file_name))
-}
-
 #[tauri::command]
-pub async fn list_skills() -> Result<Vec<SkillMeta>, String> {
-    let dir = skills_dir()?;
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    // skill_loader_v2 detecta v1 (.md solto) + v2 (pasta com SKILL.md)
-    // num só pass, com pasta vencendo arquivo solto quando ambos
-    // existem. Cada entrada vira um parse independente — broken
-    // skills logam stderr e somem da lista, igual o comportamento
-    // anterior.
-    let mut metas: Vec<SkillMeta> = Vec::new();
-    for entry in skill_loader_v2::list_skill_entries(&dir) {
-        let path = entry.source.entry_path();
-        match fs::read_to_string(path) {
+pub async fn list_skills() -> Result<Vec<skill_parser::SkillMeta>, String> {
+    let packages = skill_storage::list_skill_packages()?;
+    let mut metas: Vec<skill_parser::SkillMeta> = Vec::with_capacity(packages.len());
+    for pkg in packages {
+        let skill_md = pkg.path.join("SKILL.md");
+        match fs::read_to_string(&skill_md) {
             Ok(content) => match skill_parser::parse_skill(&content) {
                 Ok(skill) => metas.push(skill.meta),
-                Err(err) => eprintln!("[skills] pulando {} ao listar: {err}", path.display()),
+                Err(err) => eprintln!(
+                    "[skills] pulando {} ao listar: {err}",
+                    skill_md.display()
+                ),
             },
-            Err(err) => eprintln!("[skills] falha ao ler {}: {err}", path.display()),
+            Err(err) => eprintln!(
+                "[skills] falha ao ler {}: {err}",
+                skill_md.display()
+            ),
         }
     }
-
     metas.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(metas)
 }
 
-#[tauri::command]
-pub async fn read_skill(name: String) -> Result<String, String> {
-    let dir = skills_dir()?;
-    let path = skill_path(&dir, &name)?;
-    fs::read_to_string(&path).map_err(|e| format!("falha ao ler skill `{name}`: {e}"))
-}
-
-#[tauri::command]
-pub async fn save_skill(name: String, content: String) -> Result<(), String> {
-    let dir = skills_dir()?;
-    let path = skill_path(&dir, &name)?;
-
-    // Reject invalid skills at the boundary (PRD §F3): parser fails fast if
-    // frontmatter or any step is malformed.
-    skill_parser::parse_skill(&content).map_err(|e| format!("skill inválida: {e}"))?;
-
-    fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;
-    fs::write(&path, content).map_err(|e| format!("falha ao salvar skill `{name}`: {e}"))
-}
-
-/// Delete the on-disk artifact backing a skill — `.md` para v1, pasta
-/// `<name>/` inteira (incluindo `scripts/`, `references/`, `assets/`)
-/// para v2. Skills não têm linha em SQLite (executions referenciam
-/// `skill_name` por string, sem FK), então o cleanup é puramente FS.
+/// Delete the on-disk artifact backing a skill — pasta `<name>/`
+/// inteira (incluindo `scripts/`, `references/`, `assets/`). Skills
+/// não têm linha em SQLite via FK (executions referenciam `skill_name`
+/// por string), então o cleanup é puramente FS + cleanup do mirror.
 ///
-/// Best-effort: se v1 e v2 coexistirem (dual layout, raro), tenta os
-/// dois e loga falhas individuais sem bloquear o outro. Erro só
-/// quando NENHUM dos dois layouts foi tocado com sucesso (nada
-/// existia OU ambas remoções falharam).
-///
-/// Bloqueio mantido: execuções em andamento da skill abortam o
-/// delete — o executor ainda pode precisar do arquivo.
+/// Bloqueio: execuções em andamento da skill abortam o delete — o
+/// executor ainda pode precisar do arquivo.
 #[tauri::command]
 pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(), String> {
-    let dir = skills_dir()?;
-    let v1_path = skill_path(&dir, &name)?;
-    let v2_folder = dir.join(&name);
+    let folder = skill_storage::skill_dir(&name)?;
 
     let active = queries::count_active_by_skill_name(&pool, &name).await?;
     if active > 0 {
@@ -121,58 +67,17 @@ pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(
         ));
     }
 
-    let mut existed = false;
-    let mut removed_any = false;
-    let mut errors: Vec<String> = Vec::new();
-
-    if v1_path.exists() {
-        existed = true;
-        match fs::remove_file(&v1_path) {
-            Ok(()) => removed_any = true,
-            Err(e) => {
-                let msg = format!("v1 file {}: {e}", v1_path.display());
-                eprintln!("[skills] delete `{name}` falhou em {msg}");
-                errors.push(msg);
-            }
-        }
-    }
-    if v2_folder.is_dir() && v2_folder.join("SKILL.md").is_file() {
-        existed = true;
-        match fs::remove_dir_all(&v2_folder) {
-            Ok(()) => removed_any = true,
-            Err(e) => {
-                let msg = format!("v2 folder {}: {e}", v2_folder.display());
-                eprintln!("[skills] delete `{name}` falhou em {msg}");
-                errors.push(msg);
-            }
-        }
-    }
-
-    if !existed {
+    if !folder.is_dir() || !folder.join("SKILL.md").is_file() {
         return Err(format!("skill `{name}` não encontrada"));
     }
-    if !removed_any {
-        return Err(format!(
-            "falha ao deletar skill `{name}` ({})",
-            errors.join("; ")
-        ));
-    }
+    fs::remove_dir_all(&folder)
+        .map_err(|e| format!("falha ao deletar skill `{name}`: {e}"))?;
 
-    // Best-effort cleanup do mirror SQLite (migration 009). Falha
-    // aqui não derruba o delete porque o FS já saiu — log e segue.
+    // Best-effort cleanup do mirror SQLite (migration 009).
     if let Err(err) = queries::delete_skill_row(&pool, &name).await {
         eprintln!("[skills] cleanup mirror SQLite `{name}` falhou: {err}");
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn parse_skill(name: String) -> Result<ParsedSkill, String> {
-    let dir = skills_dir()?;
-    let path = skill_path(&dir, &name)?;
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("falha ao ler skill `{name}`: {e}"))?;
-    skill_parser::parse_skill(&content)
 }
 
 /// Bundle retornado por `get_skill` — tudo que a UI precisa pra
@@ -347,16 +252,8 @@ pub async fn create_skill(
     name: String,
     pool: State<'_, SqlitePool>,
 ) -> Result<SkillPackage, String> {
-    let dir = skills_dir()?;
-
-    // Reject if v1 OR v2 já existem — não silenciar conflito.
-    let v1_path = skill_path(&dir, &name)?;
+    // skill_dir() valida o name contra `..` / separators / vazio.
     let v2_dir = skill_storage::skill_dir(&name)?;
-    if v1_path.exists() {
-        return Err(format!(
-            "skill `{name}` já existe como `{name}.md` (v1 legacy). Migre primeiro."
-        ));
-    }
     if v2_dir.join("SKILL.md").is_file() {
         return Err(format!("skill `{name}` já existe"));
     }
@@ -421,7 +318,7 @@ pub async fn save_skill_file(
     let resolved = resolve_skill_file(&name, &path)?;
 
     // Se for o SKILL.md, valida o conteúdo via parser antes de
-    // sobrescrever — mesma garantia que save_skill (legacy).
+    // sobrescrever — frontmatter quebrado é rejeitado no boundary.
     if path == "SKILL.md" || resolved.ends_with("SKILL.md") {
         skill_parser::parse_skill(&content).map_err(|e| format!("skill inválida: {e}"))?;
     }
@@ -568,15 +465,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_path_traversal() {
-        let dir = Path::new("/tmp/skills");
-        assert!(skill_path(dir, "../etc/passwd").is_err());
-        assert!(skill_path(dir, "foo/bar").is_err());
-        assert!(skill_path(dir, "foo\\bar").is_err());
-        assert!(skill_path(dir, "").is_err());
-    }
-
-    #[test]
     fn resolve_skill_file_rejects_traversal() {
         // O nome `legendar` precisa passar pelo skill_dir() que
         // chama config::load_config() — aqui testamos só os checks
@@ -603,18 +491,5 @@ mod tests {
         assert!(t.contains("name: test-skill"));
         assert!(t.contains("version: 1.0"));
         assert!(t.contains("# test-skill"));
-    }
-
-    #[test]
-    fn appends_md_extension_when_missing() {
-        let dir = Path::new("/tmp/skills");
-        assert_eq!(
-            skill_path(dir, "criar-sistema").unwrap(),
-            PathBuf::from("/tmp/skills/criar-sistema.md")
-        );
-        assert_eq!(
-            skill_path(dir, "criar-sistema.md").unwrap(),
-            PathBuf::from("/tmp/skills/criar-sistema.md")
-        );
     }
 }

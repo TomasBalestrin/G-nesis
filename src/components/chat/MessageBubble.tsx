@@ -23,7 +23,6 @@ import {
   installDependency,
   listCaminhos,
   safeInvoke,
-  saveSkill,
   saveSkillFolder,
 } from "@/lib/tauri-bridge";
 import { useExecutionStore } from "@/stores/executionStore";
@@ -68,9 +67,9 @@ interface SkillSegment {
   type: "skill";
   code: string;
   name: string;
-  /** Frontmatter `version` field. Empty string when absent. The save
-   *  branch routes v2 (starts with "2") to `save_skill_folder` and
-   *  anything else (1.x, missing) to the legacy `save_skill` path. */
+  /** Frontmatter `version` field. Empty string when absent. Hoje é
+   *  exibido só como badge no card — todo save passa por
+   *  `save_skill_folder` (v2 only desde F2). */
   version: string;
 }
 type Segment = TextSegment | SkillSegment;
@@ -319,24 +318,19 @@ function DependencyConfirmPanel({
 interface SkillPreviewCardProps {
   code: string;
   name: string;
-  /** Frontmatter `version` from the parsed block. Empty string when
-   *  absent. `version.startsWith("2")` routes the save call to
-   *  `save_skill_folder`; everything else falls back to the v1
-   *  `save_skill` path so legacy assistant outputs keep working. */
+  /** Frontmatter `version` parseada do bloco. Apenas exibida como
+   *  badge — todo save vai por `save_skill_folder` (v2 only desde F2). */
   version: string;
 }
 
 /**
- * Renders an assistant-generated skill `.md` block with two actions:
- *   - **Ver**: toggles between rendered (markdown) and raw views.
- *   - **Salvar**: persists the skill. v2 (frontmatter `version: "2.x"`)
- *     calls `save_skill_folder` which creates the folder layout
- *     (`SKILL.md` only — scripts/references/assets are handled in
- *     follow-up turns of the skill agent). v1 keeps the legacy
- *     `save_skill` path that writes a single `.md` file.
- *
- * Both branches refresh the skills store on success so the sidebar
- * and `/`-autocomplete pick up the new entry without a reload.
+ * Renderiza o bloco de skill `.md` gerado pelo assistente com duas
+ * ações:
+ *   - **Ver**: alterna entre rendered (markdown) e raw views.
+ *   - **Salvar**: persiste via `save_skill_folder` que cria o layout
+ *     v2 (`<name>/SKILL.md` + assets/ + references/ vazios). Refresh
+ *     no skillsStore garante que sidebar e `/`-autocomplete pegam a
+ *     entrada nova sem reload.
  */
 function SkillPreviewCard({ code, name, version }: SkillPreviewCardProps) {
   const refreshSkills = useSkillsStore((s) => s.refresh);
@@ -345,18 +339,13 @@ function SkillPreviewCard({ code, name, version }: SkillPreviewCardProps) {
   const [view, setView] = useState<"raw" | "rendered">("raw");
   const { toast } = useToast();
 
-  const isV2 = version.startsWith("2");
-  const filenameLabel = isV2 ? `skills/${name}/SKILL.md` : `skills/${name}.md`;
+  const filenameLabel = `skills/${name}/SKILL.md`;
 
   async function handleSave() {
     if (saved) return;
     setSaving(true);
     try {
-      if (isV2) {
-        await saveSkillFolder({ skillName: name, skillMd: code });
-      } else {
-        await saveSkill({ name, content: code });
-      }
+      await saveSkillFolder({ skillName: name, skillMd: code });
       setSaved(true);
       toast({ title: `Skill ${name} salva` });
       refreshSkills();

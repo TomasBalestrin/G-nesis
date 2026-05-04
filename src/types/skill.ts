@@ -1,7 +1,5 @@
 // Mirrors src-tauri/src/orchestrator/skill_parser.rs.
 
-import type { Tool } from "./project";
-
 /**
  * Frontmatter parseado de SKILL.md. Mirror exato de `SkillMeta` em
  * skill_parser.rs — usado pelo slash autocomplete e por código que
@@ -49,23 +47,4 @@ export interface SkillDetail extends Skill {
   content: string;
   references: string[];
   assets: string[];
-}
-
-export interface Step {
-  id: string;
-  tool: Tool;
-  command: string | null;
-  prompt: string | null;
-  context: string | null;
-  validate: string | null;
-  on_fail: string | null;
-  on_success: string | null;
-}
-
-export interface ParsedSkill {
-  meta: SkillMeta;
-  tools: string[];
-  inputs: string[];
-  steps: Step[];
-  outputs: string[];
 }
