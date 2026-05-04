@@ -9,6 +9,7 @@
 pub mod storage;
 
 pub use storage::{
-    delete_skill_package, ensure_skill_dirs, list_assets, list_references,
-    list_skill_packages, read_skill_md, skill_dir, skills_dir, SkillPackage,
+    delete_skill_package, ensure_skill_dirs, get_skill_package, list_assets,
+    list_references, list_skill_packages, read_skill_md, skill_dir, skills_dir,
+    SkillPackage,
 };

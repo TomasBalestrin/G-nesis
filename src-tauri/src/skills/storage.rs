@@ -130,6 +130,17 @@ pub fn list_assets(name: &str) -> Result<Vec<PathBuf>, String> {
     list_subdir(name, "assets", None)
 }
 
+/// Snapshot do package especificado por `name`. `None` quando o
+/// diretório não existe OU quando existe mas não tem SKILL.md
+/// dentro (subpasta livre tipo `meta/`, `drafts/`).
+pub fn get_skill_package(name: &str) -> Result<Option<SkillPackage>, String> {
+    let dir = skill_dir(name)?;
+    if !dir.is_dir() || !dir.join("SKILL.md").is_file() {
+        return Ok(None);
+    }
+    Ok(Some(read_package(&dir, name.to_string())))
+}
+
 /// Apaga o package inteiro (recursivo). Idempotente: pasta ausente
 /// é Ok. Não toca em irmãos — `delete_skill_package("foo")` NÃO
 /// remove `~/.genesis/skills/foo.md` legacy (uma migration future
