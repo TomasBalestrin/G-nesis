@@ -11,6 +11,7 @@ import {
   FileText,
   Folder,
   Image as ImageIcon,
+  Loader2,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -117,6 +118,7 @@ export function SkillDetailView() {
   const [collapsedAssets, setCollapsedAssets] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Hidrata `activeSkill` no store via setActive(name) — esse já
   // chama getSkill IPC e mescla com o catálogo cached. Limpa no
@@ -178,7 +180,7 @@ export function SkillDetailView() {
   }, [activeSkill, selected, name]);
 
   async function handleExport() {
-    setBusy(true);
+    setExporting(true);
     try {
       // Two-step flow: backend cria ZIP em /tmp; UI pergunta destino
       // ao usuário; backend move pro lugar final.
@@ -198,7 +200,7 @@ export function SkillDetailView() {
         variant: "destructive",
       });
     } finally {
-      setBusy(false);
+      setExporting(false);
     }
   }
 
@@ -236,6 +238,7 @@ export function SkillDetailView() {
         name={name}
         skill={activeSkill}
         busy={busy}
+        exporting={exporting}
         onEdit={() => navigate(`/skills/${encodeURIComponent(name)}/edit`)}
         onExport={handleExport}
         onDelete={() => setConfirmDelete(true)}
@@ -303,12 +306,21 @@ interface HeaderProps {
   name: string;
   skill: Skill | null;
   busy: boolean;
+  exporting: boolean;
   onEdit: () => void;
   onExport: () => void;
   onDelete: () => void;
 }
 
-function Header({ name, skill, busy, onEdit, onExport, onDelete }: HeaderProps) {
+function Header({
+  name,
+  skill,
+  busy,
+  exporting,
+  onEdit,
+  onExport,
+  onDelete,
+}: HeaderProps) {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-4">
       <Button asChild variant="ghost" size="icon" aria-label="Voltar">
@@ -341,9 +353,21 @@ function Header({ name, skill, busy, onEdit, onExport, onDelete }: HeaderProps) 
           <Pencil className="h-3.5 w-3.5" strokeWidth={1.5} />
           Editar
         </Button>
-        <Button variant="outline" size="sm" onClick={onExport} disabled={busy}>
-          <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Exportar
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onExport}
+          disabled={busy || exporting}
+        >
+          {exporting ? (
+            <Loader2
+              className="h-3.5 w-3.5 animate-spin"
+              strokeWidth={1.5}
+            />
+          ) : (
+            <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
+          )}
+          {exporting ? "Exportando..." : "Exportar"}
         </Button>
         <Button
           variant="outline"

@@ -6,6 +6,7 @@ import {
   FileCode,
   Folder,
   Image as ImageIcon,
+  Loader2,
   MessageSquare,
   MoreHorizontal,
   Moon,
@@ -411,6 +412,7 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
   const [expanded, setExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const referencesCount = skill.references_count;
   const hasAssets = skill.has_assets;
@@ -437,6 +439,7 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
   }
 
   async function handleExport() {
+    setExporting(true);
     try {
       const tempPath = await exportSkill({ name: skill.name });
       const dest = await saveDialog({
@@ -453,6 +456,8 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -526,6 +531,7 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
             ) : null}
           </button>
           <SkillDropdown
+            exporting={exporting}
             onEdit={() => {
               navigate(`${detailHref}/edit`);
               onNavigate();
@@ -634,12 +640,18 @@ function SkillTreeItem({ icon, label, count, onClick }: SkillTreeItemProps) {
 }
 
 interface SkillDropdownProps {
+  exporting: boolean;
   onEdit: () => void;
   onExport: () => void;
   onDelete: () => void;
 }
 
-function SkillDropdown({ onEdit, onExport, onDelete }: SkillDropdownProps) {
+function SkillDropdown({
+  exporting,
+  onEdit,
+  onExport,
+  onDelete,
+}: SkillDropdownProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -649,17 +661,28 @@ function SkillDropdown({ onEdit, onExport, onDelete }: SkillDropdownProps) {
           onClick={(e) => e.stopPropagation()}
           className="rounded p-1 text-[var(--text-3)] opacity-0 transition-opacity hover:bg-[var(--bg-muted)] hover:text-[var(--text)] focus-visible:opacity-100 group-hover:opacity-100"
         >
-          <MoreHorizontal className="h-3 w-3" strokeWidth={1.5} />
+          {exporting ? (
+            <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.5} />
+          ) : (
+            <MoreHorizontal className="h-3 w-3" strokeWidth={1.5} />
+          )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-40">
+      <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuItem onClick={onEdit}>
           <Pencil className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
           Editar
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onExport}>
-          <Download className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
-          Exportar
+        <DropdownMenuItem onClick={onExport} disabled={exporting}>
+          {exporting ? (
+            <Loader2
+              className="mr-2 h-3.5 w-3.5 animate-spin"
+              strokeWidth={1.5}
+            />
+          ) : (
+            <Download className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
+          )}
+          {exporting ? "Exportando..." : "Exportar .skill"}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
