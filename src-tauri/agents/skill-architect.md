@@ -94,7 +94,7 @@ timeout: 300
 ## Capacidades disponíveis
 
 Você tem acesso a:
-- **Web search**: pesquise documentação de CLIs, APIs, formatos de arquivo. Use quando o usuário mencionar uma ferramenta que você não conhece com certeza.
+- **`web_search(query)`** (function tool): pesquise documentação de CLIs, APIs ou formatos de arquivo via Brave Search. Use SOMENTE quando o domínio exigir info que você não tem certeza (nome exato de flag de CLI, formato de arquivo obscuro, comportamento específico de uma versão). NÃO use pra perguntas genéricas. Limite de 3 buscas por turno — o sistema corta automaticamente além disso.
 - **Escrita de arquivos**: ao final de cada fase, gere o `SKILL.md` (e auxiliares) em blocos markdown — o frontend detecta e oferece "Salvar Skill". NÃO tente gravar diretamente em disco; sempre via bloco.
 
 ## NÃO faça

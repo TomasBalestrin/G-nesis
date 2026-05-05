@@ -9,11 +9,19 @@
 //! `Agent`, registre no `lookup` deste módulo.
 
 pub mod skill_architect;
+pub mod web_search;
 
 use serde::Deserialize;
 
-use crate::ai::client::{Message, OpenAIClient};
+use crate::ai::client::{
+    FunctionDefinition, Message, OpenAIClient, ToolCall, ToolDefinition,
+};
 use crate::config;
+
+/// Limite de web_searches por turno do agente. Cada call adiciona
+/// ~1k tokens de tool result; 3 cobre research razoável sem deixar
+/// o modelo loopar infinito por engano (B2 spec).
+const MAX_WEB_SEARCHES_PER_TURN: usize = 3;
 
 /// Trait que todo agente interno implementa. `name` é o handle
 /// usado pelo IPC; `system_prompt` injeta o prompt no `OpenAIClient::
@@ -57,8 +65,11 @@ impl AgentChatTurn {
 }
 
 /// Roda um turno do agente: resolve por nome, monta system prompt +
-/// histórico + mensagem nova, manda pro OpenAI e retorna o texto.
-/// Retry/backoff já mora dentro de `chat_completion`.
+/// histórico + mensagem nova, manda pro OpenAI. Quando o agente
+/// declara `can_web_search()`, expõe o tool `web_search` e roda um
+/// loop curto (cap [`MAX_WEB_SEARCHES_PER_TURN`]) reinjetando os
+/// resultados — mesmo padrão do orquestrador principal e do flow
+/// de @integrations.
 async fn run_agent_chat(
     agent_name: &str,
     message: &str,
@@ -75,10 +86,114 @@ async fn run_agent_chat(
     messages.push(Message::user(message));
 
     let client = build_openai_client()?;
-    client
-        .chat_completion(&system, &messages)
-        .await
-        .map_err(|e| e.user_message())
+
+    if !agent.can_web_search() {
+        return client
+            .chat_completion(&system, &messages)
+            .await
+            .map_err(|e| e.user_message());
+    }
+
+    // Web-search habilitada → loop tool-aware.
+    let tools = vec![web_search_tool_definition()];
+    let brave_key = brave_api_key();
+    let mut searches_used = 0usize;
+
+    loop {
+        let out = client
+            .chat_completion_with_tools(&system, &messages, &tools)
+            .await
+            .map_err(|e| e.user_message())?;
+
+        if out.tool_calls.is_empty() {
+            return Ok(out.content);
+        }
+
+        // Modelo pediu um ou mais tool_calls — append a turn de assistant
+        // com os tool_calls intactos e despacha cada um. Pra OpenAI, o
+        // turn assistant precisa preceder os messages role="tool".
+        messages.push(Message::assistant_with_tool_calls(out.tool_calls.clone()));
+
+        for call in out.tool_calls {
+            let result_text = match call.function.name.as_str() {
+                "web_search" => {
+                    if searches_used >= MAX_WEB_SEARCHES_PER_TURN {
+                        format!(
+                            "limite de {MAX_WEB_SEARCHES_PER_TURN} web_searches por turno atingido — \
+                             use os resultados anteriores ou peça ao usuário."
+                        )
+                    } else {
+                        searches_used += 1;
+                        dispatch_web_search(&call, brave_key.as_deref()).await
+                    }
+                }
+                other => format!("Tool desconhecida: `{other}`"),
+            };
+            messages.push(Message::tool_result(call.id, result_text));
+        }
+    }
+}
+
+fn web_search_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        tool_type: "function".to_string(),
+        function: FunctionDefinition {
+            name: "web_search".to_string(),
+            description:
+                "Pesquisa na web (Brave Search) quando o domínio exige info \
+                 que você não tem certeza. Use só pra validar nome de \
+                 ferramenta CLI, formato de arquivo, ou doc específica. \
+                 Não use pra perguntas genéricas — limite de 3 buscas por \
+                 turno."
+                    .to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Termo de busca em inglês ou português, \
+                            máximo ~10 palavras."
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+    }
+}
+
+async fn dispatch_web_search(call: &ToolCall, api_key: Option<&str>) -> String {
+    #[derive(Deserialize)]
+    struct Args {
+        query: String,
+    }
+    let args: Args = match serde_json::from_str(&call.function.arguments) {
+        Ok(a) => a,
+        Err(e) => return format!("web_search: argumentos inválidos ({e})"),
+    };
+    let key = match api_key {
+        Some(k) if !k.trim().is_empty() => k,
+        _ => {
+            return "BRAVE_API_KEY não configurada — peça ao usuário pra adicionar \
+                em ~/.genesis/config.toml [search] brave_api_key, ou siga sem o \
+                resultado."
+                .to_string();
+        }
+    };
+    match web_search::web_search(&args.query, key).await {
+        Ok(hits) if hits.is_empty() => {
+            format!("Nenhum resultado pra `{}`. Tente reformular.", args.query)
+        }
+        Ok(hits) => serde_json::to_string(&hits)
+            .unwrap_or_else(|_| "[]".to_string()),
+        Err(e) => format!("web_search falhou: {e}"),
+    }
+}
+
+fn brave_api_key() -> Option<String> {
+    config::load_config()
+        .ok()
+        .and_then(|c| c.search.brave_api_key)
+        .filter(|k| !k.trim().is_empty())
 }
 
 fn build_openai_client() -> Result<OpenAIClient, String> {
