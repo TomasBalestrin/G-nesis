@@ -154,7 +154,10 @@ export function SkillArchitectChat({ name, onExit }: SkillArchitectChatProps) {
     try {
       await saveGeneratedSkill({ name, files: filesArray });
       await refreshSkills();
-      toast({ title: `Skill ${name} criada` });
+      toast({
+        title: `Skill ${name} criada!`,
+        description: `Use /${name} no chat.`,
+      });
       onExit();
     } catch (err) {
       toast({
