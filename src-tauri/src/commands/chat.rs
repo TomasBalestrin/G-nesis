@@ -296,6 +296,21 @@ struct IntegrationLoadingEvent {
     endpoint: String,
 }
 
+/// Progresso por round dentro do loop de integration_call. UI usa
+/// pra atualizar o sub-label do spinner ("calling_api" → "calling_gpt")
+/// e provar pro usuário que o backend está vivo durante chains
+/// multi-round. Não substitui `integration:loading`/`loaded` — soma.
+#[derive(Clone, Serialize)]
+struct IntegrationProgressEvent {
+    conversation_id: Option<String>,
+    integration_name: String,
+    endpoint: String,
+    round: usize,
+    /// "calling_api" enquanto a HTTP chamada à integração roda;
+    /// "calling_gpt" quando reinjetamos no chat_completion.
+    status: &'static str,
+}
+
 #[derive(Clone, Serialize)]
 struct IntegrationLoadedEvent {
     conversation_id: Option<String>,
@@ -411,6 +426,13 @@ const MAX_INTEGRATION_ROUNDS: usize = 3;
 /// outros 2s — total ~5s de oxigênio antes da próxima request.
 const ROUND_DELAY_SECS: u64 = 2;
 
+/// Timeout POR ROUND da chamada HTTP à integração (não confundir com
+/// o timeout do `OpenAIClient` em ai/client.rs, que é 120s pra
+/// chat_completion). 30s aqui cobre APIs externas razoavelmente
+/// rápidas; se o servidor demora mais, devolvemos uma mensagem
+/// amigável ao usuário em vez de travar o loop.
+const PER_ROUND_HTTP_TIMEOUT_SECS: u64 = 30;
+
 async fn post_process_integration_call(
     raw: (String, Option<String>, Option<String>),
     active_integration: Option<&IntegrationRow>,
@@ -453,8 +475,8 @@ async fn post_process_integration_call(
             break;
         };
         println!(
-            ">>> [INTEGRATION] post_process round {round}: endpoint=`{}` params={:?}",
-            call.endpoint, call.params
+            ">>> ROUND {round} START: endpoint={}",
+            call.endpoint
         );
 
         if !emitted_loading {
@@ -469,52 +491,43 @@ async fn post_process_integration_call(
             emitted_loading = true;
         }
 
-        match run_integration_request(integration, &call, pool).await {
-            Ok(json) => {
+        // Progress: HTTP da integração começando. UI atualiza o
+        // sub-label do spinner pra "calling_api".
+        let _ = app.emit(
+            "integration:progress",
+            IntegrationProgressEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                integration_name: integration.name.clone(),
+                endpoint: call.endpoint.clone(),
+                round,
+                status: "calling_api",
+            },
+        );
+
+        // Timeout POR ROUND da chamada HTTP — o transport HTTP do
+        // IntegrationClient já tem timeout próprio, mas se o servidor
+        // remoto enroscar antes de responder com headers, esse
+        // wrapper garante que o loop não fica travado pra sempre.
+        let api_call =
+            tokio::time::timeout(
+                std::time::Duration::from_secs(PER_ROUND_HTTP_TIMEOUT_SECS),
+                run_integration_request(integration, &call, pool),
+            )
+            .await;
+
+        let json = match api_call {
+            Ok(Ok(json)) => {
                 last_success = true;
-                // Log requested em E3 follow-up: round + endpoint +
-                // tamanho do payload da API. Útil pra confirmar que
-                // o GPT está realmente progredindo na chain (lista
-                // → detail → totals) em vez de parar cedo.
                 println!(
-                    ">>> ROUND {round}: endpoint={} response_size={}",
-                    call.endpoint,
+                    ">>> ROUND {round} API RESPONSE: {} bytes",
                     json.len()
                 );
-                // Push assistant turn (envelope JSON) + synthetic user
-                // turn carregando o resultado da API. O prompt do user
-                // turn deixa claro que round adicional é OK se o GPT
-                // ainda precisa de mais dados.
-                next_messages.push(Message::assistant(current_reply.clone()));
-                let context_msg = format!(
-                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe a pergunta original pediu DADOS AGREGADOS (faturamento, lucro, métricas) e este resultado é APENAS uma lista (sem totals/agregados), você AINDA não terminou — faça outra `integration_call` pra abrir o item específico e pegar os números. Se já tem tudo que precisa, responda ao usuário em português conciso, com valores formatados (R$ X, X%) — sem JSON cru, sem devolver IDs.",
-                    name = integration.name,
-                    endpoint = call.endpoint,
-                );
-                next_messages.push(Message::user(context_msg));
-
-                // Throttle entre GPT calls pra suavizar o burst que
-                // estourava rate limit da OpenAI em chains de 3
-                // rounds. O 1s é entre o GPT inicial e o round 1
-                // também (o burst começa aí).
-                tokio::time::sleep(std::time::Duration::from_secs(
-                    ROUND_DELAY_SECS,
-                ))
-                .await;
-
-                current_reply = client
-                    .chat_completion(system_prompt, &next_messages)
-                    .await
-                    .map_err(|e| e.user_message())?;
-                println!(
-                    ">>> [INTEGRATION] post_process round {round} → next GPT reply ({} bytes)",
-                    current_reply.len()
-                );
+                json
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 last_success = false;
                 println!(
-                    ">>> [INTEGRATION] post_process round {round} HTTP falhou: {err}"
+                    ">>> ROUND {round} HTTP ERR: {err}"
                 );
                 current_reply = format!(
                     "Não consegui consultar `@{name}` agora: {err}",
@@ -522,7 +535,58 @@ async fn post_process_integration_call(
                 );
                 break;
             }
-        }
+            Err(_elapsed) => {
+                last_success = false;
+                println!(
+                    ">>> ROUND {round} TIMEOUT after {PER_ROUND_HTTP_TIMEOUT_SECS}s"
+                );
+                current_reply = "A consulta demorou demais. Tente perguntar algo mais específico.".to_string();
+                break;
+            }
+        };
+
+        // Push assistant turn (envelope JSON) + synthetic user
+        // turn carregando o resultado da API. O prompt do user
+        // turn deixa claro que round adicional é OK se o GPT
+        // ainda precisa de mais dados.
+        next_messages.push(Message::assistant(current_reply.clone()));
+        let context_msg = format!(
+            "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe a pergunta original pediu DADOS AGREGADOS (faturamento, lucro, métricas) e este resultado é APENAS uma lista (sem totals/agregados), você AINDA não terminou — faça outra `integration_call` pra abrir o item específico e pegar os números. Se já tem tudo que precisa, responda ao usuário em português conciso, com valores formatados (R$ X, X%) — sem JSON cru, sem devolver IDs.",
+            name = integration.name,
+            endpoint = call.endpoint,
+        );
+        next_messages.push(Message::user(context_msg));
+
+        // Throttle entre GPT calls pra suavizar o burst que
+        // estourava rate limit da OpenAI em chains de 3
+        // rounds. O 1s é entre o GPT inicial e o round 1
+        // também (o burst começa aí).
+        tokio::time::sleep(std::time::Duration::from_secs(
+            ROUND_DELAY_SECS,
+        ))
+        .await;
+
+        // Progress: indo pro GPT processar o resultado da API.
+        let _ = app.emit(
+            "integration:progress",
+            IntegrationProgressEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                integration_name: integration.name.clone(),
+                endpoint: call.endpoint.clone(),
+                round,
+                status: "calling_gpt",
+            },
+        );
+        println!(">>> ROUND {round} GPT CALL START");
+
+        current_reply = client
+            .chat_completion(system_prompt, &next_messages)
+            .await
+            .map_err(|e| e.user_message())?;
+        println!(
+            ">>> ROUND {round} GPT RESPONSE: {} chars",
+            current_reply.len()
+        );
 
         if round == MAX_INTEGRATION_ROUNDS {
             // O loop fecha naturalmente após esse iteration; se ainda

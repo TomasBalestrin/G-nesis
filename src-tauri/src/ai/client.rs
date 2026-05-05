@@ -21,7 +21,12 @@ const DEFAULT_MODEL: &str = "gpt-4o";
 const OPENAI_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-const TIMEOUT_SECS: u64 = 30;
+/// HTTP timeout pra UMA request à OpenAI/Anthropic. Bumped de 30s
+/// pra 120s pra cobrir chains multi-round em integration_call —
+/// um round longo pode esperar até ~90s pra GPT processar contexto
+/// crescente sem o transport cortar antes do response. Per-round
+/// timeout de integração mora em chat.rs, separado deste.
+const TIMEOUT_SECS: u64 = 120;
 const MAX_RETRIES: u32 = 3;
 
 /// System prompt for `OpenAIClient::generate_knowledge_summary`. Lives here
