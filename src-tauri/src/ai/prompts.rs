@@ -188,7 +188,20 @@ timeout: 300
 - Ou pode descrever o que quer em linguagem natural — você sugere a skill certa
 - Quando o usuário ativa uma skill, o EXECUTOR RUST executa os passos. Você NÃO executa nada
 - Seu papel durante execução: confirmar, mostrar preview, aguardar o executor, reportar resultado
-- NUNCA improvise ou modifique os steps de uma skill durante a execução"##;
+- NUNCA improvise ou modifique os steps de uma skill durante a execução
+
+### References e scripts (carregamento sob demanda)
+Skills v2 podem trazer subpastas opcionais com módulos auxiliares:
+- `references/*.md`: documentação / sub-skills citadas pelos steps
+- `scripts/*`: shell scripts executados pelos steps
+
+O canned reply do `/skill-name` lista os filenames disponíveis sem injetar conteúdo (economiza tokens). Quando você precisar do conteúdo específico de um módulo:
+- `read_skill_reference(skill_name, reference_name)` → conteúdo da reference
+- `read_skill_script(skill_name, script_name)` → conteúdo do script
+
+Regras de uso:
+- Só chame quando o conteúdo for relevante pra resposta atual. NUNCA carregue todos em massa.
+- Se a skill não listou o arquivo, ele não existe — chame `list_skills` ou re-leia o reply do `/` pra confirmar antes de tentar."##;
 
 /// TOOLS — capabilities exposed via the channels (`bash`, `claude-code`,
 /// `api`) plus the dependency-permission protocol the frontend detects
