@@ -865,7 +865,22 @@ pub fn build_system_prompt(
     capabilities_block: Option<&str>,
     skills: &[SkillMeta],
 ) -> String {
-    let mut sections: Vec<String> = Vec::with_capacity(9);
+    let mut sections: Vec<String> = Vec::with_capacity(10);
+
+    // Data atual SEMPRE como primeira seção. Sem isso, o GPT chuta
+    // datas pela cutoff date dele (que pode ser meses/anos atrás) e
+    // erra cálculos como "últimos 7 dias", "esse mês", "semana
+    // passada". Formato dd/mm/yyyy hh:mm casa com a expectativa
+    // PT-BR do usuário; label "horário de Brasília" deixa claro o
+    // timezone (Local::now() respeita o relógio do SO — em Brasília
+    // bate, em outros TZs serve como aproximação útil).
+    let now = chrono::Local::now();
+    let date_str = now
+        .format("%d/%m/%Y %H:%M (horário de Brasília)")
+        .to_string();
+    sections.push(format!(
+        "Data e hora atual: {date_str}. Use esta data como referência para qualquer cálculo temporal (datas relativas tipo \"últimos 7 dias\", \"esse mês\", \"semana passada\")."
+    ));
 
     // CORE carrega `{{company_name}}` na linha de identidade (linha
     // ~33). Sem substituição o GPT vê e às vezes ecoa o placeholder
