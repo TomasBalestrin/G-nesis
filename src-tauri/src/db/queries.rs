@@ -816,8 +816,8 @@ pub async fn touch_integration_last_used(
 /// Single source of truth pros columns SELECTed em [`SkillRow`].
 /// Drift aqui quebra `FromRow` (rejeita rows com fields ausentes),
 /// então todo SELECT no bloco abaixo formata com este const.
-const SKILL_COLUMNS: &str = "id, name, version, author, has_assets, \
-     has_references, files_count, created_at, updated_at";
+const SKILL_COLUMNS: &str = "id, name, version, author, has_references, \
+     has_assets, has_scripts, files_count, created_at, updated_at";
 
 /// Lista skills do mirror SQLite, sorted por name. Mirror — não
 /// substitui o file scan via `crate::skills::storage::list_skill_packages`
@@ -855,15 +855,16 @@ pub async fn get_skill_by_name(
 pub async fn insert_skill(pool: &SqlitePool, skill: &SkillRow) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO skills \
-         (id, name, version, author, has_assets, has_references, files_count) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (id, name, version, author, has_references, has_assets, has_scripts, files_count) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&skill.id)
     .bind(&skill.name)
     .bind(&skill.version)
     .bind(&skill.author)
-    .bind(skill.has_assets)
     .bind(skill.has_references)
+    .bind(skill.has_assets)
+    .bind(skill.has_scripts)
     .bind(skill.files_count)
     .execute(pool)
     .await
@@ -878,15 +879,16 @@ pub async fn update_skill(pool: &SqlitePool, skill: &SkillRow) -> Result<(), Str
     sqlx::query(
         "UPDATE skills SET \
          name = ?2, version = ?3, author = ?4, \
-         has_assets = ?5, has_references = ?6, files_count = ?7 \
+         has_references = ?5, has_assets = ?6, has_scripts = ?7, files_count = ?8 \
          WHERE id = ?1",
     )
     .bind(&skill.id)
     .bind(&skill.name)
     .bind(&skill.version)
     .bind(&skill.author)
-    .bind(skill.has_assets)
     .bind(skill.has_references)
+    .bind(skill.has_assets)
+    .bind(skill.has_scripts)
     .bind(skill.files_count)
     .execute(pool)
     .await

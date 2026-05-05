@@ -44,7 +44,7 @@ import type { Skill, SkillDetail } from "@/types/skill";
 type ViewMode = "visual" | "code";
 
 interface SelectedItem {
-  kind: "skill" | "reference" | "asset";
+  kind: "skill" | "reference" | "asset" | "script";
   /** undefined for kind === 'skill' (canonical SKILL.md). */
   filename?: string;
 }
@@ -85,7 +85,7 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 
 /**
- * Visualização detalhada de uma skill v2 — substitui o SkillViewerV2.
+ * Visualização detalhada de uma skill v2.
  *
  * Layout split:
  *  - Tree esquerda: SKILL.md (destacado) + references/ (colapsável)
@@ -96,8 +96,9 @@ const IMAGE_EXTENSIONS = new Set([
  *    suporte caem em metadata + abrir-no-FS.
  *
  * Header: nome + badge versão + badge autor + Editar/Exportar/Deletar.
- * Editar navega pra /skills/:name/edit (CreateSkillWizard em modo
- * edição, abre direto na etapa 2 com conteúdo hidratado).
+ * Editar navega pra /skills/:name/edit que monta o CreateSkillFlow
+ * em modo edição — pula a tela do nome e abre direto no chat com
+ * o Skill Architect (B1+B3+B4) com o nome pré-carregado.
  */
 export function SkillDetailView() {
   const { name = "" } = useParams<{ name: string }>();
@@ -116,6 +117,7 @@ export function SkillDetailView() {
   const [viewMode, setViewMode] = useState<ViewMode>("visual");
   const [collapsedRefs, setCollapsedRefs] = useState(false);
   const [collapsedAssets, setCollapsedAssets] = useState(false);
+  const [collapsedScripts, setCollapsedScripts] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -151,10 +153,13 @@ export function SkillDetailView() {
       return;
     }
     const filename = selected.filename ?? "";
-    const path =
+    const subdir =
       selected.kind === "reference"
-        ? `references/${filename}`
-        : `assets/${filename}`;
+        ? "references"
+        : selected.kind === "script"
+          ? "scripts"
+          : "assets";
+    const path = `${subdir}/${filename}`;
     const ext = filename.split(".").pop()?.toLowerCase() ?? "";
 
     (async () => {
@@ -251,8 +256,10 @@ export function SkillDetailView() {
           onSelect={setSelected}
           collapsedRefs={collapsedRefs}
           collapsedAssets={collapsedAssets}
+          collapsedScripts={collapsedScripts}
           onToggleRefs={() => setCollapsedRefs((v) => !v)}
           onToggleAssets={() => setCollapsedAssets((v) => !v)}
+          onToggleScripts={() => setCollapsedScripts((v) => !v)}
         />
         <main className="flex min-w-0 flex-1 flex-col">
           <PreviewToolbar
@@ -390,8 +397,10 @@ interface FileTreeProps {
   onSelect: (item: SelectedItem) => void;
   collapsedRefs: boolean;
   collapsedAssets: boolean;
+  collapsedScripts: boolean;
   onToggleRefs: () => void;
   onToggleAssets: () => void;
+  onToggleScripts: () => void;
 }
 
 function FileTree({
@@ -400,11 +409,14 @@ function FileTree({
   onSelect,
   collapsedRefs,
   collapsedAssets,
+  collapsedScripts,
   onToggleRefs,
   onToggleAssets,
+  onToggleScripts,
 }: FileTreeProps) {
   const refs = skill?.references ?? [];
   const assets = skill?.assets ?? [];
+  const scripts = skill?.scripts ?? [];
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-[var(--bg-subtle)]/40">
@@ -434,51 +446,80 @@ function FileTree({
             </button>
           </li>
 
-          <FolderGroup
-            label="references/"
-            count={refs.length}
-            collapsed={collapsedRefs}
-            onToggle={onToggleRefs}
-          >
-            {refs.map((filename) => (
-              <FileButton
-                key={filename}
-                filename={filename}
-                icon={
-                  <FileText
-                    className="h-3.5 w-3.5 shrink-0"
-                    strokeWidth={1.5}
-                  />
-                }
-                active={
-                  selected.kind === "reference" &&
-                  selected.filename === filename
-                }
-                onClick={() =>
-                  onSelect({ kind: "reference", filename })
-                }
-              />
-            ))}
-          </FolderGroup>
+          {refs.length > 0 ? (
+            <FolderGroup
+              label="references/"
+              count={refs.length}
+              collapsed={collapsedRefs}
+              onToggle={onToggleRefs}
+            >
+              {refs.map((filename) => (
+                <FileButton
+                  key={filename}
+                  filename={filename}
+                  icon={
+                    <FileText
+                      className="h-3.5 w-3.5 shrink-0"
+                      strokeWidth={1.5}
+                    />
+                  }
+                  active={
+                    selected.kind === "reference" &&
+                    selected.filename === filename
+                  }
+                  onClick={() => onSelect({ kind: "reference", filename })}
+                />
+              ))}
+            </FolderGroup>
+          ) : null}
 
-          <FolderGroup
-            label="assets/"
-            count={assets.length}
-            collapsed={collapsedAssets}
-            onToggle={onToggleAssets}
-          >
-            {assets.map((filename) => (
-              <FileButton
-                key={filename}
-                filename={filename}
-                icon={iconForAsset(filename)}
-                active={
-                  selected.kind === "asset" && selected.filename === filename
-                }
-                onClick={() => onSelect({ kind: "asset", filename })}
-              />
-            ))}
-          </FolderGroup>
+          {assets.length > 0 ? (
+            <FolderGroup
+              label="assets/"
+              count={assets.length}
+              collapsed={collapsedAssets}
+              onToggle={onToggleAssets}
+            >
+              {assets.map((filename) => (
+                <FileButton
+                  key={filename}
+                  filename={filename}
+                  icon={iconForAsset(filename)}
+                  active={
+                    selected.kind === "asset" && selected.filename === filename
+                  }
+                  onClick={() => onSelect({ kind: "asset", filename })}
+                />
+              ))}
+            </FolderGroup>
+          ) : null}
+
+          {scripts.length > 0 ? (
+            <FolderGroup
+              label="scripts/"
+              count={scripts.length}
+              collapsed={collapsedScripts}
+              onToggle={onToggleScripts}
+            >
+              {scripts.map((filename) => (
+                <FileButton
+                  key={filename}
+                  filename={filename}
+                  icon={
+                    <FileText
+                      className="h-3.5 w-3.5 shrink-0"
+                      strokeWidth={1.5}
+                    />
+                  }
+                  active={
+                    selected.kind === "script" &&
+                    selected.filename === filename
+                  }
+                  onClick={() => onSelect({ kind: "script", filename })}
+                />
+              ))}
+            </FolderGroup>
+          ) : null}
         </ul>
       </ScrollArea>
     </aside>
@@ -578,7 +619,9 @@ function PreviewToolbar({
       ? "SKILL.md"
       : selected.kind === "reference"
         ? `references/${selected.filename ?? ""}`
-        : `assets/${selected.filename ?? ""}`;
+        : selected.kind === "script"
+          ? `scripts/${selected.filename ?? ""}`
+          : `assets/${selected.filename ?? ""}`;
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border bg-[var(--bg-subtle)] px-4 py-2">
       <span className="truncate font-mono text-xs text-[var(--text-2)]">

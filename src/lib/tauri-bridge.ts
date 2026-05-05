@@ -17,7 +17,6 @@ import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 import type { Execution, ExecutionDetail } from "@/types/project";
-import type { SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
 export interface SafeInvokeOptions {
@@ -87,8 +86,10 @@ export function saveConfig(args: {
 
 // ── skills ──────────────────────────────────────────────────────────────────
 
-/** Returns parsed meta (name, description, ...) for every skill that parses. */
-export function listSkills(): Promise<SkillMeta[]> {
+/** Lista todos os packages v2 com metadata completa (description,
+ *  version, author do frontmatter + flags e contagens das subpastas +
+ *  id/created_at do mirror). Substitui o antigo SkillMeta[] desde A2. */
+export function listSkills(): Promise<SkillPackage[]> {
   return invoke("list_skills");
 }
 
@@ -98,21 +99,26 @@ export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
 }
 
-/// Skill package v2 (B1+B2). Mirror do `crate::skills::storage::SkillPackage`.
+/// Skill package v2. Mirror do `crate::skills::storage::SkillPackage`.
 /// `path` é absoluto — serde serializa o PathBuf do Rust como string.
-/// `references_count` e `assets_count` contam arquivos não-hidden 1
-/// nível abaixo das subpastas (não recursivo) — pensado pra badges
-/// na sidebar sem ter que chamar getSkill.
-/// `id` e `created_at` vêm do mirror SQLite (best-effort). Skills
-/// criadas via FS direto sem mirror retornam null nesses campos.
+/// `description`/`version`/`author` vêm do frontmatter parseado do
+/// SKILL.md (defaults pra "" / "1.0" / "" se o parse falhar). `*_count`
+/// contam arquivos não-hidden 1 nível abaixo das subpastas (não
+/// recursivo) — pensados pra badges na sidebar sem ter que chamar
+/// getSkill. `id` e `created_at` vêm do mirror SQLite (best-effort).
 export interface SkillPackage {
   name: string;
   path: string;
-  has_assets: boolean;
+  description: string;
+  version: string;
+  author: string;
   has_references: boolean;
+  has_assets: boolean;
+  has_scripts: boolean;
   files_count: number;
   references_count: number;
   assets_count: number;
+  scripts_count: number;
   id: string | null;
   created_at: string | null;
 }
@@ -137,6 +143,54 @@ export function importSkill(args: { filePath: string }): Promise<SkillPackage> {
 /// frontmatter customizada do usuário.
 export function createSkill(args: { name: string }): Promise<SkillPackage> {
   return invoke("create_skill", args);
+}
+
+/// Materializa em disco a skill autorada pelo skill-architect (B3+B4).
+/// `files` é a lista acumulada via eventos `skill-architect:files-ready`
+/// — cada item já vem validado pela allowlist do package v2 (SKILL.md
+/// / references/*.md / assets/* / scripts/*). Backend recusa se o
+/// nome já existe e exige pelo menos um SKILL.md na lista.
+export interface SkillFileData {
+  path: string;
+  content: string;
+}
+export function saveGeneratedSkill(args: {
+  name: string;
+  files: SkillFileData[];
+}): Promise<SkillPackage> {
+  return invoke("save_generated_skill", args);
+}
+
+// ── agents (skill-architect, etc.) ──────────────────────────────────────────
+
+/// Turn de chat enviado pro agente. Subset do Message do orquestrador
+/// principal — sem tool_calls, só texto puro.
+export interface AgentChatTurn {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+/// Roda 1 turno do agente interno (skill-architect por enquanto).
+/// Backend: monta system prompt + histórico + mensagem nova; quando
+/// o agente declara `can_web_search()`, expõe a tool `web_search`
+/// e roda loop com cap de 3 buscas. Pós-resposta, se for o
+/// skill-architect, parseia tags `{"skill_write": {...}}` e emite
+/// evento `skill-architect:files-ready` com a lista. Caller escuta
+/// via useTauriEvent.
+export function agentChat(args: {
+  agent: string;
+  message: string;
+  history: AgentChatTurn[];
+}): Promise<string> {
+  return invoke("agent_chat", args);
+}
+
+/// Payload do evento `skill-architect:files-ready` — espelha
+/// `agents::skill_architect::SkillWriteRequest`. FE acumula
+/// cross-turn na sessão do wizard antes de chamar saveGeneratedSkill.
+export interface SkillWriteRequest {
+  path: string;
+  content: string;
 }
 
 /// Salva (overwrite) um arquivo dentro do package v2. `path` é
@@ -175,13 +229,14 @@ export function deleteSkillFile(args: {
 }
 
 /// Bundle retornado por `get_skill` — package + SKILL.md content +
-/// listas de filenames (relativos) de references/ e assets/. UI
-/// hidrata o detalhe da skill em uma chamada só.
+/// listas de filenames (relativos) de references/, assets/ e scripts/.
+/// UI hidrata o detalhe da skill em uma chamada só.
 export interface SkillBundle {
   package: SkillPackage;
   skill_md: string;
   references: string[];
   assets: string[];
+  scripts: string[];
 }
 
 export function getSkill(args: { name: string }): Promise<SkillBundle> {

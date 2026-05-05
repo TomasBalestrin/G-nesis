@@ -17,7 +17,7 @@ interface MarkdownPreviewProps {
 /**
  * Render bonito de markdown — inclui GFM (tabelas, checklists,
  * strikethrough). Usado pelo preview do SkillDetailView e pelo
- * split-view do CreateSkillStep2. Estilo segue o Elite Premium:
+ * split-view dos editores de skill. Estilo segue o Elite Premium:
  * tipografia hierárquica, gold só nos links/accents, code blocks
  * com background do design system. Sem syntax highlighting (overkill
  * pra autoria de skills; pode entrar depois se necessário).

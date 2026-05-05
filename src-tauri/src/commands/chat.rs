@@ -706,6 +706,17 @@ fn list_skill_reference_names(name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Filenames dos scripts de uma skill v2 (qualquer extensão — `.sh`,
+/// `.py`, `.js`, etc.). Mesma semântica da `list_skill_reference_names`,
+/// mas pra `<package>/scripts/`.
+fn list_skill_script_names(name: &str) -> Vec<String> {
+    crate::skills::storage::list_scripts(name)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect()
+}
+
 /// Load every `.md` under `skills_dir` and parse it. Walks the top level
 /// plus immediate subdirectories (e.g. `skills/meta/criar-skill.md`) so
 /// curated meta-skills stay discoverable without polluting the user's
@@ -825,7 +836,11 @@ fn format_step_line(index: usize, step: &SkillStep) -> String {
     }
 }
 
-fn render_confirmation(skill: &ParsedSkill, references: &[String]) -> String {
+fn render_confirmation(
+    skill: &ParsedSkill,
+    references: &[String],
+    scripts: &[String],
+) -> String {
     let description = if skill.meta.description.is_empty() {
         "(sem descrição)"
     } else {
@@ -852,15 +867,25 @@ fn render_confirmation(skill: &ParsedSkill, references: &[String]) -> String {
         }
     }
 
+    // Lazy-load: listamos só os filenames (não o conteúdo) pra
+    // economizar tokens no prompt do GPT. A instrução "peça pelo
+    // nome" dá hook protocolar pro modelo solicitar via tools
+    // `read_skill_reference` / `read_skill_script`.
     if !references.is_empty() {
-        // Lazy-load: listamos só os filenames (não o conteúdo) pra
-        // economizar tokens no prompt do GPT em turnos seguintes.
-        // A instrução "Se precisar... peça" dá um hook protocolar
-        // pro modelo solicitar uma reference específica via chat.
         msg.push_str("\n## References disponíveis\n\n");
         msg.push_str(&references.join(", "));
         msg.push_str(
-            "\n\n_Se precisar do conteúdo de alguma reference específica, peça pelo nome._",
+            "\n\n_Se precisar do conteúdo de alguma reference específica, peça pelo nome \
+             (ferramenta `read_skill_reference`)._",
+        );
+    }
+
+    if !scripts.is_empty() {
+        msg.push_str("\n## Scripts disponíveis\n\n");
+        msg.push_str(&scripts.join(", "));
+        msg.push_str(
+            "\n\n_Se precisar inspecionar um script antes de executar, peça pelo nome \
+             (ferramenta `read_skill_script`)._",
         );
     }
 
@@ -904,7 +929,8 @@ fn try_slash_reply(skill_name: &str) -> String {
         Ok(content) => match skill_parser::parse_skill(&content) {
             Ok(skill) => {
                 let refs = list_skill_reference_names(skill_name);
-                render_confirmation(&skill, &refs)
+                let scripts = list_skill_script_names(skill_name);
+                render_confirmation(&skill, &refs, &scripts)
             }
             Err(err) => format!(
                 "Skill `{skill_name}` existe mas está inválida: {err}\n\n\
@@ -1081,6 +1107,49 @@ fn genesis_tools() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "read_skill_reference".to_string(),
+                description: "Lê um módulo .md em <skill>/references/ sob demanda. \
+                    Use quando a skill ativada listou references e você precisa de \
+                    contexto específico de um deles. Não chame em massa — só o que \
+                    for relevante pra resposta atual."
+                    .to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {"type": "string"},
+                        "reference_name": {
+                            "type": "string",
+                            "description": "Filename relativo (ex: 'iron-man.md'). Sem path traversal."
+                        }
+                    },
+                    "required": ["skill_name", "reference_name"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "read_skill_script".to_string(),
+                description: "Lê um script em <skill>/scripts/ sob demanda — útil pra \
+                    inspecionar lógica antes de pedir execução. Mesma política \
+                    lazy-load das references."
+                    .to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {"type": "string"},
+                        "script_name": {
+                            "type": "string",
+                            "description": "Filename relativo (ex: 'parse.sh'). Sem path traversal."
+                        }
+                    },
+                    "required": ["skill_name", "script_name"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "read_file".to_string(),
                 description: "Lê um arquivo do disco. Limite de 10KB. Path absoluto.".to_string(),
                 parameters: serde_json::json!({
@@ -1136,6 +1205,8 @@ async fn execute_tool(
         "execute_skill" => dispatch_execute_skill(args, pool, registry, app, conversation_id).await,
         "list_skills" => dispatch_list_skills().await,
         "read_skill" => dispatch_read_skill(args).await,
+        "read_skill_reference" => dispatch_read_skill_reference(args).await,
+        "read_skill_script" => dispatch_read_skill_script(args).await,
         "save_skill" => dispatch_save_skill(args).await,
         "read_file" => dispatch_read_file(args),
         "list_files" => dispatch_list_files(args),
@@ -1178,17 +1249,19 @@ async fn dispatch_execute_skill(
 }
 
 async fn dispatch_list_skills() -> String {
-    match crate::commands::skills::list_skills().await {
-        Ok(metas) => {
-            if metas.is_empty() {
+    // LLM tool não precisa do mirror SQLite (id/created_at são UI-only),
+    // então chama storage diretamente — sem pool, sem IPC layer.
+    match crate::skills::storage::list_skill_packages() {
+        Ok(packages) => {
+            if packages.is_empty() {
                 return "Nenhuma skill cadastrada em ~/.genesis/skills/.".to_string();
             }
-            let entries: Vec<serde_json::Value> = metas
+            let entries: Vec<serde_json::Value> = packages
                 .into_iter()
-                .map(|m| {
+                .map(|p| {
                     serde_json::json!({
-                        "name": m.name,
-                        "description": m.description,
+                        "name": p.name,
+                        "description": p.description,
                     })
                 })
                 .collect();
@@ -1210,6 +1283,62 @@ async fn dispatch_read_skill(raw: &str) -> String {
     match crate::skills::storage::read_skill_md(&args.skill_name) {
         Ok(content) => content,
         Err(e) => format!("Falha ao ler skill `{}`: {e}", args.skill_name),
+    }
+}
+
+async fn dispatch_read_skill_reference(raw: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        skill_name: String,
+        reference_name: String,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("read_skill_reference: argumentos inválidos ({e})"),
+    };
+    read_skill_subfile(&args.skill_name, "references", &args.reference_name)
+}
+
+async fn dispatch_read_skill_script(raw: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        skill_name: String,
+        script_name: String,
+    }
+    let args: Args = match serde_json::from_str(raw) {
+        Ok(a) => a,
+        Err(e) => return format!("read_skill_script: argumentos inválidos ({e})"),
+    };
+    read_skill_subfile(&args.skill_name, "scripts", &args.script_name)
+}
+
+/// Helper compartilhado: resolve `<skill>/<sub>/<filename>` validando
+/// path traversal (rejeita `..`, separators, vazio) e lê o arquivo
+/// como UTF-8. Erros viram mensagens descritivas pro LLM ler na
+/// próxima volta do loop e auto-corrigir.
+fn read_skill_subfile(skill_name: &str, subdir: &str, filename: &str) -> String {
+    let trimmed = filename.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+    {
+        return format!(
+            "Filename inválido: `{filename}` (sem `..`, sem separadores)."
+        );
+    }
+    let dir = match crate::skills::storage::skill_dir(skill_name) {
+        Ok(d) => d,
+        Err(e) => return format!("Skill `{skill_name}` inválida: {e}"),
+    };
+    let path = dir.join(subdir).join(trimmed);
+    match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => format!(
+            "Arquivo `{subdir}/{trimmed}` não encontrado em `{skill_name}`. \
+             Use `list_skills` ou re-leia o canned reply do `/{skill_name}` \
+             pra ver o que está disponível."
+        ),
     }
 }
 
@@ -2184,9 +2313,12 @@ mod tests {
     /// function calling without a compiler error, so we anchor the
     /// expected set in a test.
     #[test]
-    fn genesis_tools_lists_all_seven_with_correct_names() {
+    fn genesis_tools_lists_all_with_correct_names() {
         let tools = genesis_tools();
         let names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
+        // Ordem importa pra estabilidade do snapshot. read_skill_reference
+        // e read_skill_script entraram em A3 (lazy-load de auxiliares
+        // de skill v2).
         assert_eq!(
             names,
             vec![
@@ -2194,6 +2326,8 @@ mod tests {
                 "list_skills",
                 "read_skill",
                 "save_skill",
+                "read_skill_reference",
+                "read_skill_script",
                 "read_file",
                 "list_files",
                 "abort_execution",
@@ -2569,13 +2703,14 @@ mod tests {
             }],
             ..Default::default()
         };
-        let msg = render_confirmation(&skill, &[]);
+        let msg = render_confirmation(&skill, &[], &[]);
         assert!(msg.contains("**`demo`**"));
         assert!(msg.contains("1. **step_1** (`bash`): `echo hi`"));
         assert!(msg.contains("{{briefing}}"));
         assert!(msg.contains("Executar"));
-        // Sem references: bloco não aparece.
+        // Sem references / scripts: blocos não aparecem.
         assert!(!msg.contains("References disponíveis"));
+        assert!(!msg.contains("Scripts disponíveis"));
     }
 
     #[test]
@@ -2589,9 +2724,26 @@ mod tests {
             ..Default::default()
         };
         let refs = vec!["iron-man.md".to_string(), "thor.md".to_string()];
-        let msg = render_confirmation(&skill, &refs);
+        let msg = render_confirmation(&skill, &refs, &[]);
         assert!(msg.contains("References disponíveis"));
         assert!(msg.contains("iron-man.md, thor.md"));
-        assert!(msg.contains("peça pelo nome"));
+        assert!(msg.contains("`read_skill_reference`"));
+    }
+
+    #[test]
+    fn render_confirmation_lists_scripts_when_present() {
+        let skill = ParsedSkill {
+            meta: SkillMeta {
+                name: "demo".into(),
+                description: "teste".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let scripts = vec!["parse.sh".to_string(), "extract.py".to_string()];
+        let msg = render_confirmation(&skill, &[], &scripts);
+        assert!(msg.contains("Scripts disponíveis"));
+        assert!(msg.contains("parse.sh, extract.py"));
+        assert!(msg.contains("`read_skill_script`"));
     }
 }

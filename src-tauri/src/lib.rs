@@ -1,6 +1,7 @@
 //! Genesis — desktop skill orchestrator.
 //! See docs/architecture.md for module layout.
 
+pub mod agents;
 pub mod ai;
 pub mod channels;
 pub mod commands;
@@ -77,6 +78,7 @@ pub fn run() {
             skills_cmd::get_skill,
             skills_cmd::get_skill_file,
             skills_cmd::create_skill,
+            skills_cmd::save_generated_skill,
             skills_cmd::save_skill_file,
             skills_cmd::save_skill_asset,
             skills_cmd::delete_skill_file,
@@ -107,6 +109,9 @@ pub fn run() {
             chat::insert_execution_status_message,
             chat::analyze_step_failure,
             chat::save_skill_folder,
+            // agents internos (skill-architect, etc.) — IPC isolada
+            // do orquestrador GPT principal.
+            agents::agent_chat,
             // capabilities (unified @-mention registry — read-only paths)
             capabilities::list_capabilities,
             capabilities::get_capability,

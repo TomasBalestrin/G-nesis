@@ -42,10 +42,27 @@ pub struct Config {
     #[serde(default)]
     pub claude_cli_path: Option<String>,
 
+    /// Web-search providers consumidos pelo módulo `agents` quando o
+    /// agente tem `can_web_search() == true`. Section opcional —
+    /// quando ausente, agentes que pedirem `web_search` recebem erro
+    /// user-actionable e o loop continua sem o resultado. Hoje só
+    /// Brave Search está suportado (B2 — 2k queries/mês grátis).
+    #[serde(default)]
+    pub search: SearchConfig,
+
     /// True when no API key is configured — the UI should show the setup screen.
     /// Never serialized: recomputed after every load from the final merged state.
     #[serde(default, skip_deserializing)]
     pub needs_setup: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchConfig {
+    /// Brave Search API token. Mesma política das outras keys: file
+    /// ganha do env (`BRAVE_API_KEY`); env só preenche quando o
+    /// arquivo está vazio.
+    #[serde(default)]
+    pub brave_api_key: Option<String>,
 }
 
 impl Default for Config {
@@ -57,6 +74,7 @@ impl Default for Config {
             db_path: default_db_path(),
             anthropic_api_key: None,
             claude_cli_path: None,
+            search: SearchConfig::default(),
             needs_setup: true,
         }
     }
@@ -136,7 +154,8 @@ pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result
         .map(|c| c.workflows_dir.clone())
         .filter(|d| !d.is_empty())
         .unwrap_or_else(default_workflows_dir);
-    let preserved_anthropic_key = preserved.and_then(|c| c.anthropic_api_key);
+    let preserved_anthropic_key = preserved.as_ref().and_then(|c| c.anthropic_api_key.clone());
+    let preserved_search = preserved.map(|c| c.search).unwrap_or_default();
 
     let to_write = Config {
         openai_api_key: openai_api_key.filter(|k| !k.is_empty()),
@@ -145,6 +164,7 @@ pub fn save_config(openai_api_key: Option<String>, skills_dir: String) -> Result
         db_path: default_db_path(),
         anthropic_api_key: preserved_anthropic_key,
         claude_cli_path: preserved_claude_path,
+        search: preserved_search,
         needs_setup: false,
     };
 
@@ -195,6 +215,22 @@ fn apply_env_overrides(cfg: &mut Config) {
         if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
             if !k.is_empty() {
                 cfg.anthropic_api_key = Some(k);
+            }
+        }
+    }
+    // brave_api_key: mesma política — env só preenche quando o arquivo
+    // está vazio. UI de Settings não expõe (B2 ainda não tem campo);
+    // por hora user edita config.toml direto.
+    if cfg
+        .search
+        .brave_api_key
+        .as_deref()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        if let Ok(k) = std::env::var("BRAVE_API_KEY") {
+            if !k.is_empty() {
+                cfg.search.brave_api_key = Some(k);
             }
         }
     }

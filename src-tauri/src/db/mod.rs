@@ -131,12 +131,39 @@ async fn run_migrations(pool: &DbPool) -> Result<(), String> {
         .await
         .map_err(|e| format!("migration 009 failed: {e}"))?;
 
+    // 010 — skills.has_scripts column (A2). Inline ALTER com guard
+    // pragma_table_info porque SQLite não tem ADD COLUMN IF NOT EXISTS.
+    // O arquivo migrations/010_skills_scripts.sql documenta a intenção;
+    // a execução real passa pelo helper abaixo pra ser idempotente.
+    ensure_skills_has_scripts(pool).await?;
+
     // Inline ALTER: conversations.active_integration mantém a última
     // integração @<name> que o usuário invocou nessa thread. Permite
     // turnos seguintes herdarem o contexto sem precisar do prefixo
     // @ a cada mensagem. Mesmo guard pattern dos outros ensure_*.
     ensure_conversations_active_integration(pool).await?;
 
+    Ok(())
+}
+
+async fn ensure_skills_has_scripts(pool: &DbPool) -> Result<(), String> {
+    let rows = sqlx::query("SELECT name FROM pragma_table_info('skills')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("pragma table_info skills failed: {e}"))?;
+    let has_column = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .any(|n| n == "has_scripts");
+    if !has_column {
+        sqlx::query(
+            "ALTER TABLE skills ADD COLUMN has_scripts INTEGER NOT NULL \
+             DEFAULT 0 CHECK(has_scripts IN (0, 1))",
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| format!("failed to add skills.has_scripts: {e}"))?;
+    }
     Ok(())
 }
 

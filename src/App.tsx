@@ -14,7 +14,7 @@ import { SettingsConfigSection } from "@/components/settings/SettingsConfigSecti
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 import { SettingsSkillsSection } from "@/components/settings/SettingsSkillsSection";
 import { SettingsWorkflowsSection } from "@/components/settings/SettingsWorkflowsSection";
-import { CreateSkillWizard } from "@/components/skills/CreateSkillWizard";
+import { CreateSkillFlow } from "@/components/skills/CreateSkillFlow";
 import { SkillDetailView } from "@/components/skills/SkillDetailView";
 import { WorkflowEditor } from "@/components/workflows/WorkflowEditor";
 import { WorkflowList } from "@/components/workflows/WorkflowList";
@@ -161,15 +161,16 @@ function App() {
               <Route path="chat/:conversationId" element={<ChatPanel />} />
 
               {/* Skills: list in sidebar; no standalone /skills listing page.
-                  /skills/new abre o CreateSkillWizard (3 etapas).
+                  /skills/new abre o CreateSkillFlow (Tela 1: nome →
+                  Tela 2: chat com Skill Architect).
                   /skills/:name → SkillDetailView (visualização split com
-                  árvore + preview). /skills/:name/edit → CreateSkillWizard
+                  árvore + preview). /skills/:name/edit → CreateSkillFlow
                   em modo edição (abre direto na etapa 2 com SKILL.md
                   hidratado). Skills v1 legacy NÃO têm mais editor — a
                   migração F1 converte tudo pra v2. */}
-              <Route path="skills/new" element={<CreateSkillWizard />} />
+              <Route path="skills/new" element={<CreateSkillFlow />} />
               <Route path="skills/:name" element={<SkillDetailView />} />
-              <Route path="skills/:name/edit" element={<CreateSkillWizard />} />
+              <Route path="skills/:name/edit" element={<CreateSkillFlow />} />
 
               {/* Capabilities: surface routes removidas em A2.
                   Backend continua expondo list_capabilities pro
