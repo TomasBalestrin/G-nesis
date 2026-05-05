@@ -161,7 +161,7 @@ async fn migrate_one(
     }
 
     // UPSERT mirror SQLite — best-effort. Re-stat pra pegar
-    // has_assets/has_references atual (acabaram de ser criados vazios).
+    // has_assets/has_references/has_scripts atual.
     if let Some(package) = skill_storage::get_skill_package(&name)? {
         let existing = queries::get_skill_by_name(pool, &name).await.ok().flatten();
         let row = SkillRow {
@@ -175,8 +175,9 @@ async fn migrate_one(
                 .map(|r| r.version.clone())
                 .unwrap_or_else(|| "1.0".to_string()),
             author: existing.and_then(|r| r.author),
-            has_assets: if package.has_assets { 1 } else { 0 },
             has_references: if package.has_references { 1 } else { 0 },
+            has_assets: if package.has_assets { 1 } else { 0 },
+            has_scripts: if package.has_scripts { 1 } else { 0 },
             files_count: package.files_count as i64,
             created_at: String::new(),
             updated_at: String::new(),

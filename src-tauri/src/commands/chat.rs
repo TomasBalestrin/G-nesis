@@ -1178,17 +1178,19 @@ async fn dispatch_execute_skill(
 }
 
 async fn dispatch_list_skills() -> String {
-    match crate::commands::skills::list_skills().await {
-        Ok(metas) => {
-            if metas.is_empty() {
+    // LLM tool não precisa do mirror SQLite (id/created_at são UI-only),
+    // então chama storage diretamente — sem pool, sem IPC layer.
+    match crate::skills::storage::list_skill_packages() {
+        Ok(packages) => {
+            if packages.is_empty() {
                 return "Nenhuma skill cadastrada em ~/.genesis/skills/.".to_string();
             }
-            let entries: Vec<serde_json::Value> = metas
+            let entries: Vec<serde_json::Value> = packages
                 .into_iter()
-                .map(|m| {
+                .map(|p| {
                     serde_json::json!({
-                        "name": m.name,
-                        "description": m.description,
+                        "name": p.name,
+                        "description": p.description,
                     })
                 })
                 .collect();

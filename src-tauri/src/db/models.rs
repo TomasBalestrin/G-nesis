@@ -196,8 +196,10 @@ pub struct SkillRow {
     pub name: String,
     pub version: String,
     pub author: Option<String>,
-    pub has_assets: i64,
     pub has_references: i64,
+    pub has_assets: i64,
+    /// Migration 010 (A2). DEFAULT 0 + CHECK(0|1).
+    pub has_scripts: i64,
     pub files_count: i64,
     pub created_at: String,
     pub updated_at: String,

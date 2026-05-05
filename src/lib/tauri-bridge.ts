@@ -17,7 +17,6 @@ import type { ChatMessage, Conversation } from "@/types/chat";
 import type { Config } from "@/types/config";
 import type { KnowledgeFileMeta, KnowledgeSummary } from "@/types/knowledge";
 import type { Execution, ExecutionDetail } from "@/types/project";
-import type { SkillMeta } from "@/types/skill";
 import type { ParsedWorkflow, WorkflowSummary } from "@/types/workflow";
 
 export interface SafeInvokeOptions {
@@ -87,8 +86,10 @@ export function saveConfig(args: {
 
 // ── skills ──────────────────────────────────────────────────────────────────
 
-/** Returns parsed meta (name, description, ...) for every skill that parses. */
-export function listSkills(): Promise<SkillMeta[]> {
+/** Lista todos os packages v2 com metadata completa (description,
+ *  version, author do frontmatter + flags e contagens das subpastas +
+ *  id/created_at do mirror). Substitui o antigo SkillMeta[] desde A2. */
+export function listSkills(): Promise<SkillPackage[]> {
   return invoke("list_skills");
 }
 
@@ -98,16 +99,19 @@ export function deleteSkill(args: { name: string }): Promise<void> {
   return invoke("delete_skill", args);
 }
 
-/// Skill package v2 (B1+B2). Mirror do `crate::skills::storage::SkillPackage`.
+/// Skill package v2. Mirror do `crate::skills::storage::SkillPackage`.
 /// `path` é absoluto — serde serializa o PathBuf do Rust como string.
-/// `*_count` contam arquivos não-hidden 1 nível abaixo das subpastas
-/// (não recursivo) — pensados pra badges na sidebar sem ter que
-/// chamar getSkill. `id` e `created_at` vêm do mirror SQLite
-/// (best-effort). Skills criadas via FS direto sem mirror retornam
-/// null nesses campos.
+/// `description`/`version`/`author` vêm do frontmatter parseado do
+/// SKILL.md (defaults pra "" / "1.0" / "" se o parse falhar). `*_count`
+/// contam arquivos não-hidden 1 nível abaixo das subpastas (não
+/// recursivo) — pensados pra badges na sidebar sem ter que chamar
+/// getSkill. `id` e `created_at` vêm do mirror SQLite (best-effort).
 export interface SkillPackage {
   name: string;
   path: string;
+  description: string;
+  version: string;
+  author: string;
   has_references: boolean;
   has_assets: boolean;
   has_scripts: boolean;
@@ -177,13 +181,14 @@ export function deleteSkillFile(args: {
 }
 
 /// Bundle retornado por `get_skill` — package + SKILL.md content +
-/// listas de filenames (relativos) de references/ e assets/. UI
-/// hidrata o detalhe da skill em uma chamada só.
+/// listas de filenames (relativos) de references/, assets/ e scripts/.
+/// UI hidrata o detalhe da skill em uma chamada só.
 export interface SkillBundle {
   package: SkillPackage;
   skill_md: string;
   references: string[];
   assets: string[];
+  scripts: string[];
 }
 
 export function getSkill(args: { name: string }): Promise<SkillBundle> {

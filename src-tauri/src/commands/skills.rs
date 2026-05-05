@@ -24,28 +24,27 @@ use crate::orchestrator::skill_parser;
 use crate::skills::storage as skill_storage;
 use crate::skills::SkillPackage;
 
+/// Lista todos os skill packages v2 com metadata completa: frontmatter
+/// (description/version/author parseados pelo storage), flags e
+/// counts de subpastas, mais id/created_at do mirror SQLite (best-
+/// effort). Substitui o antigo `list_skills` que retornava só
+/// `SkillMeta` — agora a UI consome um único IPC.
 #[tauri::command]
-pub async fn list_skills() -> Result<Vec<skill_parser::SkillMeta>, String> {
-    let packages = skill_storage::list_skill_packages()?;
-    let mut metas: Vec<skill_parser::SkillMeta> = Vec::with_capacity(packages.len());
-    for pkg in packages {
-        let skill_md = pkg.path.join("SKILL.md");
-        match fs::read_to_string(&skill_md) {
-            Ok(content) => match skill_parser::parse_skill(&content) {
-                Ok(skill) => metas.push(skill.meta),
-                Err(err) => eprintln!(
-                    "[skills] pulando {} ao listar: {err}",
-                    skill_md.display()
-                ),
-            },
-            Err(err) => eprintln!(
-                "[skills] falha ao ler {}: {err}",
-                skill_md.display()
-            ),
+pub async fn list_skills(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<SkillPackage>, String> {
+    let mut packages = skill_storage::list_skill_packages()?;
+    if let Ok(rows) = queries::list_skills(&pool).await {
+        let by_name: std::collections::HashMap<String, &SkillRow> =
+            rows.iter().map(|r| (r.name.clone(), r)).collect();
+        for pkg in &mut packages {
+            if let Some(row) = by_name.get(&pkg.name) {
+                pkg.id = Some(row.id.clone());
+                pkg.created_at = Some(row.created_at.clone());
+            }
         }
     }
-    metas.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(metas)
+    Ok(packages)
 }
 
 /// Delete the on-disk artifact backing a skill — pasta `<name>/`
@@ -113,40 +112,26 @@ pub async fn delete_skill(name: String, pool: State<'_, SqlitePool>) -> Result<(
 /// Bundle retornado por `get_skill` — tudo que a UI precisa pra
 /// renderizar uma skill v2 num só round-trip: o package metadata,
 /// o conteúdo do SKILL.md e a lista de filenames de cada subpasta.
-/// Filenames são relativos (ex: "module1.md", "template.html") —
-/// caller passa o filename pra `get_skill_file(name, path)` pra
-/// puxar o conteúdo individualmente.
+/// Filenames são relativos (ex: "module1.md", "template.html",
+/// "extract.sh") — caller passa o filename pra `get_skill_file(name,
+/// path)` pra puxar o conteúdo individualmente.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillBundle {
     pub package: SkillPackage,
     pub skill_md: String,
     pub references: Vec<String>,
     pub assets: Vec<String>,
+    pub scripts: Vec<String>,
 }
 
-/// Lista todos os skill packages v2 do FS via `list_skill_packages`,
-/// enriquecidos com `id` e `created_at` do mirror SQLite (best-effort
-/// — packages sem mirror ficam com None nesses campos). FS continua
-/// source-of-truth pra has_assets/has_references/files_count.
+/// Alias mantido pra compatibilidade — `list_skills` retorna o mesmo
+/// shape desde A2. Bridges legacy ainda chamam essa rota; novos
+/// callers devem preferir `list_skills`.
 #[tauri::command]
 pub async fn list_skill_packages(
     pool: State<'_, SqlitePool>,
 ) -> Result<Vec<SkillPackage>, String> {
-    let mut packages = skill_storage::list_skill_packages()?;
-    // Best-effort SQLite join. Falha aqui (mirror corrompido,
-    // permissão) só faz id/created_at saírem como None — UI degrada
-    // graceful (Skill.id cai pra name como fallback no FE).
-    if let Ok(rows) = queries::list_skills(&pool).await {
-        let by_name: std::collections::HashMap<String, &SkillRow> =
-            rows.iter().map(|r| (r.name.clone(), r)).collect();
-        for pkg in &mut packages {
-            if let Some(row) = by_name.get(&pkg.name) {
-                pkg.id = Some(row.id.clone());
-                pkg.created_at = Some(row.created_at.clone());
-            }
-        }
-    }
-    Ok(packages)
+    list_skills(pool).await
 }
 
 /// Bundle de uma skill: package (com id/created_at do mirror) +
@@ -172,11 +157,16 @@ pub async fn get_skill(
         .into_iter()
         .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
         .collect();
+    let scripts = skill_storage::list_scripts(&name)?
+        .into_iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+        .collect();
     Ok(SkillBundle {
         package,
         skill_md,
         references,
         assets,
+        scripts,
     })
 }
 
@@ -301,8 +291,9 @@ pub async fn create_skill(
         name: name.clone(),
         version: "1.0".to_string(),
         author: None,
-        has_assets: 0,
         has_references: 0,
+        has_assets: 0,
+        has_scripts: 0,
         files_count: 1,
         created_at: String::new(),
         updated_at: String::new(),
@@ -424,9 +415,9 @@ pub async fn delete_skill_file(
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-/// Re-stat o package + sincroniza o mirror SQLite (has_assets,
-/// has_references, files_count). Best-effort: falha aqui não
-/// derruba a operação que chamou — o FS continua source-of-truth.
+/// Re-stat o package + sincroniza o mirror SQLite (has_references,
+/// has_assets, has_scripts, files_count). Best-effort: falha aqui
+/// não derruba a operação que chamou — o FS continua source-of-truth.
 async fn sync_skill_mirror(pool: &SqlitePool, name: &str) {
     let package = match skill_storage::get_skill_package(name) {
         Ok(Some(p)) => p,
@@ -444,8 +435,9 @@ async fn sync_skill_mirror(pool: &SqlitePool, name: &str) {
             .map(|r| r.version.clone())
             .unwrap_or_else(|| "1.0".to_string()),
         author: existing.and_then(|r| r.author),
-        has_assets: if package.has_assets { 1 } else { 0 },
         has_references: if package.has_references { 1 } else { 0 },
+        has_assets: if package.has_assets { 1 } else { 0 },
+        has_scripts: if package.has_scripts { 1 } else { 0 },
         files_count: package.files_count as i64,
         created_at: String::new(),
         updated_at: String::new(),

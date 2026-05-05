@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::config;
+use crate::orchestrator::skill_parser;
 
 /// Snapshot do que está em disco pra uma skill v2. `path` é o
 /// diretório raiz do package; `has_*` indicam se cada subpasta
@@ -36,6 +37,16 @@ use crate::config;
 pub struct SkillPackage {
     pub name: String,
     pub path: PathBuf,
+    /// Frontmatter parseado de `SKILL.md`. Quando o arquivo está
+    /// quebrado (parser falha), caem nos defaults: description = "",
+    /// version = "1.0", author = "". `read_package` é a única fonte
+    /// — UI consome direto sem precisar de IPC paralela.
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub author: String,
     pub has_references: bool,
     pub has_assets: bool,
     pub has_scripts: bool,
@@ -229,6 +240,23 @@ fn read_package(path: &Path, name: String) -> SkillPackage {
     let references = path.join("references");
     let assets = path.join("assets");
     let scripts = path.join("scripts");
+
+    // Parseia frontmatter do SKILL.md pra description/version/author.
+    // Falha (arquivo ausente, frontmatter quebrado) cai nos defaults
+    // — list_skill_packages NÃO erra por causa de um package
+    // malformado, só perde os campos parseados.
+    let (description, version, author) = path
+        .join("SKILL.md")
+        .canonicalize()
+        .ok()
+        .and_then(|p| fs::read_to_string(&p).ok())
+        .and_then(|content| skill_parser::parse_skill(&content).ok())
+        .map(|parsed| {
+            let m = parsed.meta;
+            (m.description, m.version, m.author)
+        })
+        .unwrap_or_else(|| (String::new(), "1.0".to_string(), String::new()));
+
     SkillPackage {
         files_count: count_files_recursive(path),
         has_references: references.is_dir(),
@@ -237,6 +265,9 @@ fn read_package(path: &Path, name: String) -> SkillPackage {
         references_count: count_files_flat(&references),
         assets_count: count_files_flat(&assets),
         scripts_count: count_files_flat(&scripts),
+        description,
+        version,
+        author,
         name,
         path: path.to_path_buf(),
         id: None,
