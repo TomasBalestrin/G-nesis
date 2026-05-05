@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Globe, Loader2, Sparkles } from "lucide-react";
 import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -174,6 +174,57 @@ export function ChatPanel() {
   );
   useTauriEvent("integration:loaded", loadedCb);
 
+  // ── web search indicator ──────────────────────────────────────────────────
+  // Backend dispara "chat:searching" antes de cada chamada à Brave
+  // Search; "chat:search-done" depois (sucesso ou falha). Indicador
+  // separado do integration:loading porque os dois fluxos podem
+  // coexistir num turno (ex: pesquisa → chamada à integração).
+  const [searchingQuery, setSearchingQuery] = useState<string | null>(null);
+
+  const searchingHandler = useRef<
+    (e: { conversation_id: string | null; query: string; round: number }) => void
+  >(() => {});
+  searchingHandler.current = (event) => {
+    if (event.conversation_id !== conversationId) return;
+    setSearchingQuery(event.query);
+  };
+  const searchingCb = useCallback(
+    (e: { conversation_id: string | null; query: string; round: number }) =>
+      searchingHandler.current(e),
+    [],
+  );
+  useTauriEvent("chat:searching", searchingCb);
+
+  const searchDoneHandler = useRef<
+    (e: {
+      conversation_id: string | null;
+      query: string;
+      round: number;
+      success: boolean;
+    }) => void
+  >(() => {});
+  searchDoneHandler.current = (event) => {
+    if (event.conversation_id !== conversationId) return;
+    setSearchingQuery(null);
+    if (!event.success) {
+      toast({
+        title: "Pesquisa falhou",
+        description: `Query: ${event.query}`,
+        variant: "destructive",
+      });
+    }
+  };
+  const searchDoneCb = useCallback(
+    (e: {
+      conversation_id: string | null;
+      query: string;
+      round: number;
+      success: boolean;
+    }) => searchDoneHandler.current(e),
+    [],
+  );
+  useTauriEvent("chat:search-done", searchDoneCb);
+
   function displayNameFor(name: string): string {
     return integrations.find((i) => i.name === name)?.display_name ?? name;
   }
@@ -298,7 +349,9 @@ export function ChatPanel() {
           {renderable.map((m) => (
             <MessageBubble key={m.id} message={m} onAutoSend={handleSend} />
           ))}
-          {sending && integrationCall ? (
+          {sending && searchingQuery ? (
+            <SearchingIndicator query={searchingQuery} />
+          ) : sending && integrationCall ? (
             <IntegrationLoadingIndicator
               displayName={displayNameFor(integrationCall.name)}
             />
@@ -403,6 +456,25 @@ function IntegrationLoadingIndicator({ displayName }: { displayName: string }) {
           <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
           <span>
             Consultando <span className="font-medium">{displayName}</span>...
+          </span>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function SearchingIndicator({ query }: { query: string }) {
+  return (
+    <div
+      className="flex w-full justify-start"
+      aria-live="polite"
+      aria-label={`Pesquisando na web: ${query}`}
+    >
+      <article className="rounded-xl border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-[var(--text-2)]">
+          <Globe className="h-4 w-4 animate-spin text-[var(--accent)]" />
+          <span>
+            Pesquisando na web: <span className="font-mono text-xs">{query}</span>
           </span>
         </div>
       </article>

@@ -9,7 +9,11 @@
 //! `Agent`, registre no `lookup` deste módulo.
 
 pub mod skill_architect;
-pub mod web_search;
+// web_search foi promovido pra `crate::search` (módulo compartilhado
+// com o orquestrador GPT principal). Reexport mantido por
+// conveniência — call sites internos do agents/ continuam usando
+// `web_search::web_search(...)`.
+pub use crate::search as web_search;
 
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};

@@ -1,4 +1,7 @@
-//! Web search pra agentes internos via Brave Search API.
+//! Web search compartilhado: usado pelo agente skill-architect (B2) e
+//! pelo orquestrador GPT principal (`commands/chat.rs` web_search
+//! loop). Backend único, mesmo `BRAVE_API_KEY`, mesmo formato de
+//! resultado.
 //!
 //! Backend chosen porque (a) tem free tier de 2k queries/mês, (b)
 //! retorna JSON estruturado sem precisar parsear HTML, (c) não exige

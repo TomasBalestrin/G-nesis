@@ -203,6 +203,38 @@ Regras de uso:
 - Só chame quando o conteúdo for relevante pra resposta atual. NUNCA carregue todos em massa.
 - Se a skill não listou o arquivo, ele não existe — chame `list_skills` ou re-leia o reply do `/` pra confirmar antes de tentar."##;
 
+/// WEB_SEARCH — protocolo do orquestrador principal pra invocar
+/// pesquisa na internet via Brave Search. Capacidade NATIVA do chat,
+/// não é integração (@) nem slash command (/) — o GPT decide sozinho
+/// quando pesquisar, mesmo padrão do ChatGPT/Claude. Mesmo loop do
+/// `integration_call` (modelo emite envelope JSON, Rust executa,
+/// resultado reinjetado como contexto, modelo responde).
+pub const PROMPT_WEB_SEARCH: &str = r##"## Pesquisa na web (capacidade nativa)
+
+Você tem acesso nativo a pesquisa na internet. Use automaticamente quando:
+- O usuário perguntar sobre algo atual (notícias, preços, eventos)
+- Pedir versão atual de uma lib, framework ou ferramenta
+- Perguntar sobre documentação que pode ter mudado
+- Qualquer pergunta onde seus dados de treinamento podem estar desatualizados
+- O usuário pedir explicitamente pra pesquisar
+
+NÃO precisa de permissão. NÃO precisa de comando especial (não tem @ nem /). Pesquise naturalmente como parte da conversa, da mesma forma que consultaria sua memória.
+
+Para pesquisar, inclua no INÍCIO da sua resposta:
+
+```json
+{"web_search": {"query": "termos curtos"}}
+```
+
+O sistema executa a busca (Brave Search, top 5 resultados com title/url/snippet) e te devolve os resultados automaticamente. Aí você interpreta e responde ao usuário em português conciso, citando fontes (URL) quando relevante.
+
+Regras:
+- Queries curtas: 3 a 6 palavras, termos técnicos
+- Máximo 3 pesquisas por mensagem do usuário (cap automático no backend)
+- NÃO pesquise pra perguntas que você já consegue responder bem com conhecimento base — usuário pode achar lerdo
+- Pesquise SEMPRE pra: versões atuais de libs/frameworks, preços, eventos recentes, notícias, docs que mudam
+- NÃO emita `web_search` e `integration_call` no mesmo turno — escolha um. Se o usuário precisa dos dois (ex: "compara meu MRR com o mercado"), faça em sequência: primeiro a integração, depois pesquise."##;
+
 /// TOOLS — capabilities exposed via the channels (`bash`, `claude-code`,
 /// `api`) plus the dependency-permission protocol the frontend detects
 /// to render inline Sim/Não buttons. Verbatim from
@@ -865,7 +897,22 @@ pub fn build_system_prompt(
     capabilities_block: Option<&str>,
     skills: &[SkillMeta],
 ) -> String {
-    let mut sections: Vec<String> = Vec::with_capacity(9);
+    let mut sections: Vec<String> = Vec::with_capacity(11);
+
+    // Data atual SEMPRE como primeira seção. Sem isso, o GPT chuta
+    // datas pela cutoff date dele (que pode ser meses/anos atrás) e
+    // erra cálculos como "últimos 7 dias", "esse mês", "semana
+    // passada". Formato dd/mm/yyyy hh:mm casa com a expectativa
+    // PT-BR do usuário; label "horário de Brasília" deixa claro o
+    // timezone (Local::now() respeita o relógio do SO — em Brasília
+    // bate, em outros TZs serve como aproximação útil).
+    let now = chrono::Local::now();
+    let date_str = now
+        .format("%d/%m/%Y %H:%M (horário de Brasília)")
+        .to_string();
+    sections.push(format!(
+        "Data e hora atual: {date_str}. Use esta data como referência para qualquer cálculo temporal (datas relativas tipo \"últimos 7 dias\", \"esse mês\", \"semana passada\")."
+    ));
 
     // CORE carrega `{{company_name}}` na linha de identidade (linha
     // ~33). Sem substituição o GPT vê e às vezes ecoa o placeholder
@@ -877,6 +924,12 @@ pub fn build_system_prompt(
         company_name.unwrap_or("sua empresa"),
     );
     sections.push(core);
+
+    // WEB_SEARCH é incondicional — todo turno do orquestrador pode
+    // pedir pesquisa. Vem logo após CORE pra que a regra "pesquise
+    // dados atuais" entre antes do contexto do usuário (que pode
+    // mencionar ferramentas/libs que precisam de validação).
+    sections.push(PROMPT_WEB_SEARCH.to_string());
 
     if let (Some(name), Some(company)) = (user_name, company_name) {
         let summary = knowledge_summary.unwrap_or("Nenhum documento fornecido ainda.");

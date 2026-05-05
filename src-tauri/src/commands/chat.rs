@@ -198,6 +198,20 @@ struct CallInner {
     params: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
+/// `{"web_search": {"query": "..."}}` envelope. Mesmo padrão de
+/// detecção do integration_call — JSON puro, fenced, ou intercalado
+/// com texto. Cap de 3 buscas por turno do usuário (mesmo limite do
+/// agente skill-architect, B2).
+#[derive(Deserialize)]
+struct WebSearchEnvelope {
+    web_search: WebSearchInner,
+}
+
+#[derive(Deserialize)]
+struct WebSearchInner {
+    query: String,
+}
+
 /// Detect the integration_call protocol in a model response. Aceita
 /// 4 formatos comuns que o GPT emite na prática:
 ///   - JSON puro:      `{"integration_call": {...}}`
@@ -228,14 +242,35 @@ fn extract_integration_call(response: &str) -> Option<IntegrationCallRequest> {
     })
 }
 
+/// Detecta o envelope `{"web_search": {"query": "..."}}` na resposta
+/// do GPT principal. Mesma robustez do `extract_integration_call`
+/// (fenced, inline na prosa, etc) via `find_envelope_for`.
+fn extract_web_search(response: &str) -> Option<String> {
+    let json_str = find_envelope_for(response, "\"web_search\"")?;
+    let envelope: WebSearchEnvelope = serde_json::from_str(json_str).ok()?;
+    let query = envelope.web_search.query.trim().to_string();
+    if query.is_empty() {
+        None
+    } else {
+        Some(query)
+    }
+}
+
 /// Find the substring of `response` that brackets a balanced
 /// `{ ... "integration_call" ... }` envelope. ASCII-byte scan with
 /// string-literal awareness (so `{` / `}` inside `"..."` don't
 /// mis-balance). Returns `None` quando não há marker ou quando o
 /// envelope não fecha corretamente.
 fn find_envelope(response: &str) -> Option<&str> {
-    const MARKER: &str = "\"integration_call\"";
-    let marker_pos = response.find(MARKER)?;
+    find_envelope_for(response, "\"integration_call\"")
+}
+
+/// Generalização do `find_envelope` parametrizada pela key da
+/// envelope. Reusada pelo `extract_web_search` (key `"web_search"`)
+/// e mantém o comportamento do extractor antigo (string-literal
+/// awareness, escape de aspas, balance de braces).
+fn find_envelope_for<'a>(response: &'a str, marker: &str) -> Option<&'a str> {
+    let marker_pos = response.find(marker)?;
     let prefix = &response[..marker_pos];
     let start = prefix.rfind('{')?;
 
@@ -290,10 +325,195 @@ fn json_value_to_param(v: serde_json::Value) -> String {
 }
 
 #[derive(Clone, Serialize)]
+struct ChatSearchingEvent {
+    conversation_id: Option<String>,
+    query: String,
+    round: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct ChatSearchDoneEvent {
+    conversation_id: Option<String>,
+    query: String,
+    round: usize,
+    /// `true` quando a busca trouxe pelo menos 1 hit OU completou
+    /// sem erro. `false` quando o backend (Brave) falhou ou caiu
+    /// em timeout — UI usa pra trocar o ícone do indicador.
+    success: bool,
+}
+
+/// Limite de web_search por turno do usuário. Cada call adiciona
+/// ~1k tokens de tool result; 3 cobre research razoável sem deixar
+/// o GPT loopar. Mesmo cap usado pelo skill-architect (B2).
+const MAX_WEB_SEARCHES_PER_TURN: usize = 3;
+
+/// Timeout por chamada à Brave Search. 15s é generoso pra rede ruim
+/// mas evita travar o turno inteiro quando a API enrosca.
+const WEB_SEARCH_TIMEOUT_SECS: u64 = 15;
+
+/// Pre-processador que roda ANTES do `post_process_integration_call`.
+/// Se o GPT pediu `web_search`, executa via Brave Search, reinjeta os
+/// resultados como mensagem de contexto e re-pergunta ao GPT até ele
+/// parar de pedir buscas (ou o cap ser atingido). Quando converge,
+/// devolve a resposta final pra cadeia continuar (que pode ainda
+/// terminar num `integration_call` — os dois fluxos coexistem).
+async fn post_process_web_search(
+    raw: (String, Option<String>, Option<String>),
+    client: &AiClient,
+    system_prompt: &str,
+    messages: &[Message],
+    app: &AppHandle,
+    conversation_id: Option<&str>,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    if extract_web_search(&raw.0).is_none() {
+        return Ok(raw);
+    }
+
+    let brave_key = match config::load_config().ok().and_then(|c| c.search.brave_api_key) {
+        Some(k) if !k.trim().is_empty() => k,
+        _ => {
+            // Sem key → injeta resultado vazio com mensagem
+            // user-actionable e chama o GPT 1x pra que ele saiba
+            // continuar sem pesquisa. Não queremos travar.
+            let mut next_messages: Vec<Message> = messages.to_vec();
+            next_messages.push(Message::assistant(raw.0.clone()));
+            next_messages.push(Message::user(
+                "BRAVE_API_KEY não configurada — não foi possível pesquisar. Adicione em ~/.genesis/config.toml [search] brave_api_key, ou responda com base no conhecimento que você já tem."
+                    .to_string(),
+            ));
+            let final_reply = client
+                .chat_completion(system_prompt, &next_messages)
+                .await
+                .map_err(|e| e.user_message())?;
+            return Ok((final_reply, None, None));
+        }
+    };
+
+    let mut next_messages: Vec<Message> = messages.to_vec();
+    let mut current_reply = raw.0;
+
+    for round in 1..=MAX_WEB_SEARCHES_PER_TURN {
+        let Some(query) = extract_web_search(&current_reply) else {
+            // GPT respondeu sem envelope → resposta final.
+            println!(">>> [WEB_SEARCH] round {round}: convergiu (resposta final)");
+            break;
+        };
+        println!(">>> [WEB_SEARCH] round {round} START: query=`{query}`");
+
+        let _ = app.emit(
+            "chat:searching",
+            ChatSearchingEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                query: query.clone(),
+                round,
+            },
+        );
+
+        // Per-call timeout — Brave server enroscando não trava o turno.
+        let search_call = tokio::time::timeout(
+            std::time::Duration::from_secs(WEB_SEARCH_TIMEOUT_SECS),
+            crate::search::web_search(&query, &brave_key),
+        )
+        .await;
+
+        let (results_text, success) = match search_call {
+            Ok(Ok(hits)) => {
+                println!(
+                    ">>> [WEB_SEARCH] round {round} OK: {} hits",
+                    hits.len()
+                );
+                let payload = serde_json::to_string(&hits)
+                    .unwrap_or_else(|_| "[]".to_string());
+                if hits.is_empty() {
+                    (
+                        format!(
+                            "Pesquisa retornou 0 resultados pra `{query}`. Reformule a query ou responda com o que já sabe."
+                        ),
+                        true,
+                    )
+                } else {
+                    (
+                        format!(
+                            "Resultados da pesquisa `{query}` (top {}):\n\n```json\n{payload}\n```\n\nUse esses resultados pra responder ao usuário em português conciso, citando fontes (URL) quando relevante. Se ainda precisar de mais info, faça outra `web_search` (limite de 3 por turno).",
+                            hits.len()
+                        ),
+                        true,
+                    )
+                }
+            }
+            Ok(Err(err)) => {
+                println!(">>> [WEB_SEARCH] round {round} FAIL: {err}");
+                (
+                    format!(
+                        "Pesquisa falhou: {err}. Responda com base no conhecimento que você já tem."
+                    ),
+                    false,
+                )
+            }
+            Err(_elapsed) => {
+                println!(
+                    ">>> [WEB_SEARCH] round {round} TIMEOUT after {WEB_SEARCH_TIMEOUT_SECS}s"
+                );
+                (
+                    "Pesquisa demorou demais. Responda com base no conhecimento que você já tem."
+                        .to_string(),
+                    false,
+                )
+            }
+        };
+
+        let _ = app.emit(
+            "chat:search-done",
+            ChatSearchDoneEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                query: query.clone(),
+                round,
+                success,
+            },
+        );
+
+        next_messages.push(Message::assistant(current_reply.clone()));
+        next_messages.push(Message::user(results_text));
+
+        current_reply = client
+            .chat_completion(system_prompt, &next_messages)
+            .await
+            .map_err(|e| e.user_message())?;
+
+        if round == MAX_WEB_SEARCHES_PER_TURN
+            && extract_web_search(&current_reply).is_some()
+        {
+            // Cap atingido sem convergir — corta com fallback claro.
+            println!(
+                ">>> [WEB_SEARCH] cap {MAX_WEB_SEARCHES_PER_TURN} atingido sem convergir"
+            );
+            current_reply = "Não consegui obter todos os dados pesquisando. Tente uma pergunta mais específica ou descreva o que você já sabe.".to_string();
+        }
+    }
+
+    Ok((current_reply, None, None))
+}
+
+#[derive(Clone, Serialize)]
 struct IntegrationLoadingEvent {
     conversation_id: Option<String>,
     integration_name: String,
     endpoint: String,
+}
+
+/// Progresso por round dentro do loop de integration_call. UI usa
+/// pra atualizar o sub-label do spinner ("calling_api" → "calling_gpt")
+/// e provar pro usuário que o backend está vivo durante chains
+/// multi-round. Não substitui `integration:loading`/`loaded` — soma.
+#[derive(Clone, Serialize)]
+struct IntegrationProgressEvent {
+    conversation_id: Option<String>,
+    integration_name: String,
+    endpoint: String,
+    round: usize,
+    /// "calling_api" enquanto a HTTP chamada à integração roda;
+    /// "calling_gpt" quando reinjetamos no chat_completion.
+    status: &'static str,
 }
 
 #[derive(Clone, Serialize)]
@@ -411,6 +631,13 @@ const MAX_INTEGRATION_ROUNDS: usize = 3;
 /// outros 2s — total ~5s de oxigênio antes da próxima request.
 const ROUND_DELAY_SECS: u64 = 2;
 
+/// Timeout POR ROUND da chamada HTTP à integração (não confundir com
+/// o timeout do `OpenAIClient` em ai/client.rs, que é 120s pra
+/// chat_completion). 30s aqui cobre APIs externas razoavelmente
+/// rápidas; se o servidor demora mais, devolvemos uma mensagem
+/// amigável ao usuário em vez de travar o loop.
+const PER_ROUND_HTTP_TIMEOUT_SECS: u64 = 30;
+
 async fn post_process_integration_call(
     raw: (String, Option<String>, Option<String>),
     active_integration: Option<&IntegrationRow>,
@@ -453,8 +680,8 @@ async fn post_process_integration_call(
             break;
         };
         println!(
-            ">>> [INTEGRATION] post_process round {round}: endpoint=`{}` params={:?}",
-            call.endpoint, call.params
+            ">>> ROUND {round} START: endpoint={}",
+            call.endpoint
         );
 
         if !emitted_loading {
@@ -469,52 +696,43 @@ async fn post_process_integration_call(
             emitted_loading = true;
         }
 
-        match run_integration_request(integration, &call, pool).await {
-            Ok(json) => {
+        // Progress: HTTP da integração começando. UI atualiza o
+        // sub-label do spinner pra "calling_api".
+        let _ = app.emit(
+            "integration:progress",
+            IntegrationProgressEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                integration_name: integration.name.clone(),
+                endpoint: call.endpoint.clone(),
+                round,
+                status: "calling_api",
+            },
+        );
+
+        // Timeout POR ROUND da chamada HTTP — o transport HTTP do
+        // IntegrationClient já tem timeout próprio, mas se o servidor
+        // remoto enroscar antes de responder com headers, esse
+        // wrapper garante que o loop não fica travado pra sempre.
+        let api_call =
+            tokio::time::timeout(
+                std::time::Duration::from_secs(PER_ROUND_HTTP_TIMEOUT_SECS),
+                run_integration_request(integration, &call, pool),
+            )
+            .await;
+
+        let json = match api_call {
+            Ok(Ok(json)) => {
                 last_success = true;
-                // Log requested em E3 follow-up: round + endpoint +
-                // tamanho do payload da API. Útil pra confirmar que
-                // o GPT está realmente progredindo na chain (lista
-                // → detail → totals) em vez de parar cedo.
                 println!(
-                    ">>> ROUND {round}: endpoint={} response_size={}",
-                    call.endpoint,
+                    ">>> ROUND {round} API RESPONSE: {} bytes",
                     json.len()
                 );
-                // Push assistant turn (envelope JSON) + synthetic user
-                // turn carregando o resultado da API. O prompt do user
-                // turn deixa claro que round adicional é OK se o GPT
-                // ainda precisa de mais dados.
-                next_messages.push(Message::assistant(current_reply.clone()));
-                let context_msg = format!(
-                    "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe a pergunta original pediu DADOS AGREGADOS (faturamento, lucro, métricas) e este resultado é APENAS uma lista (sem totals/agregados), você AINDA não terminou — faça outra `integration_call` pra abrir o item específico e pegar os números. Se já tem tudo que precisa, responda ao usuário em português conciso, com valores formatados (R$ X, X%) — sem JSON cru, sem devolver IDs.",
-                    name = integration.name,
-                    endpoint = call.endpoint,
-                );
-                next_messages.push(Message::user(context_msg));
-
-                // Throttle entre GPT calls pra suavizar o burst que
-                // estourava rate limit da OpenAI em chains de 3
-                // rounds. O 1s é entre o GPT inicial e o round 1
-                // também (o burst começa aí).
-                tokio::time::sleep(std::time::Duration::from_secs(
-                    ROUND_DELAY_SECS,
-                ))
-                .await;
-
-                current_reply = client
-                    .chat_completion(system_prompt, &next_messages)
-                    .await
-                    .map_err(|e| e.user_message())?;
-                println!(
-                    ">>> [INTEGRATION] post_process round {round} → next GPT reply ({} bytes)",
-                    current_reply.len()
-                );
+                json
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 last_success = false;
                 println!(
-                    ">>> [INTEGRATION] post_process round {round} HTTP falhou: {err}"
+                    ">>> ROUND {round} HTTP ERR: {err}"
                 );
                 current_reply = format!(
                     "Não consegui consultar `@{name}` agora: {err}",
@@ -522,7 +740,58 @@ async fn post_process_integration_call(
                 );
                 break;
             }
-        }
+            Err(_elapsed) => {
+                last_success = false;
+                println!(
+                    ">>> ROUND {round} TIMEOUT after {PER_ROUND_HTTP_TIMEOUT_SECS}s"
+                );
+                current_reply = "A consulta demorou demais. Tente perguntar algo mais específico.".to_string();
+                break;
+            }
+        };
+
+        // Push assistant turn (envelope JSON) + synthetic user
+        // turn carregando o resultado da API. O prompt do user
+        // turn deixa claro que round adicional é OK se o GPT
+        // ainda precisa de mais dados.
+        next_messages.push(Message::assistant(current_reply.clone()));
+        let context_msg = format!(
+            "Resultado da chamada à integração `@{name}` no endpoint `{endpoint}` (round {round}):\n\n```json\n{json}\n```\n\nSe a pergunta original pediu DADOS AGREGADOS (faturamento, lucro, métricas) e este resultado é APENAS uma lista (sem totals/agregados), você AINDA não terminou — faça outra `integration_call` pra abrir o item específico e pegar os números. Se já tem tudo que precisa, responda ao usuário em português conciso, com valores formatados (R$ X, X%) — sem JSON cru, sem devolver IDs.",
+            name = integration.name,
+            endpoint = call.endpoint,
+        );
+        next_messages.push(Message::user(context_msg));
+
+        // Throttle entre GPT calls pra suavizar o burst que
+        // estourava rate limit da OpenAI em chains de 3
+        // rounds. O 1s é entre o GPT inicial e o round 1
+        // também (o burst começa aí).
+        tokio::time::sleep(std::time::Duration::from_secs(
+            ROUND_DELAY_SECS,
+        ))
+        .await;
+
+        // Progress: indo pro GPT processar o resultado da API.
+        let _ = app.emit(
+            "integration:progress",
+            IntegrationProgressEvent {
+                conversation_id: conversation_id.map(str::to_string),
+                integration_name: integration.name.clone(),
+                endpoint: call.endpoint.clone(),
+                round,
+                status: "calling_gpt",
+            },
+        );
+        println!(">>> ROUND {round} GPT CALL START");
+
+        current_reply = client
+            .chat_completion(system_prompt, &next_messages)
+            .await
+            .map_err(|e| e.user_message())?;
+        println!(
+            ">>> ROUND {round} GPT RESPONSE: {} chars",
+            current_reply.len()
+        );
 
         if round == MAX_INTEGRATION_ROUNDS {
             // O loop fecha naturalmente após esse iteration; se ainda
@@ -1894,6 +2163,21 @@ pub async fn send_chat_message(
                     (content, thinking, thinking_summary)
                 }
             };
+
+            // Web search vem ANTES do integration_call: queries
+            // sobre dados atuais (preço, versão, doc) podem chegar
+            // antes do GPT decidir chamar uma integração; quando
+            // são exclusivas (caso comum), o pipeline termina aqui
+            // sem nem invocar o integration loop.
+            let raw = post_process_web_search(
+                raw,
+                &client,
+                &system_prompt,
+                &messages,
+                &app,
+                conversation_id.as_deref(),
+            )
+            .await?;
 
             post_process_integration_call(
                 raw,
