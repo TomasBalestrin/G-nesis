@@ -150,7 +150,10 @@ async fn migrate_one(
     }
 
     // Cria pasta + assets/ + references/. Idempotente.
-    skill_storage::ensure_skill_dirs(&name)?;
+    // Cria APENAS a raiz <name>/ (regra "NUNCA criar subpastas vazias"
+    // do A1). Subpastas só nascem quando há arquivo pra elas — caller
+    // futuro adiciona via storage::create_subfolder.
+    skill_storage::ensure_skill_dir(&name)?;
 
     // Move `<name>.md` → `<name>/SKILL.md`. fs::rename atomic em
     // mesmo FS; fallback copy + remove em cross-device. Aqui é mesmo
