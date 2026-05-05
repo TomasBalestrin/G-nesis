@@ -356,6 +356,20 @@ impl OpenAIClient {
         self
     }
 
+    /// Versão non-consuming do `with_model` — retorna um clone com
+    /// model trocado, preservando o `&self` original. Pensado pra
+    /// trocas de modelo "ad hoc" (ex: orquestrador que quer chamar
+    /// o `gpt-4o-search-preview` num turno mas mantém o modelo
+    /// padrão pros demais). Reqwest `Client` já é Arc-wrapped por
+    /// dentro, então o clone é barato.
+    pub fn clone_with_model(&self, model: impl Into<String>) -> Self {
+        Self {
+            client: self.client.clone(),
+            api_key: self.api_key.clone(),
+            model: model.into(),
+        }
+    }
+
     pub async fn chat_completion(
         &self,
         system: &str,
@@ -389,7 +403,36 @@ impl OpenAIClient {
         }
         messages.extend_from_slice(history);
 
-        self.send_once_with_tools(&messages, Some(tools)).await
+        self.send_once_with_tools(&messages, Some(tools), None).await
+    }
+
+    /// Chat completion com pesquisa nativa da OpenAI ligada. O backend
+    /// da OpenAI executa as buscas durante o turno (top-k via Bing
+    /// segundo a doc atual) e devolve a resposta já com os resultados
+    /// integrados — sem loop manual, sem `web_search` envelope no
+    /// content do modelo. Caller costuma usar o slug
+    /// `gpt-4o-search-preview` (veja `WebSearchOptions`); modelos
+    /// padrão também aceitam mas o resultado é variável.
+    pub async fn chat_completion_with_web_search(
+        &self,
+        system: &str,
+        history: &[Message],
+        options: WebSearchOptions,
+    ) -> Result<String, AiError> {
+        let mut messages: Vec<Message> = Vec::with_capacity(history.len() + 1);
+        if !system.is_empty() {
+            messages.push(Message::system(system));
+        }
+        messages.extend_from_slice(history);
+        let out = self
+            .send_once_with_tools(&messages, None, Some(options))
+            .await?;
+        if out.content.trim().is_empty() {
+            return Err(AiError::EmptyResponse {
+                provider: Provider::OpenAi,
+            });
+        }
+        Ok(out.content)
     }
 
     /// Compress a concatenation of the user's knowledge-base markdown
@@ -415,7 +458,7 @@ impl OpenAIClient {
     /// `generate_knowledge_summary`) keep their `Result<String, _>`
     /// signature untouched.
     async fn send_once(&self, messages: &[Message]) -> Result<String, AiError> {
-        let out = self.send_once_with_tools(messages, None).await?;
+        let out = self.send_once_with_tools(messages, None, None).await?;
         if out.content.trim().is_empty() {
             return Err(AiError::EmptyResponse {
                 provider: Provider::OpenAi,
@@ -427,17 +470,21 @@ impl OpenAIClient {
     /// Single-shot completion that surfaces both the text content and
     /// any tool_calls. When `tools` is `None`, behaves exactly like a
     /// classic chat call (omits the `tools` field from the JSON so the
-    /// API doesn't surprise older models).
+    /// API doesn't surprise older models). `web_search_options`
+    /// segue a mesma política — só vai no body quando preenchido,
+    /// evita rejeição em snapshots de modelo que não suportam.
     async fn send_once_with_tools(
         &self,
         messages: &[Message],
         tools: Option<&[ToolDefinition]>,
+        web_search_options: Option<WebSearchOptions>,
     ) -> Result<ChatWithToolsOutput, AiError> {
         let body = OpenAiChatRequest {
             model: &self.model,
             messages,
             tools,
             tool_choice: None,
+            web_search_options,
         };
 
         let resp = self
@@ -529,6 +576,29 @@ struct OpenAiChatRequest<'a> {
     /// Left unset for now — `auto` is what every caller wants.
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<&'a str>,
+    /// Native web search via OpenAI (model `gpt-4o-search-preview` ou
+    /// equivalente). Quando preenchido, o backend da OpenAI executa
+    /// pesquisas durante o turno e injeta os resultados no contexto
+    /// antes de gerar a resposta — sem precisar do envelope JSON
+    /// manual + loop que a gente fazia antes via Brave Search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_search_options: Option<WebSearchOptions>,
+}
+
+/// Configuração da pesquisa nativa do GPT. Hoje só temos `search_context_size`
+/// — `"medium"` é o default da OpenAI. Pode crescer pra incluir região,
+/// idioma etc quando a API expor.
+#[derive(Serialize, Debug, Clone)]
+pub struct WebSearchOptions {
+    pub search_context_size: String,
+}
+
+impl Default for WebSearchOptions {
+    fn default() -> Self {
+        Self {
+            search_context_size: "medium".into(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1148,6 +1218,44 @@ impl AiClient {
             AiClient::Anthropic(c) => c.chat_completion_streaming(system, history, sink).await,
         }
     }
+
+    /// Chat completion com pesquisa nativa habilitada. Pra OpenAI, o
+    /// método clona o client com `gpt-4o-search-preview` (modelo que
+    /// suporta `web_search_options`) e chama
+    /// `chat_completion_with_web_search` por baixo. Pra Anthropic,
+    /// delega ao streaming com thinking — Anthropic não tem nativa
+    /// nesse mesmo endpoint, então preserva o flow vigente.
+    ///
+    /// Caller (orquestrador GPT em commands/chat.rs) usa esse método
+    /// no turno principal pra que o GPT decida sozinho quando
+    /// pesquisar — sem envelope JSON, sem loop manual, sem Brave.
+    pub async fn chat_completion_with_web_search(
+        &self,
+        system: &str,
+        history: &[Message],
+        sink: Option<&dyn ThinkingSink>,
+    ) -> Result<ChatOutput, AiError> {
+        match self {
+            AiClient::OpenAi(c) => {
+                let search_client = c.clone_with_model("gpt-4o-search-preview");
+                let content = search_client
+                    .chat_completion_with_web_search(
+                        system,
+                        history,
+                        WebSearchOptions::default(),
+                    )
+                    .await?;
+                Ok(ChatOutput {
+                    content,
+                    thinking: None,
+                    thinking_summary: None,
+                })
+            }
+            AiClient::Anthropic(c) => {
+                c.chat_completion_streaming(system, history, sink).await
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1264,20 +1372,38 @@ mod tests {
             messages: &messages,
             tools: Some(&tools),
             tool_choice: None,
+            web_search_options: None,
         };
         let json = serde_json::to_string(&with_tools).unwrap();
         assert!(json.contains("\"tools\":["), "expected tools array: {json}");
         assert!(json.contains("\"name\":\"noop\""));
         assert!(!json.contains("tool_choice"));
+        assert!(!json.contains("web_search_options"));
 
         let without = OpenAiChatRequest {
             model: "gpt-4o",
             messages: &messages,
             tools: None,
             tool_choice: None,
+            web_search_options: None,
         };
         let json = serde_json::to_string(&without).unwrap();
         assert!(!json.contains("tools"), "tools must be skipped: {json}");
+        assert!(!json.contains("web_search_options"));
+
+        let with_search = OpenAiChatRequest {
+            model: "gpt-4o-search-preview",
+            messages: &messages,
+            tools: None,
+            tool_choice: None,
+            web_search_options: Some(WebSearchOptions::default()),
+        };
+        let json = serde_json::to_string(&with_search).unwrap();
+        assert!(
+            json.contains("\"web_search_options\""),
+            "expected web_search_options: {json}"
+        );
+        assert!(json.contains("\"search_context_size\":\"medium\""));
     }
 
     /// Response with tool_calls (no content) must decode and surface

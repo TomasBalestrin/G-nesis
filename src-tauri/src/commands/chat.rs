@@ -198,20 +198,6 @@ struct CallInner {
     params: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// `{"web_search": {"query": "..."}}` envelope. Mesmo padrão de
-/// detecção do integration_call — JSON puro, fenced, ou intercalado
-/// com texto. Cap de 3 buscas por turno do usuário (mesmo limite do
-/// agente skill-architect, B2).
-#[derive(Deserialize)]
-struct WebSearchEnvelope {
-    web_search: WebSearchInner,
-}
-
-#[derive(Deserialize)]
-struct WebSearchInner {
-    query: String,
-}
-
 /// Detect the integration_call protocol in a model response. Aceita
 /// 4 formatos comuns que o GPT emite na prática:
 ///   - JSON puro:      `{"integration_call": {...}}`
@@ -242,20 +228,6 @@ fn extract_integration_call(response: &str) -> Option<IntegrationCallRequest> {
     })
 }
 
-/// Detecta o envelope `{"web_search": {"query": "..."}}` na resposta
-/// do GPT principal. Mesma robustez do `extract_integration_call`
-/// (fenced, inline na prosa, etc) via `find_envelope_for`.
-fn extract_web_search(response: &str) -> Option<String> {
-    let json_str = find_envelope_for(response, "\"web_search\"")?;
-    let envelope: WebSearchEnvelope = serde_json::from_str(json_str).ok()?;
-    let query = envelope.web_search.query.trim().to_string();
-    if query.is_empty() {
-        None
-    } else {
-        Some(query)
-    }
-}
-
 /// Find the substring of `response` that brackets a balanced
 /// `{ ... "integration_call" ... }` envelope. ASCII-byte scan with
 /// string-literal awareness (so `{` / `}` inside `"..."` don't
@@ -266,9 +238,9 @@ fn find_envelope(response: &str) -> Option<&str> {
 }
 
 /// Generalização do `find_envelope` parametrizada pela key da
-/// envelope. Reusada pelo `extract_web_search` (key `"web_search"`)
-/// e mantém o comportamento do extractor antigo (string-literal
-/// awareness, escape de aspas, balance de braces).
+/// envelope. Hoje só `find_envelope` chama (com marker
+/// `"integration_call"`); mantida genérica caso novos envelopes
+/// JSON apareçam no futuro com a mesma string-literal awareness.
 fn find_envelope_for<'a>(response: &'a str, marker: &str) -> Option<&'a str> {
     let marker_pos = response.find(marker)?;
     let prefix = &response[..marker_pos];
@@ -322,176 +294,6 @@ fn json_value_to_param(v: serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     }
-}
-
-#[derive(Clone, Serialize)]
-struct ChatSearchingEvent {
-    conversation_id: Option<String>,
-    query: String,
-    round: usize,
-}
-
-#[derive(Clone, Serialize)]
-struct ChatSearchDoneEvent {
-    conversation_id: Option<String>,
-    query: String,
-    round: usize,
-    /// `true` quando a busca trouxe pelo menos 1 hit OU completou
-    /// sem erro. `false` quando o backend (Brave) falhou ou caiu
-    /// em timeout — UI usa pra trocar o ícone do indicador.
-    success: bool,
-}
-
-/// Limite de web_search por turno do usuário. Cada call adiciona
-/// ~1k tokens de tool result; 3 cobre research razoável sem deixar
-/// o GPT loopar. Mesmo cap usado pelo skill-architect (B2).
-const MAX_WEB_SEARCHES_PER_TURN: usize = 3;
-
-/// Timeout por chamada à Brave Search. 15s é generoso pra rede ruim
-/// mas evita travar o turno inteiro quando a API enrosca.
-const WEB_SEARCH_TIMEOUT_SECS: u64 = 15;
-
-/// Pre-processador que roda ANTES do `post_process_integration_call`.
-/// Se o GPT pediu `web_search`, executa via Brave Search, reinjeta os
-/// resultados como mensagem de contexto e re-pergunta ao GPT até ele
-/// parar de pedir buscas (ou o cap ser atingido). Quando converge,
-/// devolve a resposta final pra cadeia continuar (que pode ainda
-/// terminar num `integration_call` — os dois fluxos coexistem).
-async fn post_process_web_search(
-    raw: (String, Option<String>, Option<String>),
-    client: &AiClient,
-    system_prompt: &str,
-    messages: &[Message],
-    app: &AppHandle,
-    conversation_id: Option<&str>,
-) -> Result<(String, Option<String>, Option<String>), String> {
-    if extract_web_search(&raw.0).is_none() {
-        return Ok(raw);
-    }
-
-    let brave_key = match config::load_config().ok().and_then(|c| c.search.brave_api_key) {
-        Some(k) if !k.trim().is_empty() => k,
-        _ => {
-            // Sem key → injeta resultado vazio com mensagem
-            // user-actionable e chama o GPT 1x pra que ele saiba
-            // continuar sem pesquisa. Não queremos travar.
-            let mut next_messages: Vec<Message> = messages.to_vec();
-            next_messages.push(Message::assistant(raw.0.clone()));
-            next_messages.push(Message::user(
-                "BRAVE_API_KEY não configurada — não foi possível pesquisar. Adicione em ~/.genesis/config.toml [search] brave_api_key, ou responda com base no conhecimento que você já tem."
-                    .to_string(),
-            ));
-            let final_reply = client
-                .chat_completion(system_prompt, &next_messages)
-                .await
-                .map_err(|e| e.user_message())?;
-            return Ok((final_reply, None, None));
-        }
-    };
-
-    let mut next_messages: Vec<Message> = messages.to_vec();
-    let mut current_reply = raw.0;
-
-    for round in 1..=MAX_WEB_SEARCHES_PER_TURN {
-        let Some(query) = extract_web_search(&current_reply) else {
-            // GPT respondeu sem envelope → resposta final.
-            println!(">>> [WEB_SEARCH] round {round}: convergiu (resposta final)");
-            break;
-        };
-        println!(">>> [WEB_SEARCH] round {round} START: query=`{query}`");
-
-        let _ = app.emit(
-            "chat:searching",
-            ChatSearchingEvent {
-                conversation_id: conversation_id.map(str::to_string),
-                query: query.clone(),
-                round,
-            },
-        );
-
-        // Per-call timeout — Brave server enroscando não trava o turno.
-        let search_call = tokio::time::timeout(
-            std::time::Duration::from_secs(WEB_SEARCH_TIMEOUT_SECS),
-            crate::search::web_search(&query, &brave_key),
-        )
-        .await;
-
-        let (results_text, success) = match search_call {
-            Ok(Ok(hits)) => {
-                println!(
-                    ">>> [WEB_SEARCH] round {round} OK: {} hits",
-                    hits.len()
-                );
-                let payload = serde_json::to_string(&hits)
-                    .unwrap_or_else(|_| "[]".to_string());
-                if hits.is_empty() {
-                    (
-                        format!(
-                            "Pesquisa retornou 0 resultados pra `{query}`. Reformule a query ou responda com o que já sabe."
-                        ),
-                        true,
-                    )
-                } else {
-                    (
-                        format!(
-                            "Resultados da pesquisa `{query}` (top {}):\n\n```json\n{payload}\n```\n\nUse esses resultados pra responder ao usuário em português conciso, citando fontes (URL) quando relevante. Se ainda precisar de mais info, faça outra `web_search` (limite de 3 por turno).",
-                            hits.len()
-                        ),
-                        true,
-                    )
-                }
-            }
-            Ok(Err(err)) => {
-                println!(">>> [WEB_SEARCH] round {round} FAIL: {err}");
-                (
-                    format!(
-                        "Pesquisa falhou: {err}. Responda com base no conhecimento que você já tem."
-                    ),
-                    false,
-                )
-            }
-            Err(_elapsed) => {
-                println!(
-                    ">>> [WEB_SEARCH] round {round} TIMEOUT after {WEB_SEARCH_TIMEOUT_SECS}s"
-                );
-                (
-                    "Pesquisa demorou demais. Responda com base no conhecimento que você já tem."
-                        .to_string(),
-                    false,
-                )
-            }
-        };
-
-        let _ = app.emit(
-            "chat:search-done",
-            ChatSearchDoneEvent {
-                conversation_id: conversation_id.map(str::to_string),
-                query: query.clone(),
-                round,
-                success,
-            },
-        );
-
-        next_messages.push(Message::assistant(current_reply.clone()));
-        next_messages.push(Message::user(results_text));
-
-        current_reply = client
-            .chat_completion(system_prompt, &next_messages)
-            .await
-            .map_err(|e| e.user_message())?;
-
-        if round == MAX_WEB_SEARCHES_PER_TURN
-            && extract_web_search(&current_reply).is_some()
-        {
-            // Cap atingido sem convergir — corta com fallback claro.
-            println!(
-                ">>> [WEB_SEARCH] cap {MAX_WEB_SEARCHES_PER_TURN} atingido sem convergir"
-            );
-            current_reply = "Não consegui obter todos os dados pesquisando. Tente uma pergunta mais específica ou descreva o que você já sabe.".to_string();
-        }
-    }
-
-    Ok((current_reply, None, None))
 }
 
 #[derive(Clone, Serialize)]
@@ -1303,11 +1105,13 @@ async fn collect_system_state(pool: &SqlitePool, skills: &[SkillMeta]) -> String
 /// or after this many iterations. Hit-limit means the model got stuck
 /// in a tool loop and we surface a generic message so the user can
 /// re-prompt.
+#[allow(dead_code)]
 const MAX_TOOL_ITERATIONS: u32 = 10;
 
 /// Cap on the tail of files surfaced to the model via `read_file`.
 /// The whole point is to keep tool results small enough that the
 /// loop's context window doesn't explode after a few iterations.
+#[allow(dead_code)]
 const READ_FILE_MAX_BYTES: usize = 10_240;
 
 /// Tools advertised to the GPT orchestrator. JSON schemas are inline
@@ -1315,6 +1119,7 @@ const READ_FILE_MAX_BYTES: usize = 10_240;
 /// bottom — no per-tool DTO struct. Names match what
 /// `execute_tool` dispatches on; mismatch is the only way a tool
 /// silently fails.
+#[allow(dead_code)]
 fn genesis_tools() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
@@ -1461,6 +1266,7 @@ fn genesis_tools() -> Vec<ToolDefinition> {
 /// next turn and self-correct (e.g. "skill X não encontrada — chame
 /// list_skills primeiro"). NEVER panics; argument-parse failures and
 /// missing dependencies all produce text payloads.
+#[allow(dead_code)]
 async fn execute_tool(
     tool_call: &ToolCall,
     pool: State<'_, SqlitePool>,
@@ -1484,6 +1290,7 @@ async fn execute_tool(
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_execute_skill(
     raw: &str,
     pool: State<'_, SqlitePool>,
@@ -1517,6 +1324,7 @@ async fn dispatch_execute_skill(
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_list_skills() -> String {
     // LLM tool não precisa do mirror SQLite (id/created_at são UI-only),
     // então chama storage diretamente — sem pool, sem IPC layer.
@@ -1540,6 +1348,7 @@ async fn dispatch_list_skills() -> String {
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_read_skill(raw: &str) -> String {
     #[derive(serde::Deserialize)]
     struct Args {
@@ -1555,6 +1364,7 @@ async fn dispatch_read_skill(raw: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_read_skill_reference(raw: &str) -> String {
     #[derive(serde::Deserialize)]
     struct Args {
@@ -1568,6 +1378,7 @@ async fn dispatch_read_skill_reference(raw: &str) -> String {
     read_skill_subfile(&args.skill_name, "references", &args.reference_name)
 }
 
+#[allow(dead_code)]
 async fn dispatch_read_skill_script(raw: &str) -> String {
     #[derive(serde::Deserialize)]
     struct Args {
@@ -1585,6 +1396,7 @@ async fn dispatch_read_skill_script(raw: &str) -> String {
 /// path traversal (rejeita `..`, separators, vazio) e lê o arquivo
 /// como UTF-8. Erros viram mensagens descritivas pro LLM ler na
 /// próxima volta do loop e auto-corrigir.
+#[allow(dead_code)]
 fn read_skill_subfile(skill_name: &str, subdir: &str, filename: &str) -> String {
     let trimmed = filename.trim();
     if trimmed.is_empty()
@@ -1611,6 +1423,7 @@ fn read_skill_subfile(skill_name: &str, subdir: &str, filename: &str) -> String 
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_save_skill(raw: &str) -> String {
     #[derive(serde::Deserialize)]
     struct Args {
@@ -1695,6 +1508,7 @@ async fn dispatch_save_skill(raw: &str) -> String {
     format!("Skill `{}` salva.", args.skill_name)
 }
 
+#[allow(dead_code)]
 fn dispatch_read_file(raw: &str) -> String {
     #[derive(serde::Deserialize)]
     struct Args {
@@ -1720,6 +1534,7 @@ fn dispatch_read_file(raw: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn dispatch_list_files(raw: &str) -> String {
     #[derive(serde::Deserialize)]
     struct Args {
@@ -1764,6 +1579,7 @@ fn dispatch_list_files(raw: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_abort_execution(pool: &SqlitePool, registry: &ExecutionRegistry) -> String {
     let running = match queries::get_running_execution(pool).await {
         Ok(Some(e)) => e,
@@ -1798,7 +1614,10 @@ pub async fn send_chat_message(
     conversation_id: Option<String>,
     app: AppHandle,
     pool: State<'_, SqlitePool>,
-    registry: State<'_, ExecutionRegistry>,
+    // `registry` mantido na assinatura mesmo quando o tool loop está
+    // dormente (search-preview não usa) — re-engaja na migração pra
+    // Responses API. Underscore evita warning sem mudar a IPC shape.
+    _registry: State<'_, ExecutionRegistry>,
 ) -> Result<ChatMessage, String> {
     let user_msg = ChatMessage {
         id: new_id(),
@@ -2087,13 +1906,13 @@ pub async fn send_chat_message(
             // post_process_integration_call then parses + dispatches.
             let raw = match &client {
                 AiClient::OpenAi(openai) => {
-                    // Integration turns: pula o tool loop completamente.
-                    // O `tools: []` no request OpenAI é ambíguo (alguns
-                    // models 400, outros silenciosamente ignoram), e
-                    // function-calling concorre com o protocolo
-                    // integration_call no prompt. Plain chat_completion
-                    // = uma chamada, sem `tools` field, model lê
-                    // PROMPT_INTEGRATION e responde com JSON envelope.
+                    // Integration turns: pula tools/search e cai em
+                    // plain chat_completion. O modelo lê PROMPT_INTEGRATION
+                    // e devolve o envelope JSON `integration_call` que o
+                    // post_process_integration_call abaixo executa.
+                    // (Search nativa não combina com esse protocolo —
+                    // search-preview model não emite tool calls e a
+                    // gente quer o envelope literal.)
                     if active_integration.is_some() {
                         let content = openai
                             .chat_completion(&system_prompt, &messages)
@@ -2106,49 +1925,34 @@ pub async fn send_chat_message(
                         );
                         (content, None, None)
                     } else {
-                    let tools = genesis_tools();
-                    let mut loop_messages: Vec<Message> = messages.clone();
-                    let mut final_content = String::new();
-                    for _ in 0..MAX_TOOL_ITERATIONS {
-                        let resp = openai
-                            .chat_completion_with_tools(&system_prompt, &loop_messages, &tools)
+                        // Pure chat OpenAI: web search NATIVA via
+                        // `gpt-4o-search-preview`. AiClient clona o
+                        // OpenAIClient com o modelo de search e injeta
+                        // `web_search_options` no body — o modelo decide
+                        // sozinho quando pesquisar (notícias, preços,
+                        // versões atuais, etc).
+                        //
+                        // Trade-off: search-preview NÃO suporta function
+                        // calling, então o tool loop com `genesis_tools`
+                        // (execute_skill, list_skills, read_file) sai
+                        // de cena nesse caminho. Skill orchestration
+                        // via NL precisa migrar pra Responses API
+                        // (OPÇÃO 1 da spec) num follow-up. Slash
+                        // commands `/skill-name` continuam funcionando
+                        // via try_slash_reply, sem GPT.
+                        let ChatOutput {
+                            content,
+                            thinking,
+                            thinking_summary,
+                        } = client
+                            .chat_completion_with_web_search(
+                                &system_prompt,
+                                &messages,
+                                Some(&sink),
+                            )
                             .await
                             .map_err(|e| e.user_message())?;
-                        if resp.tool_calls.is_empty() {
-                            final_content = resp.content;
-                            break;
-                        }
-                        // Feed the assistant turn back into the history so
-                        // the next iteration sees the tool_calls it
-                        // emitted. Content may be non-empty when the
-                        // model emits text alongside tool_calls — keep
-                        // both so the model's reasoning isn't lost.
-                        let mut assistant_turn = Message::assistant(resp.content.clone());
-                        assistant_turn.tool_calls = Some(resp.tool_calls.clone());
-                        loop_messages.push(assistant_turn);
-
-                        for tc in &resp.tool_calls {
-                            // Clone the State handles per call — they
-                            // wrap an Arc internally so the cost is a
-                            // refcount bump. State<'_, _> isn't Copy
-                            // in Tauri 2, so the loop would otherwise
-                            // refuse to move them again on iter 2+.
-                            let result = execute_tool(
-                                tc,
-                                pool.clone(),
-                                registry.clone(),
-                                app.clone(),
-                                conversation_id.as_deref(),
-                            )
-                            .await;
-                            loop_messages.push(Message::tool_result(tc.id.clone(), result));
-                        }
-                    }
-                    if final_content.is_empty() {
-                        final_content =
-                            "Limite de iterações de tools atingido sem resposta final.".to_string();
-                    }
-                    (final_content, None, None)
+                        (content, thinking, thinking_summary)
                     }
                 }
                 AiClient::Anthropic(_) => {
@@ -2163,21 +1967,6 @@ pub async fn send_chat_message(
                     (content, thinking, thinking_summary)
                 }
             };
-
-            // Web search vem ANTES do integration_call: queries
-            // sobre dados atuais (preço, versão, doc) podem chegar
-            // antes do GPT decidir chamar uma integração; quando
-            // são exclusivas (caso comum), o pipeline termina aqui
-            // sem nem invocar o integration loop.
-            let raw = post_process_web_search(
-                raw,
-                &client,
-                &system_prompt,
-                &messages,
-                &app,
-                conversation_id.as_deref(),
-            )
-            .await?;
 
             post_process_integration_call(
                 raw,
