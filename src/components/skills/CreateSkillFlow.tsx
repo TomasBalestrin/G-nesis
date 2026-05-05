@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, Loader2, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,8 +28,14 @@ const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*$/;
  */
 export function CreateSkillFlow() {
   const navigate = useNavigate();
-  const [screen, setScreen] = useState<Screen>("name");
-  const [name, setName] = useState("");
+  // Em /skills/:name/edit o useParams traz o name → modo "edit"
+  // pula direto pra Tela 2 com a skill carregada. Em /skills/new
+  // o name é vazio → começa pela Tela 1.
+  const { name: editingName } = useParams<{ name?: string }>();
+  const isEditing = Boolean(editingName);
+
+  const [screen, setScreen] = useState<Screen>(isEditing ? "agent" : "name");
+  const [name, setName] = useState(editingName ?? "");
 
   function handleAdvanceFromName(finalName: string) {
     setName(finalName);
@@ -42,10 +48,11 @@ export function CreateSkillFlow() {
   return (
     <SkillArchitectChat
       name={name}
+      mode={isEditing ? "edit" : "create"}
       onExit={() => {
         // Após salvar (ou descartar) o flow termina e voltamos pro
-        // detail da skill recém-criada, OU pra home se o user
-        // desistiu antes do save.
+        // detail da skill, OU pra home se o user desistiu antes do
+        // save (apenas no fluxo de criação).
         if (name) {
           navigate(`/skills/${encodeURIComponent(name)}`);
         } else {

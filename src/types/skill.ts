@@ -44,10 +44,12 @@ export interface Skill {
 /**
  * Skill + conteúdo completo do package — retornado pelo `setActive`
  * do skillsStore. `content` é o SKILL.md raw (frontmatter + body).
- * `references` e `assets` são filenames (relativos ao package).
+ * `references`, `assets` e `scripts` são filenames relativos ao
+ * package (ex: "iron-man.md", "template.html", "parse.sh").
  */
 export interface SkillDetail extends Skill {
   content: string;
   references: string[];
   assets: string[];
+  scripts: string[];
 }

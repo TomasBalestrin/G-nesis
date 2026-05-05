@@ -24,6 +24,7 @@ import { useTauriEvent } from "@/hooks/useTauriEvent";
 import {
   agentChat,
   saveGeneratedSkill,
+  saveSkillFile,
   type AgentChatTurn,
   type SkillWriteRequest,
 } from "@/lib/tauri-bridge";
@@ -40,15 +41,25 @@ interface ChatMessage {
   timestamp: number;
 }
 
+type ChatMode = "create" | "edit";
+
 interface SkillArchitectChatProps {
   name: string;
+  /** "create" (default) usa saveGeneratedSkill — recusa nome
+   *  duplicado. "edit" usa saveSkillFile por arquivo, sobrescrevendo
+   *  os existentes; arquivos não mencionados pelo agente ficam
+   *  intocados. Pra deletar refs/assets/scripts existentes, user
+   *  vai pelo SkillDetailView (out of scope deste flow). */
+  mode?: ChatMode;
   /** Chamado quando o usuário aborta o flow (botão Voltar +
    *  confirmação) ou quando a skill é salva com sucesso. */
   onExit: () => void;
 }
 
-const INITIAL_GREETING = (name: string) =>
-  `Vou te ajudar a criar a skill **${name}**. Me conta: o que ela deve fazer?`;
+const GREETING = (name: string, mode: ChatMode) =>
+  mode === "edit"
+    ? `Vou te ajudar a editar a skill **${name}**. O que você quer mudar?`
+    : `Vou te ajudar a criar a skill **${name}**. Me conta: o que ela deve fazer?`;
 
 const FILES_EVENT = "skill-architect:files-ready";
 
@@ -64,7 +75,11 @@ const FILES_EVENT = "skill-architect:files-ready";
  * acumulado — saveGeneratedSkill (B4) materializa em disco e chama
  * onExit pra fechar o flow.
  */
-export function SkillArchitectChat({ name, onExit }: SkillArchitectChatProps) {
+export function SkillArchitectChat({
+  name,
+  mode = "create",
+  onExit,
+}: SkillArchitectChatProps) {
   const { toast } = useToast();
   const refreshSkills = useSkillsStore((s) => s.refresh);
 
@@ -72,7 +87,7 @@ export function SkillArchitectChat({ name, onExit }: SkillArchitectChatProps) {
     {
       id: "greeting",
       role: "assistant",
-      content: INITIAL_GREETING(name),
+      content: GREETING(name, mode),
       timestamp: Date.now(),
     },
   ]);
@@ -101,6 +116,10 @@ export function SkillArchitectChat({ name, onExit }: SkillArchitectChatProps) {
     [pendingFiles],
   );
   const hasSkillMd = filesArray.some((f) => f.path === "SKILL.md");
+  // Em create, exige SKILL.md (skill nasce com SKILL.md ou não nasce).
+  // Em edit, qualquer arquivo basta — pode ser só uma reference nova.
+  const canSave =
+    mode === "edit" ? filesArray.length > 0 : hasSkillMd;
 
   async function handleSend(text: string) {
     const trimmed = text.trim();
@@ -149,19 +168,40 @@ export function SkillArchitectChat({ name, onExit }: SkillArchitectChatProps) {
   }
 
   async function handleSave() {
-    if (!hasSkillMd || saving) return;
+    if (!canSave || saving) return;
     setSaving(true);
     try {
-      await saveGeneratedSkill({ name, files: filesArray });
-      await refreshSkills();
-      toast({
-        title: `Skill ${name} criada!`,
-        description: `Use /${name} no chat.`,
-      });
+      if (mode === "edit") {
+        // Edit mode: sobrescreve cada arquivo via saveSkillFile.
+        // Não chama saveGeneratedSkill porque ele recusa duplicata.
+        // Files não emitidos pelo agente ficam intocados em disco —
+        // remoção explícita é via SkillDetailView (out of scope).
+        for (const file of filesArray) {
+          await saveSkillFile({
+            name,
+            path: file.path,
+            content: file.content,
+          });
+        }
+        await refreshSkills();
+        toast({
+          title: `Skill ${name} atualizada!`,
+          description: `Use /${name} no chat.`,
+        });
+      } else {
+        await saveGeneratedSkill({ name, files: filesArray });
+        await refreshSkills();
+        toast({
+          title: `Skill ${name} criada!`,
+          description: `Use /${name} no chat.`,
+        });
+      }
       onExit();
     } catch (err) {
       toast({
-        title: "Falha ao salvar skill",
+        title: mode === "edit"
+          ? "Falha ao salvar edição"
+          : "Falha ao salvar skill",
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
@@ -182,7 +222,7 @@ export function SkillArchitectChat({ name, onExit }: SkillArchitectChatProps) {
     <div className="flex h-full flex-col">
       <Header
         name={name}
-        canSave={hasSkillMd && !saving}
+        canSave={canSave && !saving}
         saving={saving}
         onBack={handleBackRequest}
         onSave={handleSave}

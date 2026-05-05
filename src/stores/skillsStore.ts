@@ -94,6 +94,7 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
           content: bundle.skill_md,
           references: bundle.references,
           assets: bundle.assets,
+          scripts: bundle.scripts,
         },
       });
     } catch (err) {
