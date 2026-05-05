@@ -417,6 +417,7 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
   const referencesCount = skill.references_count;
   const hasAssets = skill.has_assets;
   const hasReferences = skill.has_references;
+  const hasScripts = skill.has_scripts;
   const detailHref = `/skills/${encodeURIComponent(skill.name)}`;
 
   async function handleConfirmDelete() {
@@ -573,6 +574,19 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
                 }
                 label="assets/"
                 count={skill.assets_count}
+                onClick={openDetail}
+              />
+            ) : null}
+            {hasScripts ? (
+              <SkillTreeItem
+                icon={
+                  <Folder
+                    className="h-3 w-3 shrink-0"
+                    strokeWidth={1.5}
+                  />
+                }
+                label="scripts/"
+                count={skill.scripts_count}
                 onClick={openDetail}
               />
             ) : null}
