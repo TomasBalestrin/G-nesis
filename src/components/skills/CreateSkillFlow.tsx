@@ -55,7 +55,7 @@ export function CreateSkillFlow() {
         // detail da skill, OU pra home se o user desistiu antes do
         // save (apenas no fluxo de criação).
         if (name) {
-          navigate(`/skills/${encodeURIComponent(name)}`);
+          navigate(`/settings/skill/${encodeURIComponent(name)}`);
         } else {
           navigate("/");
         }

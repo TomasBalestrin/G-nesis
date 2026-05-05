@@ -1,58 +1,47 @@
-import { useState } from "react";
-import { Menu } from "lucide-react";
 import { Outlet } from "react-router-dom";
 
-import { Button } from "@/components/ui/button";
+import { useLayoutMode } from "@/hooks/useLayoutMode";
+
+import { AppHeader } from "./AppHeader";
 import { Sidebar } from "./Sidebar";
 
 /**
- * App shell for the ChatGPT-like layout: 260px sidebar on the left, main
- * content takes the rest. On `< 800px` the sidebar becomes a drawer toggled
- * by the hamburger in the floating mobile bar. No narrow rail mode anymore —
- * the sidebar lists conversations and skills, which need width to breathe.
+ * App shell agnóstico de modo: Sidebar (315px expandida / 122px
+ * colapsada) + coluna principal com Header (103px) + Outlet.
+ *
+ * O modo (chat / settings / skill-detail) é derivado da rota pelo
+ * `useLayoutMode`. O auto-collapse em skill-detail é honrado aqui;
+ * sub-painéis (settings menu, skill tree) são responsabilidade do
+ * `SettingsLayout` (ele intercepta `/settings/*` e adiciona os
+ * painéis no contexto).
+ *
+ * Mobile drawer foi removido nesta refatoração — Genesis é desktop
+ * (Tauri); a porção mobile do shell antigo era especulativa e não
+ * estava sendo usada.
  */
 export function MainLayout() {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  function closeDrawer() {
-    setDrawerOpen(false);
-  }
+  const { sidebarCollapsed, toggleCollapsed } = useLayoutMode();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <Sidebar open={drawerOpen} onNavigate={closeDrawer} />
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{
+        background: "var(--gv2-bg)",
+        color: "var(--gv2-text)",
+        fontFamily: "Inter, system-ui, sans-serif",
+      }}
+    >
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleCollapsed}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <MobileHeader onMenuClick={() => setDrawerOpen((o) => !o)} />
+        <AppHeader />
         <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </main>
       </div>
-
-      {drawerOpen ? (
-        <button
-          type="button"
-          aria-label="Fechar menu"
-          onClick={closeDrawer}
-          className="fixed inset-0 z-30 bg-black/50 min-[800px]:hidden"
-        />
-      ) : null}
     </div>
-  );
-}
-
-function MobileHeader({ onMenuClick }: { onMenuClick: () => void }) {
-  return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 min-[800px]:hidden">
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onMenuClick}
-        aria-label="Abrir menu"
-      >
-        <Menu className="h-5 w-5" />
-      </Button>
-      <span className="font-bold tracking-tight">Genesis</span>
-    </header>
   );
 }

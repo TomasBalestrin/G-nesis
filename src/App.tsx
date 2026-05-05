@@ -163,13 +163,15 @@ function App() {
               {/* Skills: list in sidebar; no standalone /skills listing page.
                   /skills/new abre o CreateSkillFlow (Tela 1: nome →
                   Tela 2: chat com Skill Architect).
-                  /skills/:name → SkillDetailView (visualização split com
-                  árvore + preview). /skills/:name/edit → CreateSkillFlow
-                  em modo edição (abre direto na etapa 2 com SKILL.md
-                  hidratado). Skills v1 legacy NÃO têm mais editor — a
-                  migração F1 converte tudo pra v2. */}
+                  /settings/skill/:name → SkillDetailView (visualização
+                  com árvore no 3º painel + preview no Outlet). Vive
+                  como child route do Settings desde Prompt 02 — não é
+                  mais top-level.
+                  /skills/:name/edit → CreateSkillFlow em modo edição
+                  (abre direto na etapa 2 com SKILL.md hidratado).
+                  Skills v1 legacy NÃO têm mais editor — a migração F1
+                  converte tudo pra v2. */}
               <Route path="skills/new" element={<CreateSkillFlow />} />
-              <Route path="skills/:name" element={<SkillDetailView />} />
               <Route path="skills/:name/edit" element={<CreateSkillFlow />} />
 
               {/* Capabilities: surface routes removidas em A2.
@@ -199,6 +201,7 @@ function App() {
                 <Route index element={<Navigate to="knowledge" replace />} />
                 <Route path="knowledge" element={<KnowledgeRoute />} />
                 <Route path="skills" element={<SettingsSkillsSection />} />
+                <Route path="skill/:name" element={<SkillDetailView />} />
                 <Route path="caminhos" element={<SettingsCaminhosSection />} />
                 <Route path="workflows" element={<SettingsWorkflowsSection />} />
                 <Route path="config" element={<SettingsConfigSection />} />

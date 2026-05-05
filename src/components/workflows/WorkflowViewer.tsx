@@ -240,7 +240,7 @@ function EtapaCard({ step, order }: { step: WorkflowStep; order: number }) {
         <dt className="text-[var(--text-tertiary)]">Skill</dt>
         <dd>
           <Link
-            to={`/skills/${encodeURIComponent(step.skill)}`}
+            to={`/settings/skill/${encodeURIComponent(step.skill)}`}
             className="font-mono text-[var(--accent)] underline underline-offset-2"
           >
             /{step.skill}

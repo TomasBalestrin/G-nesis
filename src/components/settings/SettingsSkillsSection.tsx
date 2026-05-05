@@ -109,11 +109,13 @@ function SkillCard({ skill, onDeleted }: SkillCardProps) {
     <article
       role="button"
       tabIndex={0}
-      onClick={() => navigate(`/skills/${encodeURIComponent(skill.name)}`)}
+      onClick={() =>
+        navigate(`/settings/skill/${encodeURIComponent(skill.name)}`)
+      }
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          navigate(`/skills/${encodeURIComponent(skill.name)}`);
+          navigate(`/settings/skill/${encodeURIComponent(skill.name)}`);
         }
       }}
       className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]"
