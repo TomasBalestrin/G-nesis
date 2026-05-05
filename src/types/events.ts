@@ -77,6 +77,24 @@ export interface TerminalExitEvent {
  * Map of Tauri event name → payload type. Consumers pass the literal
  * event name to `useTauriEvent` and the payload is inferred.
  */
+/** Web search invocada pelo orquestrador GPT principal (commands/chat.rs).
+ *  Disparada uma vez por round antes da chamada à Brave Search. */
+export interface ChatSearchingEvent {
+  conversation_id: string | null;
+  query: string;
+  round: number;
+}
+
+/** Disparada após a resposta da Brave (sucesso, vazio ou falha). FE
+ *  usa pra remover o indicador "Pesquisando..." e opcionalmente
+ *  mostrar um sub-status (sucesso vs falha) no spinner. */
+export interface ChatSearchDoneEvent {
+  conversation_id: string | null;
+  query: string;
+  round: number;
+  success: boolean;
+}
+
 export interface TauriEventMap {
   "execution:step_started": StepStartedEvent;
   "execution:step_completed": StepCompletedEvent;
@@ -86,6 +104,8 @@ export interface TauriEventMap {
   "chat:thinking_delta": ThinkingDeltaEvent;
   "chat:thinking_complete": ThinkingCompleteEvent;
   "chat:message_inserted": ChatMessageInsertedEvent;
+  "chat:searching": ChatSearchingEvent;
+  "chat:search-done": ChatSearchDoneEvent;
   "terminal:data": TerminalDataEvent;
   "terminal:exit": TerminalExitEvent;
 }

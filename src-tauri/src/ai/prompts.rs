@@ -203,6 +203,33 @@ Regras de uso:
 - Só chame quando o conteúdo for relevante pra resposta atual. NUNCA carregue todos em massa.
 - Se a skill não listou o arquivo, ele não existe — chame `list_skills` ou re-leia o reply do `/` pra confirmar antes de tentar."##;
 
+/// WEB_SEARCH — protocolo do orquestrador principal pra invocar
+/// pesquisa na internet via Brave Search. Mesmo loop pattern do
+/// `integration_call` (modelo emite envelope JSON, Rust executa,
+/// resultado reinjetado como contexto, modelo responde).
+///
+/// Lazy / sob demanda: nunca pesquisa pra perguntas que cabem no
+/// conhecimento base. Pesquisa sempre pra dados que mudam (preço,
+/// versão de lib, evento recente, doc atualizada).
+pub const PROMPT_WEB_SEARCH: &str = r##"## Pesquisa na web
+
+Você tem acesso a pesquisa na internet. Quando precisar de informações atuais, atualizações de pacotes, documentação, notícias, preços, eventos recentes ou qualquer dado que possa estar desatualizado no seu treinamento, pesquise.
+
+Para pesquisar, responda com:
+
+```json
+{"web_search": {"query": "termos de busca curtos e focados"}}
+```
+
+O sistema vai executar a pesquisa e te enviar os resultados (top 5: título, URL, snippet). Aí você interpreta e responde ao usuário em português conciso, citando as fontes quando relevante.
+
+Regras:
+- Queries curtas: 3 a 6 palavras, termos técnicos
+- Máximo 3 pesquisas por mensagem do usuário
+- Não pesquise pra perguntas que você consegue responder bem com conhecimento base
+- Pesquise sempre pra: versões atuais de libs/frameworks, preços, eventos recentes, notícias, docs que mudam
+- Não emita `web_search` e `integration_call` no mesmo turno — escolha um. Se o usuário precisa dos dois (ex: "compara meu MRR com o mercado"), faça em sequência: primeiro a integração, depois pesquise."##;
+
 /// TOOLS — capabilities exposed via the channels (`bash`, `claude-code`,
 /// `api`) plus the dependency-permission protocol the frontend detects
 /// to render inline Sim/Não buttons. Verbatim from
@@ -865,7 +892,7 @@ pub fn build_system_prompt(
     capabilities_block: Option<&str>,
     skills: &[SkillMeta],
 ) -> String {
-    let mut sections: Vec<String> = Vec::with_capacity(10);
+    let mut sections: Vec<String> = Vec::with_capacity(11);
 
     // Data atual SEMPRE como primeira seção. Sem isso, o GPT chuta
     // datas pela cutoff date dele (que pode ser meses/anos atrás) e
@@ -892,6 +919,12 @@ pub fn build_system_prompt(
         company_name.unwrap_or("sua empresa"),
     );
     sections.push(core);
+
+    // WEB_SEARCH é incondicional — todo turno do orquestrador pode
+    // pedir pesquisa. Vem logo após CORE pra que a regra "pesquise
+    // dados atuais" entre antes do contexto do usuário (que pode
+    // mencionar ferramentas/libs que precisam de validação).
+    sections.push(PROMPT_WEB_SEARCH.to_string());
 
     if let (Some(name), Some(company)) = (user_name, company_name) {
         let summary = knowledge_summary.unwrap_or("Nenhum documento fornecido ainda.");

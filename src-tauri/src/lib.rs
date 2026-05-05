@@ -9,6 +9,7 @@ pub mod config;
 pub mod db;
 pub mod integrations;
 pub mod orchestrator;
+pub mod search;
 pub mod skills;
 
 use channels::terminal::TerminalRegistry;
