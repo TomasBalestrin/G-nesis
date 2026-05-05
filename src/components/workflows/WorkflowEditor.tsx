@@ -57,7 +57,8 @@ Condição: sucesso
  *  - /workflows/:name    → name pre-filled (locked) + content via readWorkflow
  *
  * Save validates server-side (workflow_parser) and refreshes the store.
- * Mirror of SkillEditor — same UX, same shortcuts.
+ * Editor textarea + preview split — workflows ainda não migraram
+ * pro flow agent-driven que skills usam.
  */
 export function WorkflowEditor() {
   const params = useParams<{ name?: string }>();

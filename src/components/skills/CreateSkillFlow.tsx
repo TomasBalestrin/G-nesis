@@ -13,14 +13,15 @@ type Screen = "name" | "agent";
 const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
- * Fluxo agent-driven de criação de skill — substitui o
- * CreateSkillWizard form-based original. Telas:
+ * Fluxo agent-driven de criação/edição de skill v2. Telas:
  *
- *   1. Nome — campo único centralizado, slug automático, checagem
- *      real-time vs catálogo.
- *   2. Agent (placeholder até C2) — chat com Skill Architect que
- *      conduz a autoria via {"skill_write": {...}} (B3) e materializa
- *      via save_generated_skill (B4) quando o usuário aprova.
+ *   1. Nome (só create) — campo único centralizado, slug automático,
+ *      checagem real-time vs catálogo. Em modo edit (rota
+ *      /skills/:name/edit) essa tela é pulada.
+ *   2. Agent — chat com Skill Architect que conduz a autoria via
+ *      {"skill_write": {...}} (B3) e materializa via
+ *      save_generated_skill (B4, create) ou saveSkillFile por
+ *      arquivo (E1, edit) quando o usuário aprova.
  *
  * O componente é stateless do ponto de vista da rota — owner externo
  * (route handler ou modal parent) decide quando montá-lo. State da

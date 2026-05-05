@@ -108,7 +108,7 @@ pub async fn save_workflow(name: String, content: String) -> Result<(), String> 
     let path = workflow_path(&dir, &name)?;
 
     // Reject malformed files at the boundary — broken workflows shouldn't
-    // hit disk. Same policy `save_skill` follows.
+    // hit disk. Same policy save_skill_file follows pra SKILL.md.
     workflow_parser::parse_workflow(&content).map_err(|e| format!("workflow inválido: {e}"))?;
 
     fs::create_dir_all(&dir).map_err(|e| format!("falha ao criar {}: {e}", dir.display()))?;

@@ -85,7 +85,7 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 
 /**
- * Visualização detalhada de uma skill v2 — substitui o SkillViewerV2.
+ * Visualização detalhada de uma skill v2.
  *
  * Layout split:
  *  - Tree esquerda: SKILL.md (destacado) + references/ (colapsável)
