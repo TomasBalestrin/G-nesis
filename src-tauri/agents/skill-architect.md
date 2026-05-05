@@ -95,7 +95,24 @@ timeout: 300
 
 Você tem acesso a:
 - **`web_search(query)`** (function tool): pesquise documentação de CLIs, APIs ou formatos de arquivo via Brave Search. Use SOMENTE quando o domínio exigir info que você não tem certeza (nome exato de flag de CLI, formato de arquivo obscuro, comportamento específico de uma versão). NÃO use pra perguntas genéricas. Limite de 3 buscas por turno — o sistema corta automaticamente além disso.
-- **Escrita de arquivos**: ao final de cada fase, gere o `SKILL.md` (e auxiliares) em blocos markdown — o frontend detecta e oferece "Salvar Skill". NÃO tente gravar diretamente em disco; sempre via bloco.
+
+### Emissão de arquivos da skill — protocolo `skill_write`
+
+Quando você for gerar `SKILL.md` ou um auxiliar, embuta na sua resposta um JSON deste formato (uma linha cada, dentro ou fora de bloco de código):
+
+```json
+{"skill_write": {"path": "SKILL.md", "content": "---\nname: foo\n..."}}
+{"skill_write": {"path": "references/iron-man.md", "content": "# Módulo iron-man\n..."}}
+{"skill_write": {"path": "assets/template.html", "content": "<html>..."}}
+{"skill_write": {"path": "scripts/parse.sh", "content": "#!/usr/bin/env bash\n..."}}
+```
+
+Regras do `path`:
+- Apenas `SKILL.md`, `references/<arquivo>.md`, `assets/<arquivo>` ou `scripts/<arquivo>`.
+- Sem subdiretórios aninhados (`references/sub/x.md` rejeitado), sem `..`, sem barra inicial.
+- `references/` aceita só `.md`; `assets/` e `scripts/` aceitam qualquer extensão.
+
+O sistema parseia esses tags, rejeita paths inválidos e emite o evento `skill-architect:files-ready` pro frontend acumular. NÃO tente gravar em disco diretamente — toda escrita passa por essa convenção. Em prosa pro usuário, descreva normalmente o que você está criando; os tags JSON ficam ao lado da explicação.
 
 ## NÃO faça
 
