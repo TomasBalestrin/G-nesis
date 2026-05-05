@@ -78,6 +78,7 @@ pub fn run() {
             skills_cmd::get_skill,
             skills_cmd::get_skill_file,
             skills_cmd::create_skill,
+            skills_cmd::save_generated_skill,
             skills_cmd::save_skill_file,
             skills_cmd::save_skill_asset,
             skills_cmd::delete_skill_file,

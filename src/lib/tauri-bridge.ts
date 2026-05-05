@@ -145,6 +145,22 @@ export function createSkill(args: { name: string }): Promise<SkillPackage> {
   return invoke("create_skill", args);
 }
 
+/// Materializa em disco a skill autorada pelo skill-architect (B3+B4).
+/// `files` é a lista acumulada via eventos `skill-architect:files-ready`
+/// — cada item já vem validado pela allowlist do package v2 (SKILL.md
+/// / references/*.md / assets/* / scripts/*). Backend recusa se o
+/// nome já existe e exige pelo menos um SKILL.md na lista.
+export interface SkillFileData {
+  path: string;
+  content: string;
+}
+export function saveGeneratedSkill(args: {
+  name: string;
+  files: SkillFileData[];
+}): Promise<SkillPackage> {
+  return invoke("save_generated_skill", args);
+}
+
 /// Salva (overwrite) um arquivo dentro do package v2. `path` é
 /// relativo ao package (ex: "SKILL.md", "references/foo.md"). Quando
 /// path == "SKILL.md", o backend valida o frontmatter via parser —

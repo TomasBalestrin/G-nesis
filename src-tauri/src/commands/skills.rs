@@ -13,11 +13,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 use uuid::Uuid;
 
+use crate::agents::skill_architect::is_valid_skill_path;
 use crate::db::models::SkillRow;
 use crate::db::queries;
 use crate::orchestrator::skill_parser;
@@ -304,6 +305,108 @@ pub async fn create_skill(
 
     skill_storage::get_skill_package(&name)?
         .ok_or_else(|| "skill criada mas package não encontrado".into())
+}
+
+/// Arquivo emitido pelo skill-architect (B3). Mesmo shape do
+/// `agents::skill_architect::SkillWriteRequest` — aqui é o wire
+/// format que chega do FE com a lista acumulada da conversa do
+/// wizard.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkillFileData {
+    pub path: String,
+    pub content: String,
+}
+
+/// Materializa em disco a skill cuja autoria veio do skill-architect.
+/// Recebe o `name` final (já validado pelo wizard) e a lista de
+/// arquivos acumulada via eventos `skill-architect:files-ready`.
+///
+/// Garantias:
+///   1. Recusa quando `<name>/SKILL.md` já existe — wizard precisa
+///      oferecer rename ou delete antes de re-tentar.
+///   2. Exige pelo menos um `path == "SKILL.md"` na lista (skill sem
+///      SKILL.md não é skill).
+///   3. Cada path passa pela allowlist do `is_valid_skill_path`
+///      (SKILL.md / references/*.md / assets/* / scripts/*).
+///   4. Subpastas só nascem quando há arquivo pra elas — `create_subfolder`
+///      sob demanda, regra "NUNCA criar subpastas vazias" do A1.
+///   5. Mirror SQLite é populado com version/author parseados do
+///      SKILL.md final (não fica com defaults).
+///
+/// Retorno: `SkillPackage` re-stat do disco com counts/has_* já
+/// reflectindo o estado pós-write.
+#[tauri::command]
+pub async fn save_generated_skill(
+    name: String,
+    files: Vec<SkillFileData>,
+    pool: State<'_, SqlitePool>,
+) -> Result<SkillPackage, String> {
+    // skill_dir() valida o name contra `..` / separators / vazio.
+    let dir = skill_storage::skill_dir(&name)?;
+    if dir.join("SKILL.md").is_file() {
+        return Err(format!(
+            "skill `{name}` já existe — apague ou escolha outro nome antes de salvar."
+        ));
+    }
+    if !files.iter().any(|f| f.path == "SKILL.md") {
+        return Err("lista de arquivos não tem SKILL.md — skill sem ele é inválida.".into());
+    }
+    for file in &files {
+        if !is_valid_skill_path(&file.path) {
+            return Err(format!(
+                "path inválido: `{}` (use SKILL.md, references/*.md, assets/* ou scripts/*).",
+                file.path
+            ));
+        }
+    }
+
+    // Materializa o package: raiz + subpastas só pras que têm
+    // arquivo. `create_subfolder` é idempotente; chamada múltipla
+    // pra mesma subpasta não erra.
+    skill_storage::ensure_skill_dir(&name)?;
+    for file in &files {
+        if let Some((subdir, _)) = file.path.split_once('/') {
+            skill_storage::create_subfolder(&name, subdir)?;
+        }
+        let target = dir.join(&file.path);
+        fs::write(&target, &file.content)
+            .map_err(|e| format!("falha ao gravar {}: {e}", target.display()))?;
+    }
+
+    // Parseia SKILL.md final pra ter version/author corretos no
+    // mirror (versus defaults do `sync_skill_mirror` em row novo).
+    let skill_md_path = dir.join("SKILL.md");
+    let skill_md_content = fs::read_to_string(&skill_md_path)
+        .map_err(|e| format!("falha ao reler SKILL.md: {e}"))?;
+    let parsed = skill_parser::parse_skill(&skill_md_content)
+        .map_err(|e| format!("SKILL.md inválido: {e}"))?;
+
+    let package = skill_storage::get_skill_package(&name)?
+        .ok_or_else(|| "skill criada mas package não encontrado".to_string())?;
+
+    let row = SkillRow {
+        id: Uuid::new_v4().to_string(),
+        name: name.clone(),
+        version: parsed.meta.version,
+        author: if parsed.meta.author.is_empty() {
+            None
+        } else {
+            Some(parsed.meta.author)
+        },
+        has_references: if package.has_references { 1 } else { 0 },
+        has_assets: if package.has_assets { 1 } else { 0 },
+        has_scripts: if package.has_scripts { 1 } else { 0 },
+        files_count: package.files_count as i64,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+    if let Err(err) = queries::insert_skill(&pool, &row).await {
+        eprintln!(
+            "[skills] insert mirror SQLite `{name}` falhou: {err}"
+        );
+    }
+
+    Ok(package)
 }
 
 /// Descompacta um arquivo `.skill` (ZIP) em `~/.genesis/skills/<name>/`
