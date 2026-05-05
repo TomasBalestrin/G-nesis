@@ -1,25 +1,23 @@
 import { useEffect, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
-  ChevronRight,
+  ChevronDown,
   Download,
-  FileCode,
-  Folder,
-  Image as ImageIcon,
+  FileText,
   Loader2,
   MessageSquare,
   MoreHorizontal,
-  Moon,
+  MoreVertical,
+  PanelLeft,
+  PanelLeftClose,
   Pencil,
   Plus,
-  Settings,
-  Sun,
+  PlusCircle,
   Trash2,
   Upload,
 } from "lucide-react";
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +33,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
 import {
   deleteSkill,
@@ -50,11 +47,25 @@ import type { Conversation } from "@/types/chat";
 import type { Skill } from "@/types/skill";
 
 interface SidebarProps {
-  open: boolean;
-  onNavigate: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
-export function Sidebar({ open, onNavigate }: SidebarProps) {
+/**
+ * Sidebar do Genesis (Figma v2). Dois estados visuais:
+ *
+ *   - **Expandida (315px)**: logo "Genesis OS", "Nova conversa",
+ *     section Chats, section Skill, frase rodapé.
+ *   - **Colapsada (122px)**: ícone de toggle + Plus circular + ícones
+ *     dos items ATIVOS de chats e skills (apenas o item selecionado
+ *     da rota corrente). Sem texto, sem scroll, sem rodapé.
+ *
+ * Settings + theme toggle SAÍRAM do rodapé — agora moram no AppHeader.
+ * Mobile drawer também removido (Genesis é desktop). Tokens consumidos
+ * via `var(--gv2-*)` direto via inline style ou className arbitrária
+ * `[var(--gv2-*)]` — alinhado com o cutover incremental do Figma v2.
+ */
+export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   const navigate = useNavigate();
   const createConversation = useConversationsStore((s) => s.create);
   const { toast } = useToast();
@@ -63,7 +74,6 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
     const conv = await createConversation();
     if (conv) {
       navigate(`/chat/${conv.id}`);
-      onNavigate();
     } else {
       toast({
         title: "Falha ao criar conversa",
@@ -75,70 +85,250 @@ export function Sidebar({ open, onNavigate }: SidebarProps) {
   return (
     <aside
       aria-label="Navegação principal"
-      className={cn(
-        "flex w-[260px] flex-col border-r bg-[var(--sb-bg)] border-[var(--sb-bd)]",
-        // Mobile drawer
-        "max-[800px]:fixed max-[800px]:inset-y-0 max-[800px]:z-40",
-        "max-[800px]:transition-transform max-[800px]:duration-200",
-        open
-          ? "max-[800px]:translate-x-0"
-          : "max-[800px]:-translate-x-full",
-      )}
+      className="flex h-full shrink-0 flex-col border-r transition-[width] duration-200 ease-out"
+      style={{
+        width: collapsed
+          ? "var(--gv2-sidebar-collapsed)"
+          : "var(--gv2-sidebar-width)",
+        background: "var(--gv2-bg)",
+        borderColor: "var(--gv2-border)",
+        padding: collapsed ? "30px 20px" : "30px",
+      }}
     >
-      <div className="px-3 pt-4">
-        <Button
-          onClick={handleNewChat}
-          className="w-full justify-start"
-          aria-label="Nova conversa"
-        >
-          <Plus className="h-4 w-4" />
-          Nova conversa
-        </Button>
-      </div>
-
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
-        <ChatsSection onNavigate={onNavigate} />
-        <SkillsSection onNavigate={onNavigate} />
-      </nav>
-
-      <Footer />
+      {collapsed ? (
+        <CollapsedSidebar
+          onToggleCollapsed={onToggleCollapsed}
+          onNewChat={handleNewChat}
+        />
+      ) : (
+        <ExpandedSidebar
+          onToggleCollapsed={onToggleCollapsed}
+          onNewChat={handleNewChat}
+        />
+      )}
     </aside>
   );
 }
 
-// ── sections ────────────────────────────────────────────────────────────────
+// ── expanded ────────────────────────────────────────────────────────────────
 
-interface SectionHeaderProps {
-  label: string;
-  open: boolean;
-  onToggle: () => void;
-  action?: React.ReactNode;
+interface ExpandedSidebarProps {
+  onToggleCollapsed: () => void;
+  onNewChat: () => void;
 }
 
-function SectionHeader({ label, open, onToggle, action }: SectionHeaderProps) {
+function ExpandedSidebar({
+  onToggleCollapsed,
+  onNewChat,
+}: ExpandedSidebarProps) {
   return (
-    <div className="flex items-center justify-between gap-2 px-2">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex flex-1 items-center gap-1 rounded-md py-1 text-xs font-semibold uppercase tracking-wider text-[var(--text-3)] transition-colors hover:text-[var(--text-2)] focus-visible:outline-none"
+    <>
+      {/* Topo: logo + collapse */}
+      <div className="flex items-center justify-between">
+        <span
+          className="select-none"
+          style={{
+            fontFamily: "Lora, serif",
+            fontWeight: 600,
+            fontSize: "25px",
+            color: "var(--gv2-brand)",
+            lineHeight: 1,
+          }}
+        >
+          Genesis OS
+        </span>
+        <button
+          type="button"
+          aria-label="Colapsar sidebar"
+          onClick={onToggleCollapsed}
+          className="rounded p-1 transition-colors hover:bg-[var(--gv2-active-bg)]"
+        >
+          <PanelLeftClose
+            className="h-[18px] w-[18px]"
+            style={{ color: "var(--gv2-text-secondary)" }}
+            strokeWidth={1.5}
+          />
+        </button>
+      </div>
+
+      {/* Gap 70px → "Nova conversa" */}
+      <div className="mt-[70px]">
+        <button
+          type="button"
+          onClick={onNewChat}
+          className="flex w-full items-center gap-2 transition-opacity hover:opacity-90"
+          style={{
+            background: "var(--gv2-brand-button)",
+            color: "var(--gv2-text)",
+            borderRadius: "var(--gv2-radius-sm)",
+            padding: "15px 25px",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "15px",
+            fontWeight: 500,
+          }}
+        >
+          <Plus className="h-3 w-3" strokeWidth={2} />
+          <span>Nova conversa</span>
+        </button>
+      </div>
+
+      {/* Gap 40px → seção Chats */}
+      <div className="mt-[40px] flex-1 overflow-y-auto">
+        <ChatsSection />
+        <Separator />
+        <SkillsSection />
+      </div>
+
+      {/* Rodapé com a frase */}
+      <QuoteFooter />
+    </>
+  );
+}
+
+function Separator() {
+  return (
+    <div
+      className="my-[17px]"
+      style={{
+        height: "1px",
+        background: "var(--gv2-border)",
+      }}
+    />
+  );
+}
+
+function QuoteFooter() {
+  return (
+    <div className="mt-[40px]">
+      <p
+        style={{
+          fontFamily: "Lora, serif",
+          fontSize: "15px",
+          fontWeight: 400,
+          color: "var(--gv2-text-secondary)",
+          lineHeight: 1.6,
+        }}
       >
-        <ChevronRight
-          aria-hidden
-          className={cn(
-            "h-3 w-3 transition-transform duration-200",
-            open && "rotate-90",
-          )}
-        />
-        {label}
-      </button>
-      {action}
+        A melhor maneira de começar alguma coisa é parar de falar e dar o
+        primeiro passo.
+      </p>
+      <div
+        className="my-[10px]"
+        style={{ height: "1px", background: "var(--gv2-border)" }}
+      />
+      <p
+        style={{
+          fontFamily: "Lora, serif",
+          fontSize: "12px",
+          fontWeight: 400,
+          color: "var(--gv2-text-secondary)",
+        }}
+      >
+        Walt Disney
+      </p>
     </div>
   );
 }
 
-function ChatsSection({ onNavigate }: { onNavigate: () => void }) {
+// ── collapsed ───────────────────────────────────────────────────────────────
+
+interface CollapsedSidebarProps {
+  onToggleCollapsed: () => void;
+  onNewChat: () => void;
+}
+
+function CollapsedSidebar({
+  onToggleCollapsed,
+  onNewChat,
+}: CollapsedSidebarProps) {
+  const conversationsItems = useConversationsStore((s) => s.items);
+  const skillsItems = useSkillsStore((s) => s.items);
+  const ensureConversations = useConversationsStore((s) => s.ensureLoaded);
+  const ensureSkills = useSkillsStore((s) => s.ensureLoaded);
+
+  useEffect(() => {
+    void ensureConversations();
+    void ensureSkills();
+  }, [ensureConversations, ensureSkills]);
+
+  const { conversationId } = useParams<{ conversationId: string }>();
+  const { name: skillName } = useParams<{ name: string }>();
+  const activeChat = conversationsItems.find((c) => c.id === conversationId);
+  const activeSkill = skillsItems.find((s) => s.name === skillName);
+
+  return (
+    <div className="flex h-full flex-col items-center gap-[20px]">
+      <button
+        type="button"
+        aria-label="Expandir sidebar"
+        onClick={onToggleCollapsed}
+        className="rounded p-1 transition-colors hover:bg-[var(--gv2-active-bg)]"
+      >
+        <PanelLeft
+          className="h-[18px] w-[18px]"
+          style={{ color: "var(--gv2-text-secondary)" }}
+          strokeWidth={1.5}
+        />
+      </button>
+
+      <button
+        type="button"
+        onClick={onNewChat}
+        aria-label="Nova conversa"
+        className="flex h-[42px] w-[42px] items-center justify-center transition-opacity hover:opacity-90"
+        style={{
+          background: "var(--gv2-brand-button)",
+          borderRadius: "9999px",
+          color: "var(--gv2-text)",
+        }}
+      >
+        <Plus className="h-3 w-3" strokeWidth={2} />
+      </button>
+
+      {activeChat ? (
+        <Link
+          to={`/chat/${activeChat.id}`}
+          aria-label={activeChat.title}
+          className="flex h-[36px] w-[36px] items-center justify-center"
+          style={{
+            background: "var(--gv2-active-bg)",
+            color: "var(--gv2-active-text)",
+            borderRadius: "9999px",
+          }}
+        >
+          <MessageSquare className="h-3 w-3" strokeWidth={1.5} />
+        </Link>
+      ) : null}
+
+      <div
+        className="w-full"
+        style={{ height: "1px", background: "var(--gv2-border)" }}
+      />
+
+      {activeSkill ? (
+        <Link
+          to={`/settings/skill/${encodeURIComponent(activeSkill.name)}`}
+          aria-label={activeSkill.name}
+          className="flex h-[36px] w-[36px] items-center justify-center"
+          style={{
+            background: "var(--gv2-active-bg)",
+            color: "var(--gv2-active-text)",
+            borderRadius: "9999px",
+          }}
+        >
+          <FileText
+            style={{ width: "10px", height: "12px" }}
+            strokeWidth={1.5}
+          />
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+// ── chats section ───────────────────────────────────────────────────────────
+
+function ChatsSection() {
   const [open, setOpen] = useState(true);
   const items = useConversationsStore((s) => s.items);
   const loaded = useConversationsStore((s) => s.loaded);
@@ -146,28 +336,42 @@ function ChatsSection({ onNavigate }: { onNavigate: () => void }) {
   const ensureLoaded = useConversationsStore((s) => s.ensureLoaded);
 
   useEffect(() => {
-    ensureLoaded();
+    void ensureLoaded();
   }, [ensureLoaded]);
 
   return (
     <section>
-      <SectionHeader label="Chats" open={open} onToggle={() => setOpen((o) => !o)} />
+      <SectionHeader
+        label="Chats"
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+      />
       {open ? (
-        <div className="mt-1 space-y-0.5">
+        <div className="mt-[10px] space-y-[10px]">
           {!loaded && loading ? (
-            <p className="px-2 py-1 text-xs text-[var(--text-3)]">Carregando...</p>
+            <p
+              className="px-[25px]"
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "15px",
+                color: "var(--gv2-text-secondary)",
+              }}
+            >
+              Carregando...
+            </p>
           ) : items.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-[var(--text-3)]">
+            <p
+              className="px-[25px]"
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "15px",
+                color: "var(--gv2-text-secondary)",
+              }}
+            >
               Nenhuma conversa ainda.
             </p>
           ) : (
-            items.map((c) => (
-              <ConversationItem
-                key={c.id}
-                conversation={c}
-                onNavigate={onNavigate}
-              />
-            ))
+            items.map((c) => <ConversationItem key={c.id} conversation={c} />)
           )}
         </div>
       ) : null}
@@ -175,12 +379,56 @@ function ChatsSection({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-interface ConversationItemProps {
-  conversation: Conversation;
-  onNavigate: () => void;
+interface SectionHeaderProps {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  rightAction?: React.ReactNode;
 }
 
-function ConversationItem({ conversation, onNavigate }: ConversationItemProps) {
+function SectionHeader({
+  label,
+  open,
+  onToggle,
+  rightAction,
+}: SectionHeaderProps) {
+  return (
+    <div className="flex items-center justify-between">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex flex-1 items-center gap-2 transition-opacity hover:opacity-80"
+      >
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "transition-transform duration-150",
+            open ? "rotate-0" : "-rotate-90",
+          )}
+          style={{
+            width: "8px",
+            height: "4px",
+            color: "var(--gv2-text-secondary)",
+          }}
+        />
+        <span
+          style={{
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "15px",
+            fontWeight: 400,
+            color: "var(--gv2-text-secondary)",
+          }}
+        >
+          {label}
+        </span>
+      </button>
+      {rightAction}
+    </div>
+  );
+}
+
+function ConversationItem({ conversation }: { conversation: Conversation }) {
   const { conversationId: active } = useParams<{ conversationId: string }>();
   const isActive = active === conversation.id;
   const rename = useConversationsStore((s) => s.rename);
@@ -206,17 +454,16 @@ function ConversationItem({ conversation, onNavigate }: ConversationItemProps) {
     }
   }
 
-  async function handleDelete(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!confirm(`Apagar conversa "${conversation.title}"? As mensagens vão junto.`)) {
+  async function handleDelete() {
+    if (
+      !confirm(
+        `Apagar conversa "${conversation.title}"? As mensagens vão junto.`,
+      )
+    )
       return;
-    }
     try {
       await remove(conversation.id);
-      if (isActive) {
-        navigate("/");
-      }
+      if (isActive) navigate("/");
     } catch (err) {
       toast({
         title: "Falha ao apagar",
@@ -228,7 +475,7 @@ function ConversationItem({ conversation, onNavigate }: ConversationItemProps) {
 
   if (editing) {
     return (
-      <form onSubmit={handleRenameSubmit} className="px-2">
+      <form onSubmit={handleRenameSubmit} className="px-[10px]">
         <input
           autoFocus
           value={draftTitle}
@@ -240,7 +487,15 @@ function ConversationItem({ conversation, onNavigate }: ConversationItemProps) {
               setEditing(false);
             }
           }}
-          className="h-8 w-full rounded-md border border-primary bg-[var(--input-bg)] px-2 text-sm text-[var(--text)] focus:outline-none"
+          className="w-full rounded-[10px] focus:outline-none"
+          style={{
+            background: "var(--gv2-input-bg)",
+            border: "1px solid var(--gv2-input-border)",
+            padding: "15px 25px",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "15px",
+            color: "var(--gv2-text)",
+          }}
         />
       </form>
     );
@@ -249,65 +504,81 @@ function ConversationItem({ conversation, onNavigate }: ConversationItemProps) {
   return (
     <NavLink
       to={`/chat/${conversation.id}`}
-      onClick={onNavigate}
-      className={cn(
-        "group flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 text-sm transition-colors duration-100",
-        isActive
-          ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-          : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
-      )}
+      className="group flex items-center gap-2 transition-colors"
+      style={{
+        background: isActive ? "var(--gv2-active-bg)" : "transparent",
+        color: isActive
+          ? "var(--gv2-active-text)"
+          : "var(--gv2-text-secondary)",
+        borderRadius: "var(--gv2-radius-sm)",
+        padding: "15px 25px",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: "15px",
+      }}
     >
-      <MessageSquare
-        className={cn(
-          "h-3.5 w-3.5 shrink-0",
-          isActive ? "text-[var(--accent)]" : "text-[var(--text-tertiary)]",
-        )}
-      />
+      <MessageSquare className="h-3 w-3 shrink-0" strokeWidth={1.5} />
       <span className="flex-1 truncate" title={conversation.title}>
         {conversation.title}
       </span>
-      <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <IconButton
-          ariaLabel="Renomear"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
+      {isActive ? (
+        <ConversationDropdown
+          onRename={() => {
             setDraftTitle(conversation.title);
             setEditing(true);
           }}
-        >
-          <Pencil className="h-3 w-3" />
-        </IconButton>
-        <IconButton ariaLabel="Apagar" onClick={handleDelete}>
-          <Trash2 className="h-3 w-3" />
-        </IconButton>
-      </span>
+          onDelete={handleDelete}
+        />
+      ) : null}
     </NavLink>
   );
 }
 
-interface IconButtonProps {
-  ariaLabel: string;
-  onClick: (e: React.MouseEvent) => void;
-  children: React.ReactNode;
-}
-
-function IconButton({ ariaLabel, onClick, children }: IconButtonProps) {
+function ConversationDropdown({
+  onRename,
+  onDelete,
+}: {
+  onRename: () => void;
+  onDelete: () => void;
+}) {
   return (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      onClick={onClick}
-      className="rounded p-1 text-[var(--text-3)] hover:bg-[var(--bg-muted)] hover:text-[var(--text)] focus-visible:outline-none"
-    >
-      {children}
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Mais ações"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="rounded p-1 transition-colors hover:bg-[var(--gv2-active-bg)]"
+        >
+          <MoreVertical
+            style={{ width: "2px", height: "14px" }}
+            strokeWidth={2}
+          />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuItem onClick={onRename}>
+          <Pencil className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
+          Renomear
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={onDelete}
+          className="text-[var(--destructive)] focus:text-[var(--destructive)]"
+        >
+          <Trash2 className="mr-2 h-3.5 w-3.5" strokeWidth={1.5} />
+          Apagar
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 // ── skills section ──────────────────────────────────────────────────────────
 
-function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
+function SkillsSection() {
   const [open, setOpen] = useState(true);
   const items = useSkillsStore((s) => s.items);
   const loading = useSkillsStore((s) => s.loading);
@@ -315,13 +586,12 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   const ensureLoaded = useSkillsStore((s) => s.ensureLoaded);
   const refresh = useSkillsStore((s) => s.refresh);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   useEffect(() => {
     ensureLoaded();
   }, [ensureLoaded]);
 
-  // File picker via tauri-plugin-dialog → IPC import_skill → refresh.
-  // Mesma UX da ImportSkillZone em Settings, mas inline na sidebar.
   async function handleImport() {
     try {
       const selected = await openDialog({
@@ -349,48 +619,63 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   return (
     <section>
       <SectionHeader
-        label="Skills"
+        label="Skill"
         open={open}
         onToggle={() => setOpen((o) => !o)}
-        action={
-          <span className="flex items-center">
+        rightAction={
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => navigate("/skills/new")}
+              aria-label="Nova skill"
+              className="rounded p-1 transition-colors hover:bg-[var(--gv2-active-bg)]"
+            >
+              <PlusCircle
+                style={{ width: "8px", height: "8px" }}
+                strokeWidth={2}
+              />
+            </button>
             <button
               type="button"
               onClick={handleImport}
-              aria-label="Importar skill (.skill)"
+              aria-label="Importar .skill"
               title="Importar .skill"
-              className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
+              className="rounded p-1 transition-colors hover:bg-[var(--gv2-active-bg)]"
             >
-              <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
+              <Upload
+                style={{ width: "10px", height: "10px" }}
+                strokeWidth={1.5}
+              />
             </button>
-            <Link
-              to="/skills/new"
-              onClick={onNavigate}
-              aria-label="Nova skill"
-              title="Nova skill"
-              className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--text)]"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={1.5} />
-            </Link>
-          </span>
+          </div>
         }
       />
       {open ? (
-        <div className="mt-1 space-y-0.5">
+        <div className="mt-[10px] space-y-[10px]">
           {loading && !loaded ? (
-            <p className="px-2 py-1 text-xs text-[var(--text-3)]">Carregando...</p>
+            <p
+              className="px-[25px]"
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "15px",
+                color: "var(--gv2-text-secondary)",
+              }}
+            >
+              Carregando...
+            </p>
           ) : items.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-[var(--text-3)]">
+            <p
+              className="px-[25px]"
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "15px",
+                color: "var(--gv2-text-secondary)",
+              }}
+            >
               Nenhuma skill.
             </p>
           ) : (
-            items.map((skill) => (
-              <SkillItem
-                key={skill.name}
-                skill={skill}
-                onNavigate={onNavigate}
-              />
-            ))
+            items.map((skill) => <SkillItem key={skill.name} skill={skill} />)
           )}
         </div>
       ) : null}
@@ -398,27 +683,17 @@ function SkillsSection({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-interface SkillItemProps {
-  skill: Skill;
-  onNavigate: () => void;
-}
-
-function SkillItem({ skill, onNavigate }: SkillItemProps) {
+function SkillItem({ skill }: { skill: Skill }) {
   const { name: routeName } = useParams<{ name: string }>();
   const isActive = routeName === skill.name;
   const refreshSkills = useSkillsStore((s) => s.refresh);
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [expanded, setExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  const referencesCount = skill.references_count;
-  const hasAssets = skill.has_assets;
-  const hasReferences = skill.has_references;
-  const hasScripts = skill.has_scripts;
-  const detailHref = `/skills/${encodeURIComponent(skill.name)}`;
+  const detailHref = `/settings/skill/${encodeURIComponent(skill.name)}`;
 
   async function handleConfirmDelete() {
     setDeleting(true);
@@ -462,137 +737,41 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
     }
   }
 
-  function openDetail() {
-    navigate(detailHref);
-    onNavigate();
-  }
-
   return (
     <>
-      <div
-        className={cn(
-          "group rounded-md border-l-2 transition-colors duration-100",
-          isActive
-            ? "border-[var(--accent)] bg-[var(--accent-soft)]"
-            : "border-transparent hover:bg-[var(--bg-hover)]",
-        )}
+      <NavLink
+        to={detailHref}
+        className="group flex items-center gap-2 transition-colors"
+        style={{
+          background: isActive ? "var(--gv2-active-bg)" : "transparent",
+          color: isActive
+            ? "var(--gv2-active-text)"
+            : "var(--gv2-text-secondary)",
+          borderRadius: "var(--gv2-radius-sm)",
+          padding: "15px 25px",
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: "15px",
+        }}
       >
-        <div className="flex items-center gap-1 px-1 py-1">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded((v) => !v);
-            }}
-            aria-label={expanded ? "Colapsar" : "Expandir"}
-            aria-expanded={expanded}
-            className="rounded p-0.5 text-[var(--text-3)] hover:text-[var(--text)] focus-visible:outline-none"
-          >
-            <ChevronRight
-              className={cn(
-                "h-3 w-3 transition-transform duration-150",
-                expanded && "rotate-90",
-              )}
-              strokeWidth={1.5}
-            />
-          </button>
-          <button
-            type="button"
-            onClick={openDetail}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 text-left"
-          >
-            <FileCode
-              className={cn(
-                "h-3.5 w-3.5 shrink-0",
-                isActive
-                  ? "text-[var(--accent)]"
-                  : "text-[var(--text-3)]",
-              )}
-              strokeWidth={1.5}
-            />
-            <span className="min-w-0 flex-1">
-              <span
-                className={cn(
-                  "block truncate font-mono text-xs",
-                  isActive
-                    ? "text-[var(--accent)]"
-                    : "text-[var(--text-2)]",
-                )}
-              >
-                {skill.name}
-              </span>
-            </span>
-            {referencesCount > 0 ? (
-              <span
-                className="shrink-0 rounded-full bg-[var(--bg-muted)] px-1.5 text-[10px] font-medium text-[var(--text-2)]"
-                title={`${referencesCount} reference(s)`}
-              >
-                {referencesCount}
-              </span>
-            ) : null}
-          </button>
+        <FileText
+          className="shrink-0"
+          style={{ width: "10px", height: "12px" }}
+          strokeWidth={1.5}
+        />
+        <span className="flex-1 truncate font-mono">{skill.name}</span>
+        {isActive ? (
           <SkillDropdown
             exporting={exporting}
-            onEdit={() => {
-              navigate(`${detailHref}/edit`);
-              onNavigate();
-            }}
+            onEdit={() => navigate(`/skills/${encodeURIComponent(skill.name)}/edit`)}
             onExport={handleExport}
             onDelete={() => setConfirmOpen(true)}
           />
-        </div>
-
-        {expanded ? (
-          <ul className="space-y-0.5 pb-1 pl-7 pr-2">
-            <SkillTreeItem
-              icon={
-                <FileCode
-                  className="h-3 w-3 shrink-0"
-                  strokeWidth={1.5}
-                />
-              }
-              label="SKILL.md"
-              onClick={openDetail}
-            />
-            {hasReferences ? (
-              <SkillTreeItem
-                icon={
-                  <Folder className="h-3 w-3 shrink-0" strokeWidth={1.5} />
-                }
-                label="references/"
-                count={referencesCount}
-                onClick={openDetail}
-              />
-            ) : null}
-            {hasAssets ? (
-              <SkillTreeItem
-                icon={
-                  <ImageIcon
-                    className="h-3 w-3 shrink-0"
-                    strokeWidth={1.5}
-                  />
-                }
-                label="assets/"
-                count={skill.assets_count}
-                onClick={openDetail}
-              />
-            ) : null}
-            {hasScripts ? (
-              <SkillTreeItem
-                icon={
-                  <Folder
-                    className="h-3 w-3 shrink-0"
-                    strokeWidth={1.5}
-                  />
-                }
-                label="scripts/"
-                count={skill.scripts_count}
-                onClick={openDetail}
-              />
-            ) : null}
-          </ul>
         ) : null}
-      </div>
+      </NavLink>
+
+      {/* Sub-itens só aparecem quando a skill é a ativa (skill detail
+          mostra os arquivos no 3º painel também; aqui é só hint). */}
+      {isActive ? <SkillSubItems skill={skill} /> : null}
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
@@ -600,25 +779,27 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
             <DialogTitle>Deletar skill?</DialogTitle>
             <DialogDescription>
               <span className="font-mono">{skill.name}</span> será removida do
-              skills_dir. Esta ação não pode ser desfeita. Execuções em
-              andamento bloqueiam a deleção.
+              skills_dir. Esta ação não pode ser desfeita.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
+            <button
+              type="button"
               onClick={() => setConfirmOpen(false)}
               disabled={deleting}
+              className="px-4 py-2 text-sm"
             >
               Cancelar
-            </Button>
-            <Button
-              variant="destructive"
+            </button>
+            <button
+              type="button"
               onClick={handleConfirmDelete}
               disabled={deleting}
+              className="rounded-[10px] px-4 py-2 text-sm text-white"
+              style={{ background: "var(--destructive, #C4453A)" }}
             >
               {deleting ? "Deletando..." : "Deletar"}
-            </Button>
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -626,30 +807,29 @@ function SkillItem({ skill, onNavigate }: SkillItemProps) {
   );
 }
 
-interface SkillTreeItemProps {
-  icon: React.ReactNode;
-  label: string;
-  count?: number;
-  onClick: () => void;
-}
-
-function SkillTreeItem({ icon, label, count, onClick }: SkillTreeItemProps) {
+function SkillSubItems({ skill }: { skill: Skill }) {
+  const items: string[] = ["SKILL.md"];
+  if (skill.has_references) items.push("references/");
+  if (skill.has_assets) items.push("assets/");
+  if (skill.has_scripts) items.push("scripts/");
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-0.5 text-left text-[11px] text-[var(--text-2)] transition-colors hover:bg-[var(--bg-muted)]"
-      >
-        {icon}
-        <span className="truncate font-mono">{label}</span>
-        {typeof count === "number" && count > 0 ? (
-          <span className="ml-auto text-[10px] text-[var(--text-3)]">
-            {count}
-          </span>
-        ) : null}
-      </button>
-    </li>
+    <ul>
+      {items.map((label) => (
+        <li
+          key={label}
+          style={{
+            paddingLeft: "39px",
+            paddingTop: "5px",
+            paddingBottom: "5px",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "13px",
+            color: "var(--gv2-active-text)",
+          }}
+        >
+          {label}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -672,8 +852,11 @@ function SkillDropdown({
         <button
           type="button"
           aria-label="Mais ações"
-          onClick={(e) => e.stopPropagation()}
-          className="rounded p-1 text-[var(--text-3)] opacity-0 transition-opacity hover:bg-[var(--bg-muted)] hover:text-[var(--text)] focus-visible:opacity-100 group-hover:opacity-100"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="rounded p-1 transition-colors hover:bg-[var(--gv2-active-bg)]"
         >
           {exporting ? (
             <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.5} />
@@ -708,36 +891,5 @@ function SkillDropdown({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-// ── footer ──────────────────────────────────────────────────────────────────
-
-function Footer() {
-  const { isDark, toggle } = useTheme();
-  return (
-    <div className="flex items-center justify-between gap-2 border-t border-[var(--sb-bd)] px-3 py-3">
-      <div className="flex items-center gap-1">
-        <Link
-          to="/settings"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)]"
-        >
-          <Settings className="h-4 w-4" />
-          Settings
-        </Link>
-      </div>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label={isDark ? "Mudar para tema claro" : "Mudar para tema escuro"}
-        className="rounded-md p-2 text-[var(--sb-text)] transition-colors hover:bg-[var(--sb-hover)] focus-visible:outline-none"
-      >
-        {isDark ? (
-          <Sun className="h-4 w-4" />
-        ) : (
-          <Moon className="h-4 w-4" />
-        )}
-      </button>
-    </div>
   );
 }

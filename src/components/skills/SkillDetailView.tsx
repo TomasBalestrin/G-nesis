@@ -1,25 +1,17 @@
 import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowLeft,
-  ChevronDown,
-  ChevronRight,
   Code,
   Download,
   Eye,
-  FileCode,
-  FileText,
-  Folder,
-  Image as ImageIcon,
   Loader2,
   Pencil,
   Trash2,
 } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { useNavigate, useParams } from "react-router-dom";
 
-import { SkillFileViewer } from "@/components/skills/MarkdownPreview";
-
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/useToast";
 import {
   deleteSkill,
@@ -37,17 +28,10 @@ import {
   moveFile,
   readSkillAssetDataUrl,
 } from "@/lib/tauri-bridge";
-import { cn } from "@/lib/utils";
-import { useSkillsStore } from "@/stores/skillsStore";
-import type { Skill, SkillDetail } from "@/types/skill";
+import { useSkillsStore, type SelectedSkillFile } from "@/stores/skillsStore";
+import type { SkillDetail } from "@/types/skill";
 
 type ViewMode = "visual" | "code";
-
-interface SelectedItem {
-  kind: "skill" | "reference" | "asset" | "script";
-  /** undefined for kind === 'skill' (canonical SKILL.md). */
-  filename?: string;
-}
 
 const TEXT_EXTENSIONS = new Set([
   "md",
@@ -85,20 +69,17 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 
 /**
- * Visualização detalhada de uma skill v2.
+ * Visualização da skill no padrão Figma v2 (white-04). Roda dentro do
+ * SettingsLayout — file tree fica no SkillTreePanel (3º painel) e
+ * compartilha selectedFile via skillsStore. Aqui renderiza só:
  *
- * Layout split:
- *  - Tree esquerda: SKILL.md (destacado) + references/ (colapsável)
- *    + assets/ (colapsável)
- *  - Pane direita: toggle Visual/Código no topo, render markdown
- *    formatado (ReactMarkdown) ou raw (com numeração de linha) pra
- *    arquivos texto. Imagens via data URL inline; binários sem
- *    suporte caem em metadata + abrir-no-FS.
+ *   - Header: nome (Lora 40px) + descrição + ações (Editar/Exportar/
+ *     Deletar) + separador
+ *   - Card preview: pill toggle Visual/Código + conteúdo do arquivo
+ *     selecionado (markdown render ou raw code)
  *
- * Header: nome + badge versão + badge autor + Editar/Exportar/Deletar.
- * Editar navega pra /skills/:name/edit que monta o CreateSkillFlow
- * em modo edição — pula a tela do nome e abre direto no chat com
- * o Skill Architect (B1+B3+B4) com o nome pré-carregado.
+ * Editar continua indo pra /skills/:name/edit (rota top-level com o
+ * CreateSkillFlow em modo edição). Deletar volta pra /settings/skills.
  */
 export function SkillDetailView() {
   const { name = "" } = useParams<{ name: string }>();
@@ -108,28 +89,20 @@ export function SkillDetailView() {
   const setActive = useSkillsStore((s) => s.setActive);
   const clearActive = useSkillsStore((s) => s.clearActive);
   const activeSkill = useSkillsStore((s) => s.activeSkill);
+  const selectedFile = useSkillsStore((s) => s.selectedFile);
 
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<SelectedItem>({ kind: "skill" });
   const [textContent, setTextContent] = useState<string | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("visual");
-  const [collapsedRefs, setCollapsedRefs] = useState(false);
-  const [collapsedAssets, setCollapsedAssets] = useState(false);
-  const [collapsedScripts, setCollapsedScripts] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // Hidrata `activeSkill` no store via setActive(name) — esse já
-  // chama getSkill IPC e mescla com o catálogo cached. Limpa no
-  // unmount pra liberar memória + evitar flash de skill antiga
-  // quando o user navega entre skills.
   useEffect(() => {
     if (!name) return;
     setLoadError(null);
-    setSelected({ kind: "skill" });
     void setActive(name).catch((err) => {
       setLoadError(err instanceof Error ? err.message : String(err));
     });
@@ -138,9 +111,6 @@ export function SkillDetailView() {
     };
   }, [name, setActive, clearActive]);
 
-  // Carrega o conteúdo do item selecionado. SKILL.md já vem direto
-  // do `activeSkill.content`. Texto via getSkillFile, imagem via
-  // readSkillAssetDataUrl, outros tipos caem em mensagem "abrir no FS".
   useEffect(() => {
     if (!activeSkill) return;
     let cancelled = false;
@@ -148,15 +118,16 @@ export function SkillDetailView() {
     setTextContent(null);
     setImageDataUrl(null);
 
-    if (selected.kind === "skill") {
+    if (selectedFile.kind === "skill") {
       setTextContent(activeSkill.content);
       return;
     }
-    const filename = selected.filename ?? "";
+
+    const filename = selectedFile.filename;
     const subdir =
-      selected.kind === "reference"
+      selectedFile.kind === "reference"
         ? "references"
-        : selected.kind === "script"
+        : selectedFile.kind === "script"
           ? "scripts"
           : "assets";
     const path = `${subdir}/${filename}`;
@@ -171,7 +142,6 @@ export function SkillDetailView() {
           const text = await getSkillFile({ name, path });
           if (!cancelled) setTextContent(text);
         }
-        // outros tipos: cai no else-block do PreviewPane (sem texto, sem imagem)
       } catch (err) {
         if (!cancelled) {
           setPreviewError(err instanceof Error ? err.message : String(err));
@@ -182,13 +152,11 @@ export function SkillDetailView() {
     return () => {
       cancelled = true;
     };
-  }, [activeSkill, selected, name]);
+  }, [activeSkill, selectedFile, name]);
 
   async function handleExport() {
     setExporting(true);
     try {
-      // Two-step flow: backend cria ZIP em /tmp; UI pergunta destino
-      // ao usuário; backend move pro lugar final.
       const tempPath = await exportSkill({ name });
       const dest = await save({
         title: "Exportar skill",
@@ -215,7 +183,7 @@ export function SkillDetailView() {
       await deleteSkill({ name });
       toast({ title: `Skill ${name} deletada` });
       await refreshSkills();
-      navigate("/");
+      navigate("/settings/skills");
     } catch (err) {
       toast({
         title: "Falha ao deletar skill",
@@ -230,52 +198,60 @@ export function SkillDetailView() {
 
   if (loadError) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-[var(--text-2)]">
-        <p className="font-medium">Falha ao carregar skill</p>
-        <p className="font-mono text-xs">{loadError}</p>
+      <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
+        <p
+          style={{
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "15px",
+            color: "var(--gv2-text-secondary)",
+          }}
+        >
+          Falha ao carregar skill
+        </p>
+        <p
+          className="font-mono"
+          style={{
+            fontSize: "12px",
+            color: "var(--gv2-text-secondary)",
+          }}
+        >
+          {loadError}
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <Header
-        name={name}
-        skill={activeSkill}
-        busy={busy}
-        exporting={exporting}
-        onEdit={() => navigate(`/skills/${encodeURIComponent(name)}/edit`)}
-        onExport={handleExport}
-        onDelete={() => setConfirmDelete(true)}
-      />
-
-      <div className="flex min-h-0 flex-1">
-        <FileTree
+    <div
+      className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto"
+      style={{ background: "var(--gv2-bg)" }}
+    >
+      <div
+        style={{
+          padding: "40px",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <DetailHeader
+          name={name}
           skill={activeSkill}
-          selected={selected}
-          onSelect={setSelected}
-          collapsedRefs={collapsedRefs}
-          collapsedAssets={collapsedAssets}
-          collapsedScripts={collapsedScripts}
-          onToggleRefs={() => setCollapsedRefs((v) => !v)}
-          onToggleAssets={() => setCollapsedAssets((v) => !v)}
-          onToggleScripts={() => setCollapsedScripts((v) => !v)}
+          busy={busy}
+          exporting={exporting}
+          onEdit={() => navigate(`/skills/${encodeURIComponent(name)}/edit`)}
+          onExport={handleExport}
+          onDelete={() => setConfirmDelete(true)}
         />
-        <main className="flex min-w-0 flex-1 flex-col">
-          <PreviewToolbar
-            selected={selected}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-          />
-          <PreviewPane
-            selected={selected}
-            viewMode={viewMode}
-            textContent={textContent}
-            imageDataUrl={imageDataUrl}
-            previewError={previewError}
-            skill={activeSkill}
-          />
-        </main>
+        <Divider />
+        <PreviewCard
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          selected={selectedFile}
+          textContent={textContent}
+          imageDataUrl={imageDataUrl}
+          previewError={previewError}
+          skill={activeSkill}
+        />
       </div>
 
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -288,20 +264,40 @@ export function SkillDetailView() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
+            <button
+              type="button"
               onClick={() => setConfirmDelete(false)}
               disabled={busy}
+              style={{
+                padding: "10px 20px",
+                borderRadius: "var(--gv2-radius-sm)",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "15px",
+                color: "var(--gv2-text-secondary)",
+                background: "transparent",
+                border: "1px solid var(--gv2-input-border)",
+                cursor: busy ? "not-allowed" : "pointer",
+              }}
             >
               Cancelar
-            </Button>
-            <Button
-              variant="destructive"
+            </button>
+            <button
+              type="button"
               onClick={handleConfirmDelete}
               disabled={busy}
+              style={{
+                padding: "10px 20px",
+                borderRadius: "var(--gv2-radius-sm)",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "15px",
+                color: "#fff",
+                background: "var(--destructive, #C4453A)",
+                border: "none",
+                cursor: busy ? "not-allowed" : "pointer",
+              }}
             >
               {busy ? "Deletando..." : "Deletar"}
-            </Button>
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -309,9 +305,22 @@ export function SkillDetailView() {
   );
 }
 
-interface HeaderProps {
+function Divider() {
+  return (
+    <div
+      aria-hidden
+      style={{
+        height: "1px",
+        marginTop: "30px",
+        background: "var(--gv2-border)",
+      }}
+    />
+  );
+}
+
+interface DetailHeaderProps {
   name: string;
-  skill: Skill | null;
+  skill: SkillDetail | null;
   busy: boolean;
   exporting: boolean;
   onEdit: () => void;
@@ -319,7 +328,7 @@ interface HeaderProps {
   onDelete: () => void;
 }
 
-function Header({
+function DetailHeader({
   name,
   skill,
   busy,
@@ -327,430 +336,605 @@ function Header({
   onEdit,
   onExport,
   onDelete,
-}: HeaderProps) {
+}: DetailHeaderProps) {
   return (
-    <header className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-4">
-      <Button asChild variant="ghost" size="icon" aria-label="Voltar">
-        <Link to="/">
-          <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
-        </Link>
-      </Button>
+    <header
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "30px",
+      }}
+    >
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h1 className="truncate text-lg font-semibold">{name}</h1>
-          {skill?.version ? (
-            <span className="rounded-md border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-1.5 py-0 font-mono text-[10px] text-[var(--text-2)]">
-              v{skill.version}
-            </span>
-          ) : null}
-          {skill?.author ? (
-            <span className="rounded-md border border-[var(--border-sub)] bg-[var(--bg-subtle)] px-1.5 py-0 text-[10px] text-[var(--text-2)]">
-              por {skill.author}
-            </span>
-          ) : null}
-        </div>
+        <h1
+          className="truncate"
+          style={{
+            fontFamily: "Lora, Georgia, serif",
+            fontWeight: 500,
+            fontSize: "40px",
+            lineHeight: 1.1,
+            color: "var(--gv2-text)",
+            margin: 0,
+          }}
+        >
+          {name}
+        </h1>
         {skill?.description ? (
-          <p className="mt-0.5 truncate text-xs text-[var(--text-3)]">
+          <p
+            style={{
+              marginTop: "15px",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 400,
+              fontSize: "15px",
+              color: "var(--gv2-text-secondary)",
+              lineHeight: 1.5,
+            }}
+          >
             {skill.description}
           </p>
         ) : null}
       </div>
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={onEdit} disabled={busy}>
-          <Pencil className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Editar
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexShrink: 0,
+        }}
+      >
+        <GhostAction
+          icon={<Pencil className="h-4 w-4" strokeWidth={1.5} />}
+          label="Editar"
+          onClick={onEdit}
+          disabled={busy}
+        />
+        <GhostAction
+          icon={
+            exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
+            ) : (
+              <Download className="h-4 w-4" strokeWidth={1.5} />
+            )
+          }
+          label={exporting ? "Exportando" : "Exportar"}
           onClick={onExport}
           disabled={busy || exporting}
-        >
-          {exporting ? (
-            <Loader2
-              className="h-3.5 w-3.5 animate-spin"
-              strokeWidth={1.5}
-            />
-          ) : (
-            <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
-          )}
-          {exporting ? "Exportando..." : "Exportar"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
+        />
+        <GhostAction
+          icon={<Trash2 className="h-4 w-4" strokeWidth={1.5} />}
+          label="Deletar"
           onClick={onDelete}
           disabled={busy}
-          aria-label={`Deletar ${name}`}
-        >
-          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Deletar
-        </Button>
+          tone="danger"
+        />
       </div>
     </header>
   );
 }
 
-interface FileTreeProps {
-  skill: SkillDetail | null;
-  selected: SelectedItem;
-  onSelect: (item: SelectedItem) => void;
-  collapsedRefs: boolean;
-  collapsedAssets: boolean;
-  collapsedScripts: boolean;
-  onToggleRefs: () => void;
-  onToggleAssets: () => void;
-  onToggleScripts: () => void;
-}
-
-function FileTree({
-  skill,
-  selected,
-  onSelect,
-  collapsedRefs,
-  collapsedAssets,
-  collapsedScripts,
-  onToggleRefs,
-  onToggleAssets,
-  onToggleScripts,
-}: FileTreeProps) {
-  const refs = skill?.references ?? [];
-  const assets = skill?.assets ?? [];
-  const scripts = skill?.scripts ?? [];
-
-  return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-[var(--bg-subtle)]/40">
-      <header className="border-b border-[var(--border-sub)] px-3 py-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">
-          Arquivos
-        </span>
-      </header>
-      <ScrollArea className="flex-1">
-        <ul className="space-y-1 p-2">
-          <li>
-            <button
-              type="button"
-              onClick={() => onSelect({ kind: "skill" })}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-                selected.kind === "skill"
-                  ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                  : "text-[var(--text-2)] hover:bg-[var(--bg-muted)]",
-              )}
-            >
-              <FileCode
-                className="h-3.5 w-3.5 shrink-0"
-                strokeWidth={1.5}
-              />
-              <span className="truncate font-mono font-medium">SKILL.md</span>
-            </button>
-          </li>
-
-          {refs.length > 0 ? (
-            <FolderGroup
-              label="references/"
-              count={refs.length}
-              collapsed={collapsedRefs}
-              onToggle={onToggleRefs}
-            >
-              {refs.map((filename) => (
-                <FileButton
-                  key={filename}
-                  filename={filename}
-                  icon={
-                    <FileText
-                      className="h-3.5 w-3.5 shrink-0"
-                      strokeWidth={1.5}
-                    />
-                  }
-                  active={
-                    selected.kind === "reference" &&
-                    selected.filename === filename
-                  }
-                  onClick={() => onSelect({ kind: "reference", filename })}
-                />
-              ))}
-            </FolderGroup>
-          ) : null}
-
-          {assets.length > 0 ? (
-            <FolderGroup
-              label="assets/"
-              count={assets.length}
-              collapsed={collapsedAssets}
-              onToggle={onToggleAssets}
-            >
-              {assets.map((filename) => (
-                <FileButton
-                  key={filename}
-                  filename={filename}
-                  icon={iconForAsset(filename)}
-                  active={
-                    selected.kind === "asset" && selected.filename === filename
-                  }
-                  onClick={() => onSelect({ kind: "asset", filename })}
-                />
-              ))}
-            </FolderGroup>
-          ) : null}
-
-          {scripts.length > 0 ? (
-            <FolderGroup
-              label="scripts/"
-              count={scripts.length}
-              collapsed={collapsedScripts}
-              onToggle={onToggleScripts}
-            >
-              {scripts.map((filename) => (
-                <FileButton
-                  key={filename}
-                  filename={filename}
-                  icon={
-                    <FileText
-                      className="h-3.5 w-3.5 shrink-0"
-                      strokeWidth={1.5}
-                    />
-                  }
-                  active={
-                    selected.kind === "script" &&
-                    selected.filename === filename
-                  }
-                  onClick={() => onSelect({ kind: "script", filename })}
-                />
-              ))}
-            </FolderGroup>
-          ) : null}
-        </ul>
-      </ScrollArea>
-    </aside>
-  );
-}
-
-interface FolderGroupProps {
-  label: string;
-  count: number;
-  collapsed: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}
-
-function FolderGroup({
-  label,
-  count,
-  collapsed,
-  onToggle,
-  children,
-}: FolderGroupProps) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-[var(--text-2)] hover:bg-[var(--bg-muted)]"
-      >
-        {collapsed ? (
-          <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={1.5} />
-        ) : (
-          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={1.5} />
-        )}
-        <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
-        <span className="font-mono">{label}</span>
-        <span className="ml-auto text-[10px] text-[var(--text-3)]">
-          {count}
-        </span>
-      </button>
-      {!collapsed && count > 0 ? (
-        <ul className="mt-0.5 space-y-0.5 pl-5">{children}</ul>
-      ) : null}
-    </li>
-  );
-}
-
-interface FileButtonProps {
-  filename: string;
+interface GhostActionProps {
   icon: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-}
-
-function FileButton({ filename, icon, active, onClick }: FileButtonProps) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        className={cn(
-          "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors",
-          active
-            ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-            : "text-[var(--text-2)] hover:bg-[var(--bg-muted)]",
-        )}
-      >
-        {icon}
-        <span className="truncate font-mono">{filename}</span>
-      </button>
-    </li>
-  );
-}
-
-function iconForAsset(name: string) {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (IMAGE_EXTENSIONS.has(ext)) {
-    return (
-      <ImageIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
-    );
-  }
-  return <FileText className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />;
-}
-
-interface PreviewToolbarProps {
-  selected: SelectedItem;
-  viewMode: ViewMode;
-  onViewModeChange: (m: ViewMode) => void;
-}
-
-function PreviewToolbar({
-  selected,
-  viewMode,
-  onViewModeChange,
-}: PreviewToolbarProps) {
-  const label =
-    selected.kind === "skill"
-      ? "SKILL.md"
-      : selected.kind === "reference"
-        ? `references/${selected.filename ?? ""}`
-        : selected.kind === "script"
-          ? `scripts/${selected.filename ?? ""}`
-          : `assets/${selected.filename ?? ""}`;
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-border bg-[var(--bg-subtle)] px-4 py-2">
-      <span className="truncate font-mono text-xs text-[var(--text-2)]">
-        {label}
-      </span>
-      <div className="flex items-center gap-1">
-        <ToolbarBtn
-          label="Visual"
-          active={viewMode === "visual"}
-          onClick={() => onViewModeChange("visual")}
-        >
-          <Eye className="h-4 w-4" strokeWidth={1.5} />
-        </ToolbarBtn>
-        <ToolbarBtn
-          label="Código"
-          active={viewMode === "code"}
-          onClick={() => onViewModeChange("code")}
-        >
-          <Code className="h-4 w-4" strokeWidth={1.5} />
-        </ToolbarBtn>
-      </div>
-    </div>
-  );
-}
-
-function ToolbarBtn({
-  label,
-  active,
-  onClick,
-  children,
-}: {
   label: string;
-  active: boolean;
   onClick: () => void;
-  children: React.ReactNode;
-}) {
+  disabled?: boolean;
+  tone?: "default" | "danger";
+}
+
+function GhostAction({
+  icon,
+  label,
+  onClick,
+  disabled,
+  tone = "default",
+}: GhostActionProps) {
+  const color =
+    tone === "danger"
+      ? "var(--destructive, #C4453A)"
+      : "var(--gv2-text-secondary)";
   return (
     <button
       type="button"
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
       onClick={onClick}
-      className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded text-[var(--text-2)] transition-colors",
-        "hover:bg-[var(--bg-muted)] hover:text-foreground",
-        active && "bg-[var(--accent-soft)] text-[var(--accent)]",
-      )}
+      disabled={disabled}
+      aria-label={label}
+      className="inline-flex items-center transition-colors hover:bg-[var(--gv2-active-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--gv2-brand)]"
+      style={{
+        gap: "8px",
+        padding: "10px 15px",
+        borderRadius: "var(--gv2-radius-sm)",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: "14px",
+        background: "transparent",
+        color,
+        border: "none",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
     >
-      {children}
+      {icon}
+      <span>{label}</span>
     </button>
   );
 }
 
-interface PreviewPaneProps {
-  selected: SelectedItem;
+interface PreviewCardProps {
   viewMode: ViewMode;
+  onViewModeChange: (m: ViewMode) => void;
+  selected: SelectedSkillFile;
   textContent: string | null;
   imageDataUrl: string | null;
   previewError: string | null;
   skill: SkillDetail | null;
 }
 
-function PreviewPane({
-  selected,
+function PreviewCard({
   viewMode,
+  onViewModeChange,
+  selected,
   textContent,
   imageDataUrl,
   previewError,
   skill,
-}: PreviewPaneProps) {
+}: PreviewCardProps) {
   const isMarkdown =
     selected.kind === "skill" ||
-    (selected.filename ?? "").toLowerCase().endsWith(".md") ||
-    (selected.filename ?? "").toLowerCase().endsWith(".markdown");
+    (selected.kind !== "asset" &&
+      (selected.filename.toLowerCase().endsWith(".md") ||
+        selected.filename.toLowerCase().endsWith(".markdown")));
 
+  return (
+    <section
+      style={{
+        marginTop: "30px",
+        background: "var(--gv2-card-bg)",
+        border: "1px solid var(--gv2-card-border)",
+        borderRadius: "var(--gv2-radius-lg)",
+        padding: "30px",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
+      <div style={{ height: "31px" }} />
+      <PreviewBody
+        viewMode={viewMode}
+        isMarkdown={isMarkdown}
+        textContent={textContent}
+        imageDataUrl={imageDataUrl}
+        previewError={previewError}
+        skill={skill}
+        selected={selected}
+      />
+    </section>
+  );
+}
+
+function ViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: ViewMode;
+  onChange: (m: ViewMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Alternar entre visualização e código"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        background: "var(--gv2-toggle-bg)",
+        borderRadius: "var(--gv2-radius-pill)",
+        padding: "2px",
+        width: "53px",
+        height: "28px",
+        gap: "0",
+      }}
+    >
+      <ToggleButton
+        active={value === "visual"}
+        onClick={() => onChange("visual")}
+        ariaLabel="Visualizar markdown"
+      >
+        <Eye className="h-3 w-3" strokeWidth={1.5} />
+      </ToggleButton>
+      <ToggleButton
+        active={value === "code"}
+        onClick={() => onChange("code")}
+        ariaLabel="Ver código"
+      >
+        <Code className="h-3 w-3" strokeWidth={1.5} />
+      </ToggleButton>
+    </div>
+  );
+}
+
+function ToggleButton({
+  active,
+  onClick,
+  ariaLabel,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  ariaLabel: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-pressed={active}
+      className="inline-flex flex-1 items-center justify-center transition-colors focus-visible:outline-none"
+      style={{
+        height: "100%",
+        borderRadius: "var(--gv2-radius-pill)",
+        background: active ? "var(--gv2-brand-button)" : "transparent",
+        color: active ? "#000" : "var(--gv2-text-secondary)",
+        border: "none",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+interface PreviewBodyProps {
+  viewMode: ViewMode;
+  isMarkdown: boolean;
+  textContent: string | null;
+  imageDataUrl: string | null;
+  previewError: string | null;
+  skill: SkillDetail | null;
+  selected: SelectedSkillFile;
+}
+
+function PreviewBody({
+  viewMode,
+  isMarkdown,
+  textContent,
+  imageDataUrl,
+  previewError,
+  skill,
+  selected,
+}: PreviewBodyProps) {
   if (previewError) {
     return (
-      <div className="flex flex-1 items-center justify-center p-6">
-        <div className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/10 px-4 py-3 text-xs text-[var(--text-2)]">
-          {previewError}
-        </div>
-      </div>
+      <p
+        style={{
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: "15px",
+          color: "var(--destructive, #C4453A)",
+        }}
+      >
+        {previewError}
+      </p>
     );
   }
 
-  if (imageDataUrl) {
+  if (imageDataUrl && selected.kind !== "skill") {
     return (
-      <ScrollArea className="flex-1">
-        <div className="flex items-center justify-center p-6">
-          <img
-            src={imageDataUrl}
-            alt={selected.filename ?? ""}
-            className="max-h-[80vh] max-w-full rounded border border-[var(--border-sub)]"
-          />
-        </div>
-      </ScrollArea>
+      <img
+        src={imageDataUrl}
+        alt={selected.filename}
+        style={{
+          maxWidth: "100%",
+          maxHeight: "70vh",
+          borderRadius: "var(--gv2-radius-md)",
+          border: "1px solid var(--gv2-card-border)",
+        }}
+      />
     );
   }
 
   if (textContent === null) {
     if (!skill) {
       return (
-        <div className="flex flex-1 items-center justify-center text-xs text-[var(--text-3)]">
+        <p
+          style={{
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "15px",
+            color: "var(--gv2-text-secondary)",
+          }}
+        >
           Carregando...
-        </div>
+        </p>
       );
     }
     return (
-      <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-[var(--text-2)]">
-        <div>
-          <p className="font-medium">Preview não disponível</p>
-          <p className="mt-1 text-[var(--text-3)]">
-            Tipo de arquivo não suportado pelo viewer. Abra direto no FS.
-          </p>
-        </div>
-      </div>
+      <p
+        style={{
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: "15px",
+          color: "var(--gv2-text-secondary)",
+        }}
+      >
+        Tipo de arquivo não suportado pelo viewer.
+      </p>
     );
   }
 
-  // Texto: visual renderiza markdown só pra .md/.markdown. Demais
-  // tipos texto (HTML, JSON, etc) caem no CodeView via `forceCode`
-  // mesmo no modo visual.
+  if (viewMode === "visual" && isMarkdown) {
+    return <MarkdownRender content={textContent} />;
+  }
+
+  return <CodeRender content={textContent} />;
+}
+
+function MarkdownRender({ content }: { content: string }) {
   return (
-    <SkillFileViewer
-      content={textContent}
-      mode={viewMode}
-      forceCode={!isMarkdown}
-    />
+    <article style={{ color: "var(--gv2-text)" }}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {content}
+      </ReactMarkdown>
+    </article>
   );
 }
 
+function CodeRender({ content }: { content: string }) {
+  const lines = content.split("\n");
+  return (
+    <pre
+      style={{
+        background: "#FAFAFA",
+        borderRadius: "8px",
+        padding: "20px",
+        margin: 0,
+        display: "flex",
+        gap: "16px",
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        fontSize: "14px",
+        lineHeight: 1.6,
+        color: "var(--gv2-text)",
+        overflow: "auto",
+      }}
+    >
+      <code
+        aria-hidden
+        style={{
+          textAlign: "right",
+          color: "var(--gv2-text-secondary)",
+          userSelect: "none",
+        }}
+      >
+        {lines.map((_, idx) => (
+          <div key={idx}>{idx + 1}</div>
+        ))}
+      </code>
+      <code style={{ flex: 1 }}>
+        {lines.map((line, idx) => (
+          <div key={idx} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {line || " "}
+          </div>
+        ))}
+      </code>
+    </pre>
+  );
+}
+
+const mdComponents: Components = {
+  h1: ({ children }) => (
+    <h1
+      style={{
+        fontFamily: "Lora, Georgia, serif",
+        fontWeight: 500,
+        fontSize: "40px",
+        lineHeight: 1.1,
+        color: "var(--gv2-text)",
+        margin: "0 0 16px",
+      }}
+    >
+      {children}
+    </h1>
+  ),
+  h2: ({ children }) => (
+    <h2
+      style={{
+        fontFamily: "Lora, Georgia, serif",
+        fontWeight: 500,
+        fontSize: "20px",
+        lineHeight: 1.2,
+        color: "var(--gv2-text)",
+        margin: "24px 0 12px",
+      }}
+    >
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3
+      style={{
+        fontFamily: "Lora, Georgia, serif",
+        fontWeight: 500,
+        fontSize: "18px",
+        color: "var(--gv2-text)",
+        margin: "20px 0 10px",
+      }}
+    >
+      {children}
+    </h3>
+  ),
+  p: ({ children }) => (
+    <p
+      style={{
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontWeight: 400,
+        fontSize: "15px",
+        lineHeight: 1.6,
+        color: "var(--gv2-text)",
+        margin: "12px 0",
+      }}
+    >
+      {children}
+    </p>
+  ),
+  ul: ({ children }) => (
+    <ul
+      style={{
+        listStyle: "disc",
+        marginLeft: "22.5px",
+        margin: "12px 0 12px 22.5px",
+        padding: 0,
+      }}
+    >
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol
+      style={{
+        listStyle: "decimal",
+        marginLeft: "22.5px",
+        margin: "12px 0 12px 22.5px",
+        padding: 0,
+      }}
+    >
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => (
+    <li
+      style={{
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontWeight: 400,
+        fontSize: "15px",
+        lineHeight: 1.6,
+        color: "var(--gv2-text)",
+        margin: "4px 0",
+      }}
+    >
+      {children}
+    </li>
+  ),
+  pre: ({ children }) => (
+    <pre
+      style={{
+        background: "rgba(0,0,0,0.04)",
+        borderRadius: "8px",
+        padding: "12px",
+        margin: "16px 0",
+        overflow: "auto",
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        fontSize: "13px",
+        lineHeight: 1.6,
+        color: "var(--gv2-text)",
+      }}
+    >
+      {children}
+    </pre>
+  ),
+  code: ({ className, children }) => {
+    const isBlock = className?.startsWith("language-");
+    if (isBlock) return <code className={className}>{children}</code>;
+    return (
+      <code
+        style={{
+          background: "rgba(0,0,0,0.04)",
+          borderRadius: "4px",
+          padding: "2px 6px",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: "13px",
+          color: "var(--gv2-text)",
+        }}
+      >
+        {children}
+      </code>
+    );
+  },
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        color: "var(--gv2-brand)",
+        textDecoration: "underline",
+        textUnderlineOffset: "2px",
+      }}
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote
+      style={{
+        borderLeft: "2px solid var(--gv2-brand)",
+        paddingLeft: "16px",
+        margin: "16px 0",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: "15px",
+        color: "var(--gv2-text-secondary)",
+        fontStyle: "italic",
+      }}
+    >
+      {children}
+    </blockquote>
+  ),
+  hr: () => (
+    <hr
+      style={{
+        border: "none",
+        borderTop: "1px solid var(--gv2-border)",
+        margin: "24px 0",
+      }}
+    />
+  ),
+  strong: ({ children }) => (
+    <strong style={{ fontWeight: 600 }}>{children}</strong>
+  ),
+  em: ({ children }) => <em style={{ fontStyle: "italic" }}>{children}</em>,
+  table: ({ children }) => (
+    <div style={{ overflowX: "auto", margin: "16px 0" }}>
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: "14px",
+        }}
+      >
+        {children}
+      </table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th
+      style={{
+        textAlign: "left",
+        padding: "8px 12px",
+        borderBottom: "1px solid var(--gv2-border)",
+        fontWeight: 600,
+        color: "var(--gv2-text)",
+      }}
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td
+      style={{
+        padding: "8px 12px",
+        borderBottom: "1px solid var(--gv2-border)",
+        color: "var(--gv2-text)",
+      }}
+    >
+      {children}
+    </td>
+  ),
+  img: ({ src, alt }) => (
+    <img
+      src={typeof src === "string" ? src : undefined}
+      alt={alt ?? ""}
+      style={{
+        maxWidth: "100%",
+        borderRadius: "8px",
+        margin: "12px 0",
+      }}
+    />
+  ),
+};

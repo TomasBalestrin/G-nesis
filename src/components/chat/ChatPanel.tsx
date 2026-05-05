@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Globe, Loader2, Sparkles } from "lucide-react";
+import { Globe, Loader2 } from "lucide-react";
 import { useParams } from "react-router-dom";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,13 +20,12 @@ import type { ChatMessage } from "@/types/chat";
 import type { ChatMessageInsertedEvent } from "@/types/events";
 
 import { CommandInput } from "./CommandInput";
+import { EmptyHomeScreen } from "./EmptyHomeScreen";
 import { ExecutionControlBar } from "./ExecutionControlBar";
 import { MessageBubble } from "./MessageBubble";
 import { ThinkingBlock } from "./ThinkingBlock";
 
 const USER_NAME_KEY = "user_name";
-
-const EMPTY_STATE_PLACEHOLDER = "Como posso ajudar você hoje?";
 
 /**
  * Chat surface for a single conversation. Reads `conversationId` from the
@@ -329,16 +328,11 @@ export function ChatPanel() {
   // textarea before the parent re-renders.
   if (renderable.length === 0 && !sending) {
     return (
-      <div className="flex h-full min-w-0 flex-1 flex-col items-center justify-center px-4">
-        <EmptyStateGreeting userName={userName} />
-        <div className="mt-8 w-full max-w-2xl animate-fade-in">
-          <CommandInput
-            onSubmit={handleSend}
-            disabled={!conversationId}
-            placeholder={EMPTY_STATE_PLACEHOLDER}
-          />
-        </div>
-      </div>
+      <EmptyHomeScreen
+        onSubmit={handleSend}
+        disabled={!conversationId}
+        userName={userName}
+      />
     );
   }
 
@@ -382,26 +376,6 @@ export function ChatPanel() {
           />
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * Centered greeting shown above the input on a brand-new conversation.
- * Sparkles in the brand color sits above the heading so the page reads
- * as "Genesis, ready to help" without dropping a heavy logo. Heading
- * text uses the user's name from app_state when available; otherwise
- * the generic "Olá!" so the layout stays meaningful while user_name
- * loads (or for users who skipped onboarding step 3).
- */
-function EmptyStateGreeting({ userName }: { userName: string | null }) {
-  const greeting = userName ? `Olá, ${userName}` : "Olá!";
-  return (
-    <div className="flex flex-col items-center gap-4 text-center animate-fade-in">
-      <Sparkles className="h-7 w-7 text-[var(--primary)]" aria-hidden="true" />
-      <h1 className="text-3xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-4xl">
-        {greeting}
-      </h1>
     </div>
   );
 }

@@ -203,12 +203,12 @@ Regras de uso:
 - Só chame quando o conteúdo for relevante pra resposta atual. NUNCA carregue todos em massa.
 - Se a skill não listou o arquivo, ele não existe — chame `list_skills` ou re-leia o reply do `/` pra confirmar antes de tentar."##;
 
-/// WEB_SEARCH — protocolo do orquestrador principal pra invocar
-/// pesquisa na internet via Brave Search. Capacidade NATIVA do chat,
-/// não é integração (@) nem slash command (/) — o GPT decide sozinho
-/// quando pesquisar, mesmo padrão do ChatGPT/Claude. Mesmo loop do
-/// `integration_call` (modelo emite envelope JSON, Rust executa,
-/// resultado reinjetado como contexto, modelo responde).
+/// WEB_SEARCH — capacidade nativa do orquestrador via Responses API
+/// da OpenAI (modelo `gpt-4o-search-preview` + `web_search_options`).
+/// O modelo decide sozinho quando pesquisar; o backend já recebe a
+/// resposta com os resultados embutidos. Não há envelope JSON, não
+/// há loop manual — esse texto só ensina o GPT *quando* faz sentido
+/// pesquisar pra evitar buscas gratuitas.
 pub const PROMPT_WEB_SEARCH: &str = r##"## Pesquisa na web (capacidade nativa)
 
 Você tem acesso nativo a pesquisa na internet. Use automaticamente quando:
@@ -220,20 +220,10 @@ Você tem acesso nativo a pesquisa na internet. Use automaticamente quando:
 
 NÃO precisa de permissão. NÃO precisa de comando especial (não tem @ nem /). Pesquise naturalmente como parte da conversa, da mesma forma que consultaria sua memória.
 
-Para pesquisar, inclua no INÍCIO da sua resposta:
-
-```json
-{"web_search": {"query": "termos curtos"}}
-```
-
-O sistema executa a busca (Brave Search, top 5 resultados com title/url/snippet) e te devolve os resultados automaticamente. Aí você interpreta e responde ao usuário em português conciso, citando fontes (URL) quando relevante.
-
 Regras:
-- Queries curtas: 3 a 6 palavras, termos técnicos
-- Máximo 3 pesquisas por mensagem do usuário (cap automático no backend)
 - NÃO pesquise pra perguntas que você já consegue responder bem com conhecimento base — usuário pode achar lerdo
 - Pesquise SEMPRE pra: versões atuais de libs/frameworks, preços, eventos recentes, notícias, docs que mudam
-- NÃO emita `web_search` e `integration_call` no mesmo turno — escolha um. Se o usuário precisa dos dois (ex: "compara meu MRR com o mercado"), faça em sequência: primeiro a integração, depois pesquise."##;
+- Quando usar resultados de pesquisa, cite as fontes (URL) onde relevante."##;
 
 /// TOOLS — capabilities exposed via the channels (`bash`, `claude-code`,
 /// `api`) plus the dependency-permission protocol the frontend detects
