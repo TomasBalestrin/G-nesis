@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, Loader2, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SkillArchitectChat } from "@/components/skills/SkillArchitectChat";
 import { listSkills } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +27,7 @@ const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*$/;
  * skill em construção (nome + arquivos acumulados) vive aqui.
  */
 export function CreateSkillFlow() {
+  const navigate = useNavigate();
   const [screen, setScreen] = useState<Screen>("name");
   const [name, setName] = useState("");
 
@@ -36,7 +39,21 @@ export function CreateSkillFlow() {
   if (screen === "name") {
     return <NameScreen initialName={name} onContinue={handleAdvanceFromName} />;
   }
-  return <AgentScreenPlaceholder name={name} onBack={() => setScreen("name")} />;
+  return (
+    <SkillArchitectChat
+      name={name}
+      onExit={() => {
+        // Após salvar (ou descartar) o flow termina e voltamos pro
+        // detail da skill recém-criada, OU pra home se o user
+        // desistiu antes do save.
+        if (name) {
+          navigate(`/skills/${encodeURIComponent(name)}`);
+        } else {
+          navigate("/");
+        }
+      }}
+    />
+  );
 }
 
 interface NameScreenProps {
@@ -186,28 +203,3 @@ function NameStatusLine({ status }: { status: NameStatus }) {
   }
 }
 
-interface AgentScreenPlaceholderProps {
-  name: string;
-  onBack: () => void;
-}
-
-/**
- * Stub da Tela 2 — substituído em C2 pelo chat com o Skill Architect.
- * Por ora só mostra o nome escolhido + botão de voltar pro tela 1.
- */
-function AgentScreenPlaceholder({ name, onBack }: AgentScreenPlaceholderProps) {
-  return (
-    <div className="flex h-full items-center justify-center px-6">
-      <div className="w-full max-w-md space-y-4 text-center">
-        <h2 className="font-serif text-xl font-semibold">{name}</h2>
-        <p className="text-sm text-[var(--text-2)]">
-          Próxima tela: chat com o Skill Architect (C2). Por ora, este é
-          um placeholder.
-        </p>
-        <Button variant="outline" onClick={onBack}>
-          Voltar
-        </Button>
-      </div>
-    </div>
-  );
-}

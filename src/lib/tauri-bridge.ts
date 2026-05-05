@@ -161,6 +161,38 @@ export function saveGeneratedSkill(args: {
   return invoke("save_generated_skill", args);
 }
 
+// ── agents (skill-architect, etc.) ──────────────────────────────────────────
+
+/// Turn de chat enviado pro agente. Subset do Message do orquestrador
+/// principal — sem tool_calls, só texto puro.
+export interface AgentChatTurn {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+/// Roda 1 turno do agente interno (skill-architect por enquanto).
+/// Backend: monta system prompt + histórico + mensagem nova; quando
+/// o agente declara `can_web_search()`, expõe a tool `web_search`
+/// e roda loop com cap de 3 buscas. Pós-resposta, se for o
+/// skill-architect, parseia tags `{"skill_write": {...}}` e emite
+/// evento `skill-architect:files-ready` com a lista. Caller escuta
+/// via useTauriEvent.
+export function agentChat(args: {
+  agent: string;
+  message: string;
+  history: AgentChatTurn[];
+}): Promise<string> {
+  return invoke("agent_chat", args);
+}
+
+/// Payload do evento `skill-architect:files-ready` — espelha
+/// `agents::skill_architect::SkillWriteRequest`. FE acumula
+/// cross-turn na sessão do wizard antes de chamar saveGeneratedSkill.
+export interface SkillWriteRequest {
+  path: string;
+  content: string;
+}
+
 /// Salva (overwrite) um arquivo dentro do package v2. `path` é
 /// relativo ao package (ex: "SKILL.md", "references/foo.md"). Quando
 /// path == "SKILL.md", o backend valida o frontmatter via parser —
