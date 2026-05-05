@@ -204,31 +204,36 @@ Regras de uso:
 - Se a skill não listou o arquivo, ele não existe — chame `list_skills` ou re-leia o reply do `/` pra confirmar antes de tentar."##;
 
 /// WEB_SEARCH — protocolo do orquestrador principal pra invocar
-/// pesquisa na internet via Brave Search. Mesmo loop pattern do
+/// pesquisa na internet via Brave Search. Capacidade NATIVA do chat,
+/// não é integração (@) nem slash command (/) — o GPT decide sozinho
+/// quando pesquisar, mesmo padrão do ChatGPT/Claude. Mesmo loop do
 /// `integration_call` (modelo emite envelope JSON, Rust executa,
 /// resultado reinjetado como contexto, modelo responde).
-///
-/// Lazy / sob demanda: nunca pesquisa pra perguntas que cabem no
-/// conhecimento base. Pesquisa sempre pra dados que mudam (preço,
-/// versão de lib, evento recente, doc atualizada).
-pub const PROMPT_WEB_SEARCH: &str = r##"## Pesquisa na web
+pub const PROMPT_WEB_SEARCH: &str = r##"## Pesquisa na web (capacidade nativa)
 
-Você tem acesso a pesquisa na internet. Quando precisar de informações atuais, atualizações de pacotes, documentação, notícias, preços, eventos recentes ou qualquer dado que possa estar desatualizado no seu treinamento, pesquise.
+Você tem acesso nativo a pesquisa na internet. Use automaticamente quando:
+- O usuário perguntar sobre algo atual (notícias, preços, eventos)
+- Pedir versão atual de uma lib, framework ou ferramenta
+- Perguntar sobre documentação que pode ter mudado
+- Qualquer pergunta onde seus dados de treinamento podem estar desatualizados
+- O usuário pedir explicitamente pra pesquisar
 
-Para pesquisar, responda com:
+NÃO precisa de permissão. NÃO precisa de comando especial (não tem @ nem /). Pesquise naturalmente como parte da conversa, da mesma forma que consultaria sua memória.
+
+Para pesquisar, inclua no INÍCIO da sua resposta:
 
 ```json
-{"web_search": {"query": "termos de busca curtos e focados"}}
+{"web_search": {"query": "termos curtos"}}
 ```
 
-O sistema vai executar a pesquisa e te enviar os resultados (top 5: título, URL, snippet). Aí você interpreta e responde ao usuário em português conciso, citando as fontes quando relevante.
+O sistema executa a busca (Brave Search, top 5 resultados com title/url/snippet) e te devolve os resultados automaticamente. Aí você interpreta e responde ao usuário em português conciso, citando fontes (URL) quando relevante.
 
 Regras:
 - Queries curtas: 3 a 6 palavras, termos técnicos
-- Máximo 3 pesquisas por mensagem do usuário
-- Não pesquise pra perguntas que você consegue responder bem com conhecimento base
-- Pesquise sempre pra: versões atuais de libs/frameworks, preços, eventos recentes, notícias, docs que mudam
-- Não emita `web_search` e `integration_call` no mesmo turno — escolha um. Se o usuário precisa dos dois (ex: "compara meu MRR com o mercado"), faça em sequência: primeiro a integração, depois pesquise."##;
+- Máximo 3 pesquisas por mensagem do usuário (cap automático no backend)
+- NÃO pesquise pra perguntas que você já consegue responder bem com conhecimento base — usuário pode achar lerdo
+- Pesquise SEMPRE pra: versões atuais de libs/frameworks, preços, eventos recentes, notícias, docs que mudam
+- NÃO emita `web_search` e `integration_call` no mesmo turno — escolha um. Se o usuário precisa dos dois (ex: "compara meu MRR com o mercado"), faça em sequência: primeiro a integração, depois pesquise."##;
 
 /// TOOLS — capabilities exposed via the channels (`bash`, `claude-code`,
 /// `api`) plus the dependency-permission protocol the frontend detects
