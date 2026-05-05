@@ -2313,9 +2313,12 @@ mod tests {
     /// function calling without a compiler error, so we anchor the
     /// expected set in a test.
     #[test]
-    fn genesis_tools_lists_all_seven_with_correct_names() {
+    fn genesis_tools_lists_all_with_correct_names() {
         let tools = genesis_tools();
         let names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
+        // Ordem importa pra estabilidade do snapshot. read_skill_reference
+        // e read_skill_script entraram em A3 (lazy-load de auxiliares
+        // de skill v2).
         assert_eq!(
             names,
             vec![
@@ -2323,6 +2326,8 @@ mod tests {
                 "list_skills",
                 "read_skill",
                 "save_skill",
+                "read_skill_reference",
+                "read_skill_script",
                 "read_file",
                 "list_files",
                 "abort_execution",
