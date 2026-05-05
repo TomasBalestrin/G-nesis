@@ -7,12 +7,27 @@ import {
 } from "@/lib/tauri-bridge";
 import type { Skill, SkillDetail } from "@/types/skill";
 
+/** Arquivo atualmente em foco no SkillDetailView. `kind: "skill"`
+ *  representa o canonical SKILL.md (sem filename); os demais carregam
+ *  o filename relativo da subpasta correspondente. */
+export type SelectedSkillFile =
+  | { kind: "skill" }
+  | { kind: "reference"; filename: string }
+  | { kind: "asset"; filename: string }
+  | { kind: "script"; filename: string };
+
+const DEFAULT_SELECTION: SelectedSkillFile = { kind: "skill" };
+
 interface SkillsState {
   /** Skills v2 unificadas. Sorted por name pra UI determinística. */
   items: Skill[];
   /** Skill atualmente aberta no SkillDetailView — full bundle com
    *  content + references + assets. `null` quando nenhuma view ativa. */
   activeSkill: SkillDetail | null;
+  /** Arquivo destacado no preview do SkillDetailView. Compartilhado
+   *  com o SkillTreePanel — ele escreve, a view lê. Reset pra
+   *  SKILL.md sempre que `setActive` troca de skill. */
+  selectedFile: SelectedSkillFile;
   loading: boolean;
   loaded: boolean;
   error: string | null;
@@ -26,6 +41,7 @@ interface SkillsState {
   setActive: (name: string) => Promise<void>;
   /** Reset de `activeSkill` — útil ao desmontar SkillDetailView. */
   clearActive: () => void;
+  setSelectedFile: (file: SelectedSkillFile) => void;
 }
 
 /**
@@ -56,6 +72,7 @@ function packageToSkill(pkg: SkillPackage): Skill {
 export const useSkillsStore = create<SkillsState>((set, get) => ({
   items: [],
   activeSkill: null,
+  selectedFile: DEFAULT_SELECTION,
   loading: false,
   loaded: false,
   error: null,
@@ -96,16 +113,22 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
           assets: bundle.assets,
           scripts: bundle.scripts,
         },
+        selectedFile: DEFAULT_SELECTION,
       });
     } catch (err) {
       set({
         activeSkill: null,
+        selectedFile: DEFAULT_SELECTION,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   },
 
   clearActive() {
-    set({ activeSkill: null });
+    set({ activeSkill: null, selectedFile: DEFAULT_SELECTION });
+  },
+
+  setSelectedFile(file) {
+    set({ selectedFile: file });
   },
 }));
