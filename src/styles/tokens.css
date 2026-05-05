@@ -96,4 +96,43 @@
   --motion-fast: 100ms ease;
   --motion-normal: 180ms ease;
   --motion-slow: 300ms ease;
+
+  /* === Genesis Figma v2 — tokens adicionais ===
+     Spec do refactor visual baseado no Figma novo. Prefixo `gv2-`
+     evita colisão com tokens existentes (--accent, --bg-subtle,
+     etc) e permite cutover incremental: componentes migrados
+     consomem `var(--gv2-*)` direto; o resto continua nos tokens
+     antigos até serem refatorados.
+     Nenhum alias dos antigos pros novos é criado aqui — os valores
+     visuais divergem o bastante (gold flat #B59A5B/#8C7640 do Elite
+     Premium vs #897748 do Figma v2) pra alias silencioso ser
+     enganoso. Migração explícita por componente. */
+  --gv2-bg: #FFFFFF;
+  --gv2-text: #000000;
+  --gv2-text-secondary: #717171;
+  --gv2-brand: #897748;
+  --gv2-brand-button: #D0BA82;
+  --gv2-active-bg: rgba(177, 155, 100, 0.15);
+  --gv2-active-text: #897748;
+  --gv2-border: rgba(137, 119, 72, 0.12);
+  --gv2-input-bg: rgba(243, 240, 232, 0.27);
+  --gv2-input-border: rgba(137, 119, 72, 0.1);
+  --gv2-toggle-bg: rgba(208, 186, 130, 0.3);
+  --gv2-card-bg: #FCFBF9;
+  --gv2-card-border: rgba(137, 119, 72, 0.2);
+  --gv2-dropzone-border: rgba(137, 119, 72, 0.12);
+
+  /* Layout */
+  --gv2-sidebar-width: 315px;
+  --gv2-sidebar-collapsed: 122px;
+  --gv2-header-height: 103px;
+  --gv2-panel-width: 315px;
+
+  /* Radius — escala paralela à do Elite Premium (--r-*) com valores
+     do Figma v2. NÃO criar alias com --r-md/--r-xl porque os valores
+     são diferentes (10/15/22 vs 10/14/20). */
+  --gv2-radius-sm: 10px;
+  --gv2-radius-md: 15px;
+  --gv2-radius-lg: 22px;
+  --gv2-radius-pill: 63px;
 }

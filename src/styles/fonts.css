@@ -1,3 +1,10 @@
+/* Inter — body sans pra surfaces do Figma v2. Carregado via CDN
+   do Google Fonts pra ficar disponível imediato no refactor visual;
+   pode migrar pra .woff2 bundled local depois (mesmo padrão das
+   fontes antigas abaixo) caso boot offline-first vire requisito.
+   Vem antes dos @font-face locais porque CSS exige @import primeiro. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+
 /* Elite Premium fonts — bundled localmente, sem dependência da CDN do
    Google Fonts. App é desktop (Tauri), boot offline-first. Os arquivos
    .woff2 vivem em ../assets/fonts/, com unicode-range latin + latin-ext
