@@ -41,11 +41,13 @@ function mergeIntoSkill(
     description: meta.description,
     version: meta.version,
     author: meta.author,
-    has_assets: pkg?.has_assets ?? false,
     has_references: pkg?.has_references ?? false,
+    has_assets: pkg?.has_assets ?? false,
+    has_scripts: pkg?.has_scripts ?? false,
     files_count: pkg?.files_count ?? 1,
     references_count: pkg?.references_count ?? 0,
     assets_count: pkg?.assets_count ?? 0,
+    scripts_count: pkg?.scripts_count ?? 0,
     created_at: pkg?.created_at ?? "",
   };
 }

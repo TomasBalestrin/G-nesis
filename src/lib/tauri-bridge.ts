@@ -100,19 +100,21 @@ export function deleteSkill(args: { name: string }): Promise<void> {
 
 /// Skill package v2 (B1+B2). Mirror do `crate::skills::storage::SkillPackage`.
 /// `path` é absoluto — serde serializa o PathBuf do Rust como string.
-/// `references_count` e `assets_count` contam arquivos não-hidden 1
-/// nível abaixo das subpastas (não recursivo) — pensado pra badges
-/// na sidebar sem ter que chamar getSkill.
-/// `id` e `created_at` vêm do mirror SQLite (best-effort). Skills
-/// criadas via FS direto sem mirror retornam null nesses campos.
+/// `*_count` contam arquivos não-hidden 1 nível abaixo das subpastas
+/// (não recursivo) — pensados pra badges na sidebar sem ter que
+/// chamar getSkill. `id` e `created_at` vêm do mirror SQLite
+/// (best-effort). Skills criadas via FS direto sem mirror retornam
+/// null nesses campos.
 export interface SkillPackage {
   name: string;
   path: string;
-  has_assets: boolean;
   has_references: boolean;
+  has_assets: boolean;
+  has_scripts: boolean;
   files_count: number;
   references_count: number;
   assets_count: number;
+  scripts_count: number;
   id: string | null;
   created_at: string | null;
 }

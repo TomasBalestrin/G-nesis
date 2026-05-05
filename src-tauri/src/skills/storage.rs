@@ -1,20 +1,25 @@
 //! Storage primitives pra skill packages (formato v2: pasta com SKILL.md
-//! + assets/ + references/).
+//! + opcionalmente assets/ + references/ + scripts/).
 //!
 //! Layout em disco:
 //! ```text
 //! ~/.genesis/skills/
 //! └── <name>/
 //!     ├── SKILL.md          ← arquivo principal (obrigatório)
+//!     ├── references/       ← módulos / sub-skills .md (opcional)
 //!     ├── assets/           ← templates / HTMLs / recursos (opcional)
-//!     └── references/       ← módulos / sub-skills .md (opcional)
+//!     └── scripts/          ← shell scripts executáveis (opcional)
 //! ```
 //!
-//! Skills v1 (`<name>.md` solto na raiz) são IGNORADAS por
-//! `list_skill_packages` — a migration do bloco F vai converter
-//! cada uma em pasta. Coexiste com `orchestrator::skill_loader_v2`
-//! que faz parsing pra execução; este módulo só cuida de CRUD de
-//! storage (não parseia frontmatter, não valida steps).
+//! Regra "NUNCA criar subpastas vazias" (A1): a criação de uma skill
+//! materializa apenas o `<name>/` + `SKILL.md`. As subpastas vêm sob
+//! demanda via [`create_subfolder`] quando o primeiro arquivo for
+//! gravado em cada uma — evita poluição visual com pastas vazias e
+//! mantém o package mínimo no FS.
+//!
+//! Skills v1 (`<name>.md` solto na raiz) foram aposentadas em F2 —
+//! migração roda no startup via `crate::skills::migration`. Coexiste
+//! com `orchestrator::skill_loader_v2` que faz parsing pra execução.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,15 +29,16 @@ use serde::{Deserialize, Serialize};
 use crate::config;
 
 /// Snapshot do que está em disco pra uma skill v2. `path` é o
-/// diretório raiz do package; `has_assets`/`has_references` indicam
-/// se as subpastas existem (opcionais por design); `files_count` é o
-/// total recursivo de arquivos não-hidden dentro do package.
+/// diretório raiz do package; `has_*` indicam se cada subpasta
+/// existe; `*_count` são arquivos não-hidden 1 nível dentro de cada
+/// subpasta (não recursivo) — pensados pra badges de UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillPackage {
     pub name: String,
     pub path: PathBuf,
-    pub has_assets: bool,
     pub has_references: bool,
+    pub has_assets: bool,
+    pub has_scripts: bool,
     pub files_count: usize,
     /// Arquivos não-hidden direto em `references/` (não recursivo).
     /// 0 quando a subpasta não existe — útil pra badge na sidebar
@@ -40,6 +46,8 @@ pub struct SkillPackage {
     pub references_count: usize,
     /// Idem pra `assets/`.
     pub assets_count: usize,
+    /// Idem pra `scripts/`.
+    pub scripts_count: usize,
     /// Mirror SQLite (migration 009). Storage layer sempre retorna
     /// `None`/`""`; command layer (`commands/skills.rs`) faz o join
     /// via `queries::get_skill_by_name` antes de serializar.
@@ -64,19 +72,44 @@ pub fn skill_dir(name: &str) -> Result<PathBuf, String> {
     Ok(skills_dir()?.join(name))
 }
 
-/// Idempotente: cria o package dir + `assets/` + `references/`.
-/// `mkdir -p` semantics — re-call não falha. NÃO escreve SKILL.md
-/// (caller é responsável). Erro só quando o caminho não pode ser
-/// criado (permissão, disco cheio, etc).
-pub fn ensure_skill_dirs(name: &str) -> Result<(), String> {
+/// Idempotente: cria APENAS o `<name>/` raiz. Subpastas
+/// (`references/`, `assets/`, `scripts/`) NÃO são criadas — caller
+/// deve invocar [`create_subfolder`] sob demanda quando gravar o
+/// primeiro arquivo em cada uma. Regra "NUNCA criar subpastas vazias".
+pub fn ensure_skill_dir(name: &str) -> Result<(), String> {
     let dir = skill_dir(name)?;
     fs::create_dir_all(&dir)
-        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    fs::create_dir_all(dir.join("assets"))
-        .map_err(|e| format!("cannot create {}/assets: {e}", dir.display()))?;
-    fs::create_dir_all(dir.join("references"))
-        .map_err(|e| format!("cannot create {}/references: {e}", dir.display()))?;
-    Ok(())
+        .map_err(|e| format!("cannot create {}: {e}", dir.display()))
+}
+
+/// Alias mantido pra compatibilidade com callers em `commands/` que
+/// não foram atualizados. Comportamento idêntico ao
+/// [`ensure_skill_dir`] — só cria a raiz; subpastas continuam
+/// lazy-created via [`create_subfolder`].
+pub fn ensure_skill_dirs(name: &str) -> Result<(), String> {
+    ensure_skill_dir(name)
+}
+
+/// Cria uma subpasta válida (`references` | `assets` | `scripts`)
+/// sob demanda. Idempotente. Outros valores de `folder` retornam
+/// `Err` pra evitar criação de pastas arbitrárias dentro do package.
+///
+/// Caller típico: antes de gravar `references/foo.md`, chama
+/// `create_subfolder(name, "references")` pra garantir que a pasta
+/// existe. `save_skill_file` já cria parents via `fs::create_dir_all`,
+/// então essa função é redundante nesse caminho — usada quando o
+/// caller quer criar a subpasta vazia explicitamente (ex: dropzone
+/// que aceita pasta vazia + arquivo logo em seguida).
+pub fn create_subfolder(name: &str, folder: &str) -> Result<PathBuf, String> {
+    if !matches!(folder, "references" | "assets" | "scripts") {
+        return Err(format!(
+            "subpasta inválida: `{folder}` (esperado references/assets/scripts)"
+        ));
+    }
+    let path = skill_dir(name)?.join(folder);
+    fs::create_dir_all(&path)
+        .map_err(|e| format!("cannot create {}: {e}", path.display()))?;
+    Ok(path)
 }
 
 /// Enumera packages v2 — só pastas com `SKILL.md` válido dentro.
@@ -143,6 +176,13 @@ pub fn list_assets(name: &str) -> Result<Vec<PathBuf>, String> {
     list_subdir(name, "assets", None)
 }
 
+/// Todos os arquivos em `<package>/scripts/` (qualquer extensão),
+/// ordenados por nome. Ignora dotfiles. Vazio quando a pasta não
+/// existe — scripts/ é opcional por design.
+pub fn list_scripts(name: &str) -> Result<Vec<PathBuf>, String> {
+    list_subdir(name, "scripts", None)
+}
+
 /// Snapshot do package especificado por `name`. `None` quando o
 /// diretório não existe OU quando existe mas não tem SKILL.md
 /// dentro (subpasta livre tipo `meta/`, `drafts/`).
@@ -186,16 +226,17 @@ fn validate_name(name: &str) -> Result<(), String> {
 /// SKILL.md). Não faz validação extra; chamado só de dentro do
 /// list_skill_packages que já filtrou.
 fn read_package(path: &Path, name: String) -> SkillPackage {
-    let assets = path.join("assets");
     let references = path.join("references");
-    let references_count = count_files_flat(&references);
-    let assets_count = count_files_flat(&assets);
+    let assets = path.join("assets");
+    let scripts = path.join("scripts");
     SkillPackage {
         files_count: count_files_recursive(path),
-        has_assets: assets.is_dir(),
         has_references: references.is_dir(),
-        references_count,
-        assets_count,
+        has_assets: assets.is_dir(),
+        has_scripts: scripts.is_dir(),
+        references_count: count_files_flat(&references),
+        assets_count: count_files_flat(&assets),
+        scripts_count: count_files_flat(&scripts),
         name,
         path: path.to_path_buf(),
         id: None,
@@ -322,5 +363,16 @@ mod tests {
         assert!(validate_name("a/b").is_err());
         assert!(validate_name("a\\b").is_err());
         assert!(validate_name("..").is_err());
+    }
+
+    #[test]
+    fn create_subfolder_rejects_unknown_names() {
+        // Funções acima precisam de skill_dir() que carrega config —
+        // testamos só o ramo de validação do `folder`, que não toca
+        // disco se rejeitar antes.
+        let err = create_subfolder("legendar", "etc").unwrap_err();
+        assert!(err.contains("subpasta inválida"));
+        let err = create_subfolder("legendar", "../escape").unwrap_err();
+        assert!(err.contains("subpasta inválida"));
     }
 }

@@ -27,14 +27,17 @@ export interface Skill {
   description: string;
   version: string;
   author: string;
-  has_assets: boolean;
   has_references: boolean;
+  has_assets: boolean;
+  has_scripts: boolean;
   files_count: number;
   /** Arquivos não-hidden direto em `references/`. Complementa
    *  `has_references` pra renderizar badge de quantidade na sidebar. */
   references_count: number;
   /** Idem pra `assets/`. */
   assets_count: number;
+  /** Idem pra `scripts/`. */
+  scripts_count: number;
   created_at: string;
 }
 
